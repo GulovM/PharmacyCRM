@@ -1,162 +1,261 @@
 # PharmacyCRM — Backend Architecture
 
 **Статус документа:** Draft  
-**Версия:** 0.1  
-**Дата:** 2026-07-16
+**Версия:** 0.2  
+**Дата:** 2026-07-17  
+**Связанные документы:** `02-srs.md`, `04-architecture.md`, `05-api-design.md`, `06-database-design.md`, `07-domain-model.md`, `08-project-structure.md`  
+**Связанные ADR:** ADR-0013, ADR-0014, ADR-0015, ADR-0016, ADR-0017
 
 ## 1. Назначение
 
-Документ фиксирует структуру Go-бэкенда PharmacyCRM, границы модулей, правила сборки зависимостей и способ интеграции Gin, application use cases, Unit of Work и PostgreSQL-репозиториев.
+Документ конкретизирует архитектуру только Go backend-приложения, расположенного в корневом каталоге `backend/`.
+
+Frontend является отдельным корневым приложением `frontend/` и не входит в структуру backend. Интеграция между приложениями выполняется через HTTP API из `05-api-design.md`.
+
+Документ фиксирует:
+
+- физические backend package boundaries;
+- направление зависимостей;
+- composition root;
+- межмодульную orchestration;
+- Unit of Work;
+- Gin delivery;
+- PostgreSQL adapters;
+- workers, migrations и backend tests.
+
+Детальная структура всего репозитория определяется `08-project-structure.md`. При расхождении примеров путей применяется более новая и детальная конкретизация из него.
 
 ## 2. Архитектурный стиль
 
-Backend реализуется как модульный монолит.
+Backend реализуется как модульный монолит на Go с одной основной PostgreSQL-базой.
 
-Каждый бизнес-модуль владеет своими доменными моделями, use case-ами, HTTP delivery-слоем и реализациями репозиториев. Межмодульная оркестрация допускается только через явно опубликованные application-интерфейсы, команды, запросы или transaction-scoped контракты.
+Модульный монолит означает единый deployable backend process или согласованный набор backend executables из одного Go module, но не отсутствие модульных границ.
 
-Прямой доступ одного модуля к приватным репозиториям другого модуля запрещён.
+Каждый бизнес-модуль владеет:
 
-## 3. Предлагаемая структура
+- domain model;
+- application use cases;
+- application ports;
+- PostgreSQL adapters;
+- HTTP delivery;
+- module-specific tests;
+- семантикой своих таблиц.
+
+Прямой доступ к приватным repository implementation или таблицам другого модуля запрещён.
+
+## 3. Backend application root
 
 ```text
 backend/
 ├── cmd/
-│   ├── api/
-│   │   └── main.go
-│   └── worker/
-│       └── main.go
+│   ├── api/main.go
+│   ├── worker/main.go
+│   └── migrate/main.go
 ├── internal/
-│   ├── app/
-│   │   ├── application.go
-│   │   ├── config.go
-│   │   ├── modules.go
-│   │   └── routes.go
+│   ├── bootstrap/
 │   ├── platform/
-│   │   ├── config/
-│   │   ├── database/
-│   │   │   ├── transactor.go
-│   │   │   └── postgres/
-│   │   ├── httpserver/
-│   │   ├── logging/
-│   │   ├── observability/
-│   │   └── validation/
 │   ├── shared/
-│   │   ├── kernel/
-│   │   ├── errors/
-│   │   └── authcontext/
+│   ├── orchestration/
 │   └── modules/
-│       ├── auth/
-│       ├── catalog/
-│       ├── pharmacy/
-│       ├── inventory/
-│       ├── sales/
-│       ├── discovery/
-│       ├── recommendation/
-│       └── audit/
 ├── migrations/
 ├── test/
 ├── go.mod
-└── Makefile
+├── go.sum
+├── Makefile
+└── Dockerfile
 ```
 
-## 4. Структура отдельного модуля
+Backend не содержит:
+
+- `package.json`;
+- React/TypeScript source code;
+- Vite configuration;
+- frontend build artifacts;
+- frontend dependency installation.
+
+## 4. Backend modules
+
+Нормативный набор логических модулей:
 
 ```text
-internal/modules/sales/
+backend/internal/modules/
+├── identity/
+├── pharmacy/
+├── catalog/
+├── assortment/
+├── inventory/
+├── sales/
+├── returns/
+├── reliability/
+├── audit/
+├── alerts/
+├── search/
+└── replenishment/
+```
+
+Названия синхронизированы с `04-architecture.md`, `06-database-design.md` и `07-domain-model.md`.
+
+Старые обобщённые названия `auth`, `discovery` и `recommendation` не используются:
+
+- `identity` владеет users, roles и sessions;
+- `search` владеет публичными read models поиска;
+- `alerts` и `replenishment` имеют разные ответственности.
+
+## 5. Структура бизнес-модуля
+
+Пример полного модуля:
+
+```text
+backend/internal/modules/sales/
 ├── domain/
-│   ├── entities.go
-│   ├── value_objects.go
+│   ├── sale.go
+│   ├── sale_item.go
+│   ├── allocation.go
+│   ├── status.go
+│   ├── pricing.go
+│   ├── events.go
 │   ├── errors.go
-│   └── services.go
+│   └── *_test.go
 ├── application/
-│   ├── commands/
-│   ├── queries/
-│   ├── ports.go
-│   └── service.go
+│   ├── command/
+│   ├── query/
+│   ├── port/
+│   ├── dto/
+│   └── *_test.go
 ├── infrastructure/
-│   └── postgres/
-│       ├── repository.go
-│       └── queries.go
+│   ├── postgres/
+│   └── projection/
 └── delivery/
     └── http/
-        ├── handler.go
-        ├── dto.go
-        ├── mapper.go
-        └── routes.go
+        ├── routes.go
+        ├── complete_sale_handler.go
+        ├── get_sale_handler.go
+        ├── request.go
+        ├── response.go
+        └── mapper.go
 ```
 
-Не каждый модуль обязан содержать все каталоги. Структура добавляется по необходимости, но направление зависимостей сохраняется.
+Пустые слои заранее не создаются. Имена файлов отражают предметную ответственность; монолитные `handler.go`, `service.go`, `repository.go`, `entities.go` и `models.go` для всего модуля не являются целевой структурой.
 
-## 5. Направление зависимостей
-
-Допустимое направление:
+## 6. Направление зависимостей
 
 ```text
-Gin handler
-    ↓
-application command/query
-    ↓
-domain rules and ports
-    ↓
-infrastructure implementation
+Delivery / Infrastructure -> Application -> Domain
 ```
 
 Правила:
 
-1. `domain` не импортирует Gin, pgx, PostgreSQL DTO или HTTP DTO.
+1. `domain` не импортирует Gin, pgx, SQL models, HTTP DTO, logger или config.
 2. `application` не импортирует Gin и pgx.
-3. `infrastructure/postgres` может импортировать pgx и application/domain-контракты своего модуля.
-4. `delivery/http` может импортировать Gin и application-контракты.
-5. `app` является composition root и имеет право знать о конкретных реализациях.
-6. `platform` не должен владеть бизнес-интерфейсами модулей.
+3. `infrastructure` реализует application ports и может зависеть от pgx и внешних SDK.
+4. `delivery/http` зависит от application contracts и общих transport helpers.
+5. `bootstrap` имеет право знать concrete implementations всех backend modules.
+6. `platform` предоставляет технические primitives, но не объявляет бизнес-репозитории.
+7. Один модуль не импортирует concrete infrastructure другого модуля.
+8. Межмодульная координация не выполняется из Domain.
 
-## 6. Composition Root
+## 7. Composition Root
 
-Все concrete dependencies собираются только в `internal/app`.
-
-`cmd/api/main.go` выполняет минимальный bootstrap:
+Все concrete dependencies собираются в:
 
 ```text
-load config
-→ initialize logger
-→ open pgx pool
-→ initialize repositories and transactor
-→ construct module services and use cases
-→ construct Gin handlers
-→ register routes and middleware
-→ start http.Server
-→ graceful shutdown
+backend/internal/bootstrap/
 ```
 
-Бизнес-модули не используют глобальные service locator-ы и не читают зависимости из package-level variables.
+```text
+backend/internal/bootstrap/
+├── application.go
+├── api.go
+├── worker.go
+├── dependencies.go
+├── modules.go
+├── routes.go
+└── shutdown.go
+```
 
-## 7. Dependency Injection
+`cmd/*/main.go` выполняет только process bootstrap:
 
-Для первой версии используется ручной constructor-based DI.
+```text
+load process configuration
+-> initialize logger
+-> open pgx pool
+-> construct technical adapters
+-> construct module services
+-> construct orchestrators
+-> construct handlers/workers
+-> start process
+-> graceful shutdown
+```
+
+Запрещены global service locator, package-level mutable dependency registry и чтение environment из произвольных business packages.
+
+## 8. Dependency Injection
+
+Используется ручной constructor-based DI.
 
 Причины:
 
-- граф зависимостей остаётся явным;
+- dependency graph остаётся явным;
 - отсутствует runtime reflection;
-- ошибки сборки обнаруживаются компилятором;
-- приложение пока недостаточно велико для обязательного DI-фреймворка;
-- тесты могут напрямую подставлять fake- и mock-реализации.
+- ошибки wiring обнаруживаются компилятором;
+- тесты легко подставляют fake implementations;
+- размер проекта пока не оправдывает DI framework.
 
-Wire, Dig или другой контейнер не вводятся до подтверждённой необходимости.
+Wire, Dig и аналоги вводятся только отдельным архитектурным решением.
 
-## 8. Unit of Work и репозитории
+## 9. Межмодульная orchestration
 
-ADR-0013 требует явный Unit of Work.
+Use case, атомарно затрагивающий несколько module owners, размещается в:
 
-При этом интерфейсы бизнес-репозиториев должны оставаться в модулях, которые ими владеют. Платформенный пакет транзакций не должен объявлять пустые `SalesTxRepository`, `InventoryTxRepository` и другие бизнес-типы.
+```text
+backend/internal/orchestration/<usecase>/
+```
 
-Предпочтительный контракт application-слоя продажи:
+Целевые orchestrators:
+
+```text
+backend/internal/orchestration/
+├── sale/
+├── returns/
+├── receipt/
+├── initialstock/
+├── reversal/
+└── catalogpublish/
+```
+
+Orchestrator:
+
+- не является bounded context;
+- не владеет таблицами;
+- не содержит SQL;
+- не получает `pgx.Tx`;
+- определяет application command и transaction-scoped contracts;
+- координирует один явный Unit of Work;
+- выполняет повторную authorization/scope проверку внутри транзакции;
+- планирует только безопасные post-commit действия.
+
+## 10. Unit of Work
+
+ADR-0013 требует явный Unit of Work для критических межмодульных операций.
+
+Низкоуровневый transaction runner находится в:
+
+```text
+backend/internal/platform/database/
+```
+
+Business UoW contract находится у consumer use case — в application package одного модуля либо в orchestration package.
+
+Пример:
 
 ```go
 type SaleUnitOfWork interface {
-    PharmacyProducts() PharmacyProductTxRepository
-    Inventory() InventoryTxRepository
-    Sales() SalesTxRepository
+    Scope() ScopeTxPort
+    Assortment() AssortmentTxPort
+    Inventory() InventoryTxPort
+    Sales() SalesTxPort
+    Reliability() IdempotencyTxPort
+    Audit() AuditTxPort
 }
 
 type SaleTransactor interface {
@@ -167,173 +266,204 @@ type SaleTransactor interface {
 }
 ```
 
-Конкретная PostgreSQL-реализация находится в composition/infrastructure-слое и связывает эти интерфейсы с одним `pgx.Tx`.
+В application API запрещены `pgx.Tx`, `pgxpool.Pool` и SQL strings.
 
-Так platform/database предоставляет низкоуровневые примитивы транзакций, но не зависит от модулей продаж, склада или аптек.
+PostgreSQL implementation создаёт transaction-scoped adapters один раз на callback и связывает их с одним `pgx.Tx`.
 
-## 9. Реализация PostgreSQL Unit of Work
+Запрещены:
 
-Репозитории создаются один раз при создании transaction-scoped Unit of Work, а не при каждом вызове accessor-метода.
+- один глобальный UoW со всеми repositories системы;
+- `Repository(name string)`;
+- скрытая transaction внутри repository многомодульного use case;
+- отдельный commit каждого module effect;
+- создание repository при каждом accessor call.
 
-```go
-type pgxSaleUnitOfWork struct {
-    pharmacyProducts PharmacyProductTxRepository
-    inventory        InventoryTxRepository
-    sales            SalesTxRepository
-}
+## 11. Transaction retry
 
-func newPgxSaleUnitOfWork(tx pgx.Tx) *pgxSaleUnitOfWork {
-    return &pgxSaleUnitOfWork{
-        pharmacyProducts: pharmacyrepo.NewTxRepository(tx),
-        inventory:        inventoryrepo.NewTxRepository(tx),
-        sales:            salesrepo.NewTxRepository(tx),
-    }
-}
-```
-
-Accessor-методы возвращают уже созданные репозитории. Это исключает лишние аллокации и гарантирует стабильную идентичность зависимостей внутри callback.
-
-## 10. Retry Policy
-
-Повторяется вся транзакционная callback-операция только для PostgreSQL SQLSTATE:
+Вся callback-операция может повторяться только для явно разрешённых retryable PostgreSQL errors, включая:
 
 - `40P01` — deadlock detected;
 - `40001` — serialization failure.
 
 Правила:
 
-1. Backoff должен учитывать `context.Context`; обычный `time.Sleep` запрещён.
-2. Количество попыток ограничено.
-3. Используется jitter, чтобы параллельные транзакции не повторялись синхронно.
-4. UUID, idempotency key и стабильные входные данные создаются до callback.
-5. В callback запрещены внешние HTTP-вызовы, отправка email, публикация в брокер и другие необратимые side effects.
-6. Ошибка `Commit` также анализируется как возможная retryable database error.
-7. Ошибка rollback не заменяет исходную бизнес-ошибку, но должна логироваться.
+1. число попыток ограничено;
+2. backoff учитывает `context.Context`;
+3. используется jitter;
+4. IDs, idempotency key и stable command values создаются до callback;
+5. callback не выполняет внешние HTTP calls, email, broker publish или filesystem side effects;
+6. authorization и business conditions перепроверяются при каждой попытке;
+7. commit error классифицируется отдельно;
+8. rollback error логируется, но не скрывает исходную ошибку.
 
-Пример context-aware ожидания:
+Не каждая database error является retryable. Domain conflict, constraint violation из-за invalid command и insufficient stock не повторяются автоматически.
 
-```go
-func waitRetry(ctx context.Context, delay time.Duration) error {
-    timer := time.NewTimer(delay)
-    defer timer.Stop()
+## 12. Gin HTTP delivery
 
-    select {
-    case <-ctx.Done():
-        return ctx.Err()
-    case <-timer.C:
-        return nil
-    }
-}
-```
+Gin используется только в:
 
-## 11. Gin HTTP Layer
-
-Gin используется только в `delivery/http` и `platform/httpserver`.
+- module `delivery/http`;
+- `backend/internal/platform/httpserver`;
+- backend bootstrap routing.
 
 Handler обязан:
 
 1. считать path/query/header/body;
 2. выполнить transport validation;
-3. преобразовать DTO в application command/query;
-4. передать `c.Request.Context()`;
-5. вызвать use case;
-6. преобразовать результат или типизированную ошибку в HTTP response.
+3. использовать strict JSON decoding согласно API Design;
+4. преобразовать DTO в application command/query;
+5. передать `c.Request.Context()`;
+6. вызвать use case;
+7. передать ошибку централизованному mapper/responder;
+8. сформировать нормативный response envelope.
 
-Handler не должен:
+Handler не выполняет FEFO, расчёт итоговой цены, SQL, transaction management, stock mutation или authorization только по JWT claims.
 
-- выполнять FEFO;
-- рассчитывать окончательные цены;
-- открывать транзакцию;
-- обращаться напрямую к pgx;
-- обновлять остатки;
-- содержать SQL;
-- передавать `*gin.Context` в application/domain.
+Ошибки сравниваются через `errors.Is()` и централизованно классифицируются согласно ADR-0016. Ручные строковые сравнения и копирование switch mapping в каждый handler запрещены.
 
-## 12. HTTP Server Bootstrap
+## 13. HTTP server и middleware
 
-Production server создаётся через `gin.New()` и `http.Server` с явными таймаутами:
+Production server создаётся через `gin.New()` и явный `http.Server` с настроенными:
 
-```go
-server := &http.Server{
-    Addr:              cfg.HTTP.Address,
-    Handler:           router,
-    ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
-    ReadTimeout:       cfg.HTTP.ReadTimeout,
-    WriteTimeout:      cfg.HTTP.WriteTimeout,
-    IdleTimeout:       cfg.HTTP.IdleTimeout,
-}
-```
+- `ReadHeaderTimeout`;
+- `ReadTimeout`;
+- `WriteTimeout`;
+- `IdleTimeout`;
+- graceful shutdown.
 
-Middleware подключаются явно:
+Middleware подключаются явно и в проверенном порядке:
 
 - request ID;
 - panic recovery;
 - structured access logging;
-- authentication;
-- authorization;
-- CORS;
+- tracing/metrics;
 - body-size limit;
-- rate limiting при подтверждённой необходимости;
-- metrics and tracing.
+- CORS;
+- authentication;
+- authorization/scope policies;
+- rate limiting там, где это утверждено.
 
-## 13. Модульное владение таблицами
+Request/response logging применяет redaction и не логирует credentials, tokens и sensitive payload целиком.
 
-Предварительное владение:
-
-- `catalog`: `products`, `product_presentations`, `product_barcodes`, catalog staging;
-- `pharmacy`: `pharmacies`, назначения аптекарей, `pharmacy_products`;
-- `inventory`: `receipts`, `receipt_items`, `stock_lots`, `inventory_operations`, `inventory_movements`, write-offs and corrections;
-- `sales`: `sales`, `sale_items`, `sale_item_allocations`, `sale_returns`, `sale_return_items`, `sale_return_item_allocations`;
-- `auth`: users, credentials, sessions and roles;
-- `audit`: security and administrative audit records.
-
-Межмодульная транзакция продажи является application orchestration. Она может использовать transaction-scoped порты нескольких модулей, но конкретный SQL остаётся внутри инфраструктуры владельца таблицы.
-
-## 14. Миграции
-
-Миграции хранятся централизованно в `backend/migrations`, поскольку PostgreSQL-схема разворачивается как единое целое.
-
-При этом имя и содержание каждой миграции должны позволять определить модуль-владелец изменяемых таблиц.
-
-Пример:
+## 14. Platform packages
 
 ```text
-20260716120000_catalog_core.sql
-20260716121000_pharmacy_core.sql
-20260716122000_inventory_core.sql
-20260716123000_sales_core.sql
+backend/internal/platform/
+├── config/
+├── database/
+├── httpserver/
+├── logging/
+├── observability/
+├── clock/
+├── ids/
+├── crypto/
+├── files/
+└── validation/
 ```
 
-Миграции не должны создавать циклически неразрешимые зависимости. При необходимости внешние ключи между модулями добавляются отдельной интеграционной миграцией после создания базовых таблиц.
+Platform не владеет бизнес-семантикой. Здесь запрещены `SaleRepository`, `ReturnPolicy`, `UserService` и прочие domain/application contracts.
 
-## 15. Тестирование
+## 15. Shared packages
 
-- domain: table-driven unit tests без БД;
-- application: unit tests с fake ports и fake transactor;
-- repository: PostgreSQL integration tests;
-- transaction scenarios: реальные конкурентные integration tests;
-- HTTP handlers: `httptest` + Gin test mode;
-- end-to-end: поднятое приложение и PostgreSQL в контейнерах.
+```text
+backend/internal/shared/
+├── kernel/
+├── apperror/
+├── authcontext/
+├── httpx/
+└── testutil/
+```
 
-Особенно обязательны тесты:
+Shared package допускается только при одинаковой устойчивой семантике в нескольких модулях.
 
-- две конкурентные продажи одного товара;
-- многострочные чеки с обратным порядком товаров;
-- недостаточный остаток;
-- повтор idempotency key;
-- deadlock retry;
-- частичные конкурентные возвраты;
-- rollback при ошибке вставки движения;
-- отсутствие записей после неуспешного проведения.
+`shared/httpx` содержит единые transport helpers: envelope, strict decoder, pagination headers и centralized HTTP error responder.
 
-## 16. Следующий этап
+`shared/apperror` содержит типизированную application error classification, но не HTTP status constants в Domain.
 
-После фиксации этого документа можно создавать первые миграции в следующем порядке:
+Общий `utils` запрещён.
 
-1. базовые extensions and utility functions;
-2. catalog core;
-3. pharmacy core;
-4. inventory receipts and lots;
-5. sales and allocations;
-6. return allocations;
-7. append-only permissions and reconciliation indexes.
+## 16. Владение данными
+
+Нормативное владение:
+
+- `identity`: users, role assignments, sessions;
+- `pharmacy`: pharmacies, pharmacist assignments;
+- `catalog`: products, presentations, barcodes, product requests, catalog imports;
+- `assortment`: pharmacy products, local prices и sale policies;
+- `inventory`: receipts, lots, operations, movements, write-offs, adjustments;
+- `sales`: sales, sale items, sale item allocations;
+- `returns`: sale returns и return allocations;
+- `reliability`: idempotency records;
+- `audit`: audit events;
+- `alerts`: alerts;
+- `search`: public read projections;
+- `replenishment`: recommendation projections.
+
+Cross-module transaction не меняет ownership. SQL write остаётся в infrastructure package владельца таблицы.
+
+## 17. Migrations
+
+Все PostgreSQL migrations находятся в:
+
+```text
+backend/migrations/
+```
+
+Migration names отражают module owner и ответственность. Cross-module constraints могут добавляться отдельной integration migration после создания базовых таблиц.
+
+DDL обязан синхронизироваться с `06-database-design.md` в том же change set.
+
+Production reference data создаются migrations. Demo/test data не смешиваются с production migrations.
+
+## 18. Workers
+
+`backend/cmd/worker` использует те же application contracts, что API, и не вызывает HTTP endpoint собственного backend.
+
+Job handler обязан:
+
+- принимать `context.Context`;
+- работать bounded batches;
+- быть идемпотентным;
+- использовать repository locking policy;
+- сохранять system actor/audit там, где требуется;
+- поддерживать graceful shutdown;
+- не удерживать transaction во время внешнего I/O.
+
+## 19. Тестирование
+
+- Domain tests — рядом с domain code, без БД;
+- Application tests — рядом с use case, с fake ports/transactor;
+- PostgreSQL integration tests — `backend/test/integration`;
+- concurrency tests — `backend/test/concurrency` с реальной PostgreSQL;
+- HTTP contract tests — `backend/test/contract`;
+- backend E2E — `backend/test/e2e`.
+
+Обязательные сценарии включают конкурентные продажи, конкурирующие возвраты, refresh rotation, idempotency races, deadlock retry, fail-closed audit и rollback без частичных movements.
+
+## 20. Architecture enforcement
+
+CI должен проверять:
+
+- `go test ./...`;
+- `go vet ./...`;
+- static analysis;
+- запрет импортов Gin/pgx в Domain/Application;
+- запрет импорта concrete infrastructure другого модуля;
+- запрет `shared -> modules`;
+- запрет `delivery -> infrastructure/postgres`;
+- отсутствие frontend source/dependencies внутри `backend/`.
+
+## 21. Definition of Done
+
+Backend structural change завершено только если:
+
+1. package ownership соответствует `04-architecture.md` и `07-domain-model.md`;
+2. пути соответствуют `08-project-structure.md`;
+3. composition выполняется только в `internal/bootstrap`;
+4. межмодульная операция имеет явный orchestration/UoW contract;
+5. Domain/Application не зависят от Gin/pgx;
+6. SQL остаётся у module owner;
+7. HTTP contract синхронизирован с `05-api-design.md`;
+8. schema change синхронизирован с `06-database-design.md`;
+9. добавлены unit/integration/concurrency tests по типу изменения;
+10. frontend не помещён внутрь backend и backend build не устанавливает frontend dependencies.
