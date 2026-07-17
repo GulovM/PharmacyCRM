@@ -1,7 +1,7 @@
 # PharmacyCRM — Documentation Index
 
 **Статус документа:** Active  
-**Версия:** 1.0  
+**Версия:** 1.1  
 **Дата:** 2026-07-17
 
 ## 1. Назначение
@@ -33,9 +33,9 @@
 | 03 | `03-system-context.md` | системная граница, акторы, внешние зависимости и trust boundaries | Draft |
 | 04 | `04-architecture.md` | общая целевая архитектура и обязательные архитектурные правила | Draft |
 | 04-01 | `04-01-backend-architecture.md` | конкретизация структуры Go backend и composition root | Draft |
-| 05 | `05-api-design.md` | единый человекочитаемый каталог HTTP API-контрактов | Planned |
-| 06 | `06-database-design.md` | целевая PostgreSQL-модель и проектный DDL | Draft |
-| 06-01 | `06-01-database-design-return-allocations.md` | нормативное дополнение по возвратным аллокациям | Accepted amendment |
+| 05 | `05-api-design.md` | единый человекочитаемый каталог HTTP API-контрактов | Draft |
+| 06 | `06-database-design.md` | целевая PostgreSQL-модель, DDL, инварианты, индексы и migration strategy | Draft |
+| 06-01 | `06-01-database-design-return-allocations.md` | историческое дополнение по возвратным аллокациям, включённое в основной документ | Incorporated |
 
 ## 4. Планируемые документы
 
@@ -43,7 +43,6 @@
 
 | № | Планируемый документ | Назначение |
 |---:|---|---|
-| 05 | `05-api-design.md` | общие правила API и каталог endpoint-ов |
 | 07 | `07-domain-model.md` | агрегаты, сущности, value objects, состояния и доменные инварианты |
 | 08 | `08-project-structure.md` | окончательная файловая структура backend, frontend и инфраструктуры |
 | 09 | `09-security-design.md` | модель угроз, authentication, authorization, sessions, secrets и audit |
@@ -102,12 +101,12 @@ ADR после принятия не переписывается так, буд
 
 Перед началом массовой реализации необходимо:
 
-1. создать `05-api-design.md`;
-2. интегрировать `06-01-database-design-return-allocations.md` в следующую редакцию `06-database-design.md`;
-3. синхронизировать `04-01-backend-architecture.md` с ADR-0015 и ADR-0016: Zap, error responder, request/response redaction и массив middleware;
-4. добавить в Database Design отсутствующие identity, pharmacy assignment, idempotency и audit tables;
-5. определить нормативные правила возврата лекарств после юридической проверки;
-6. создать security, deployment, testing и observability документы до production-ready реализации.
+1. синхронизировать `04-01-backend-architecture.md` с ADR-0015 и ADR-0016: Zap, error responder, request/response redaction и массив middleware;
+2. определить нормативные правила возврата лекарств после юридической проверки;
+3. создать domain model, security, deployment, testing и observability документы до production-ready реализации;
+4. при создании первых migrations сверить их с `06-database-design.md` версии 1.0 и добавить migration/concurrency tests.
+
+Задачи создания `05-api-design.md`, интеграции возвратного amendment и добавления identity, assignments, sessions, idempotency и audit в Database Design закрыты.
 
 ## 9. Правило сопровождения
 
