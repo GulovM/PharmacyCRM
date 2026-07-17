@@ -1,56 +1,57 @@
 # PharmacyCRM — Domain Model
 
 **Статус документа:** Draft  
-**Версия:** 1.0  
+**Версия:** 1.1  
 **Дата:** 2026-07-17  
 **Связанные документы:** `01-product-vision.md`, `02-srs.md`, `03-system-context.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `05-api-design.md`, `06-database-design.md`  
 **Связанные ADR:** ADR-0009, ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0014, ADR-0016, ADR-0017
 
 ## 1. Назначение и нормативная роль
 
-Документ определяет целевую доменную модель PharmacyCRM: bounded contexts, агрегаты, aggregate roots, сущности, value objects, состояния, доменные инварианты, доменные сервисы, события и транзакционные границы.
+Документ определяет целевую доменную модель PharmacyCRM: bounded contexts, агрегаты, aggregate roots, сущности, value objects, состояния, доменные сервисы, события, межагрегатные инварианты и транзакционные границы.
 
-Документ отвечает на вопросы:
+Он отвечает на вопросы:
 
-- какой объект является владельцем конкретного бизнес-инварианта;
+- какой объект владеет конкретным бизнес-инвариантом;
 - какие изменения разрешены только через aggregate root;
 - какие данные являются сущностями, а какие value objects;
 - какие состояния и переходы допустимы;
-- какие операции обязаны выполняться в одной PostgreSQL-транзакции;
+- какие операции обязаны commit или rollback как единое целое;
 - где допустима eventual consistency;
 - какие правила принадлежат Domain, Application и Infrastructure.
 
 Domain Model не является схемой БД и не должен механически повторять таблицы. Одна таблица не обязательно равна одному агрегату, а один use case может координировать несколько агрегатов через Unit of Work.
 
-При противоречии применяется порядок приоритетов из SRS. Изменение доменной модели, влияющее на внешнее поведение, должно синхронно обновлять SRS, API Design, Database Design и соответствующие ADR.
+При противоречии применяется порядок приоритетов из SRS. Изменение модели, влияющее на внешнее поведение, синхронно обновляет SRS, API Design, Database Design и соответствующие ADR.
 
 ## 2. Термины моделирования
 
 - **Entity** — объект с устойчивой идентичностью и жизненным циклом.
 - **Value Object** — неизменяемое значение без собственной идентичности; равенство определяется содержимым.
-- **Aggregate** — согласованная группа domain objects с одной внешней точкой изменения.
+- **Aggregate** — минимальная согласованная группа domain objects с одной внешней точкой изменения.
 - **Aggregate Root** — сущность, через которую выполняются все изменения агрегата.
 - **Domain Service** — чистое бизнес-правило, которое естественно не принадлежит одной сущности.
 - **Application Service / Use Case** — координация авторизации, транзакции, репозиториев, агрегатов, идемпотентности и post-commit действий.
-- **Domain Event** — факт, уже произошедший в домене. Событие именуется в прошедшем времени.
+- **Domain Event** — факт, уже произошедший в домене; именуется в прошедшем времени.
 - **Transaction Boundary** — набор чтений и изменений, которые должны commit или rollback как единое целое.
 - **Invariant** — правило, которое не может быть нарушено ни одним допустимым состоянием системы.
+- **Read Model** — проекция для чтения, не являющаяся командным агрегатом и не владеющая бизнес-инвариантами записи.
 
 ## 3. Bounded contexts и владение моделью
 
-| Context / модуль | Основная ответственность | Владеет |
+| Context / модуль | Ответственность | Aggregate roots / command models |
 |---|---|---|
-| Identity | пользователи, роли, credentials, sessions | `User`, `RoleAssignment`, `UserSession` |
+| Identity | пользователи, credentials, роли, sessions | `User`, `RoleAssignment`, `UserSession` |
 | Pharmacy | аптеки и назначения аптекарей | `Pharmacy`, `PharmacyAssignment` |
-| Catalog | глобальные карточки препаратов, фасовки, штрихкоды, requests и staging | `Product`, `CatalogImport`, `ProductRequest` |
+| Catalog | глобальные карточки, фасовки, штрихкоды, requests и staging | `Product`, `ProductPresentation`, `ProductRequest`, `ImportJob` |
 | Assortment | локальная продаваемая позиция и правила отпуска | `PharmacyProduct` |
-| Inventory | лоты, остатки, поступления, движения, списания, корректировки | `Receipt`, `InventoryLedger`, `WriteOff`, `InventoryAdjustment` |
-| Sales | продажа, строки и FEFO-аллокации | `Sale` |
-| Returns | возврат по исходной продаже и исходным аллокациям | `SaleReturn` |
+| Inventory | поступления, лоты, движения, списания, корректировки | `Receipt`, `WriteOff`, `InventoryAdjustment`; транзакционный `InventoryWorkingSet` |
+| Sales | продажа, строки, цены и FEFO-аллокации | `Sale` |
+| Returns | возврат по исходной продаже и аллокациям | `SaleReturn` |
 | Reliability | идемпотентность команд | `IdempotencyRecord` |
 | Audit | неизменяемые события расследования | `AuditEvent` |
-| Alerts | предупреждения и их lifecycle | `Alert` |
-| Search | публичные read models наличия | проекции, не командные агрегаты |
+| Alerts | предупреждения и lifecycle | `Alert` |
+| Search | публичная проекция наличия | read models |
 | Replenishment | рекомендации пополнения | вычисляемые read models |
 
 Один context может хранить внешний ID другого context, но не получает право изменять внешний агрегат. Межконтекстные команды координируются Application layer через публичные порты и Unit of Work.
@@ -58,40 +59,25 @@ Domain Model не является схемой БД и не должен мех
 ## 4. Общие правила агрегатов
 
 1. Aggregate root является единственной точкой изменения внутренних сущностей.
-2. Внешний код не получает mutable-ссылки на внутренние коллекции агрегата.
-3. Конструктор создаёт только валидный агрегат; восстановление из repository также обязано проверять структурную целостность.
-4. Методы агрегата выражают бизнес-намерение: `Block`, `AssignRole`, `Post`, `Allocate`, `CompleteReturn`, а не общие setters.
+2. Внешний код не получает mutable-ссылки на внутренние коллекции.
+3. Конструктор создаёт только валидный объект; repository reconstruction проверяет структурную целостность persisted state.
+4. Методы выражают бизнес-намерение: `Block`, `Assign`, `Post`, `Complete`, `Reverse`, а не общие setters.
 5. Domain methods не принимают `gin.Context`, DTO, `pgx.Tx`, SQL-модели или HTTP status codes.
-6. Время, ID и криптографические значения передаются в Domain готовыми значениями или через узкие порты.
+6. Время, ID и криптографические значения передаются готовыми значениями или через узкие порты.
 7. Межагрегатная уникальность, authorization scope и конкурентная проверка обеспечиваются Application + repository + database constraints.
-8. Проведённый документ после commit является историческим и не реконструируется как изменяемый draft.
-9. Доменные коллекции должны иметь разумный лимит размера команды; массовые импорты моделируются отдельным staging aggregate/job.
+8. Проведённый документ после commit является историческим и не восстанавливается как свободно изменяемый draft.
+9. Массовые импорты моделируются staging job, а не огромным in-memory aggregate.
 10. Domain не начинает и не commit-ит транзакции.
+11. Repository загружает только состояние, необходимое конкретной команде; полная историческая коллекция не должна становиться обязательной частью агрегата.
+12. Aggregate method либо возвращает новое валидное состояние/domain event, либо domain error; частично изменённое состояние наружу не выходит.
 
 ## 5. Общие value objects
 
-### 5.1 Идентификаторы
+### 5.1 Типизированные идентификаторы
 
-Типизированные ID предотвращают смешивание сущностей:
+Используются отдельные типы: `UserID`, `RoleAssignmentID`, `SessionID`, `PharmacyID`, `PharmacyAssignmentID`, `ProductID`, `ProductPresentationID`, `PharmacyProductID`, `StockLotID`, `InventoryOperationID`, `ReceiptID`, `SaleID`, `SaleItemID`, `SaleItemAllocationID`, `SaleReturnID`, `IdempotencyRecordID`, `AuditEventID`, `AlertID`.
 
-- `UserID`;
-- `RoleID`;
-- `SessionID`;
-- `PharmacyID`;
-- `ProductID`;
-- `ProductPresentationID`;
-- `PharmacyProductID`;
-- `StockLotID`;
-- `InventoryOperationID`;
-- `ReceiptID`;
-- `SaleID`;
-- `SaleItemID`;
-- `SaleItemAllocationID`;
-- `SaleReturnID`;
-- `IdempotencyRecordID`;
-- `AuditEventID`.
-
-Domain не должен использовать один общий `string` или `uuid.UUID` во всех сигнатурах без типовой обёртки.
+Общий `string` или `uuid.UUID` не используется во всех domain-сигнатурах без типовой обёртки.
 
 ### 5.2 `Money`
 
@@ -102,40 +88,29 @@ Money {
 }
 ```
 
-Инварианты:
+Правила:
 
-- `amountDirams >= 0` для цены и абсолютной суммы;
-- отрицательный денежный эффект представляется типом операции, а не отрицательной ценой;
+- цена и абсолютная сумма неотрицательны;
+- отрицательный эффект выражается типом операции, а не отрицательной ценой;
 - сложение и сравнение разрешены только для одной валюты;
-- переполнение `int64` проверяется;
-- округление выполняется только утверждённой policy.
+- overflow проверяется;
+- округление выполняется утверждённой policy.
 
 ### 5.3 Количества
 
-- `BaseUnitQuantity` — целое `int64 >= 0`;
-- `PositiveBaseUnitQuantity` — целое `int64 > 0`;
-- `PackageQuantity` — целое `int64 > 0`;
-- `BaseUnitsPerPackage` — целое `int64 > 0`;
-- `SignedBaseUnitDelta` — ненулевое `int64`, допускает знак.
+- `BaseUnitQuantity`: `int64 >= 0`;
+- `PositiveBaseUnitQuantity`: `int64 > 0`;
+- `PackageQuantity`: `int64 > 0`;
+- `BaseUnitsPerPackage`: `int64 > 0`;
+- `SignedBaseUnitDelta`: ненулевой `int64`.
 
-Преобразование упаковок в базовые единицы проверяет overflow:
+Преобразование `packages × baseUnitsPerPackage` проверяет overflow.
 
-```text
-baseUnits = packages × baseUnitsPerPackage
-```
+### 5.4 Продажа и цены
 
-### 5.4 `SaleUnit`
+`SaleUnit`: `PACKAGE` или `INNER_UNIT`.
 
-Состояния:
-
-- `PACKAGE`;
-- `INNER_UNIT`.
-
-Для `PACKAGE` списание равно `displayQuantity × baseUnitsPerPackageSnapshot`. Для `INNER_UNIT` списание равно `displayQuantity`.
-
-### 5.5 `PriceSnapshot`
-
-Неизменяемый снимок цены на момент документа:
+Для `PACKAGE` списание равно `displayQuantity × baseUnitsPerPackageSnapshot`; для `INNER_UNIT` — `displayQuantity`.
 
 ```text
 PriceSnapshot {
@@ -145,26 +120,16 @@ PriceSnapshot {
 }
 ```
 
-Изменение текущей цены ассортимента не изменяет snapshot.
+Изменение текущей цены не изменяет snapshot проведённого документа.
 
-### 5.6 Каталожные значения
+### 5.5 Каталожные значения
 
-- `Barcode` — нормализованная непустая строка допустимого формата;
-- `ProductName`;
-- `INN`;
-- `Dosage`;
-- `DosageForm`;
-- `ManufacturerName`;
-- `BatchNumber`;
-- `ExpirationDate`;
-- `DocumentNumber`.
+`Barcode`, `ProductName`, `INN`, `Dosage`, `DosageForm`, `ManufacturerName`, `BatchNumber`, `ExpirationDate`, `DocumentNumber` являются нормализованными value objects. Нормализация поиска и уникальности не уничтожает исходное отображаемое значение.
 
-Нормализация регистра для поиска и уникальности не должна уничтожать исходное отображаемое значение.
+### 5.6 Identity и security values
 
-### 5.7 Identity и transport-independent security values
-
-- `Login` — нормализованный уникальный идентификатор входа;
-- `PasswordHash` — opaque value, Domain не знает алгоритм;
+- `Login`;
+- `PasswordHash` — opaque value;
 - `RefreshTokenHash` — opaque bytes;
 - `TokenFamilyID`;
 - `IPAddress`;
@@ -172,16 +137,18 @@ PriceSnapshot {
 - `RequestID`;
 - `TraceID`.
 
-### 5.8 `IdempotencyKey` и `RequestFingerprint`
+Domain не знает алгоритм password/token hashing.
+
+### 5.7 Идемпотентность
 
 - `IdempotencyKey` — непустая строка до 128 символов;
 - `OperationName` — стабильное имя команды;
 - `IdempotencyScope` — actor + operation + pharmacy/global scope;
 - `RequestFingerprint` — hash канонического смыслового payload.
 
-Transport-only поля, порядок JSON-ключей и request ID не входят в fingerprint.
+Transport-only поля, порядок JSON-ключей и request ID не входят в fingerprint. Path parameters, effective scope и версия ресурса, влияющие на смысл команды, входят.
 
-### 5.9 `GeoPoint`
+### 5.8 `GeoPoint`, `Reason`, `Actor`
 
 ```text
 GeoPoint {
@@ -190,34 +157,25 @@ GeoPoint {
 }
 ```
 
-Расстояние до аптеки является вычисляемым значением search context, а не состоянием `Pharmacy`.
+`Reason` — непустой trimmed text. Для чувствительных операций reason сохраняется в историческом документе и/или audit metadata.
 
-### 5.10 `Reason`
+```text
+Actor {
+    userID?
+    sessionID?
+    role?
+    pharmacyScope?
+    actorType: USER | SYSTEM
+}
+```
 
-Непустой trimmed text. Для чувствительных операций reason обязателен и сохраняется в историческом документе и/или audit metadata.
+`USER` требует `userID`; `SYSTEM` не содержит user identity. `Actor` не заменяет stale-sensitive repository revalidation.
 
 ## 6. Identity context
 
 ### 6.1 Aggregate `User`
 
-**Aggregate root:** `User`.
-
-Внутренние сущности:
-
-- `RoleAssignment` — историческое назначение роли;
-- при реализации в одном repository session может загружаться отдельно и не обязана входить в User aggregate.
-
-Основные свойства:
-
-- `UserID`;
-- `Login`;
-- `PasswordHash`;
-- display name и phone;
-- `UserStatus`;
-- failed login state;
-- password changed time;
-- version;
-- role history.
+`User` владеет credentials, profile, account status, login failure state и optimistic version. История ролей не загружается внутрь `User`: она принадлежит отдельным `RoleAssignment`, чтобы размер User aggregate не рос бесконечно.
 
 `UserStatus`:
 
@@ -231,49 +189,49 @@ ARCHIVED ──X──> ACTIVE/BLOCKED
 Правила:
 
 1. `ARCHIVED` — терминальное состояние для новых операций.
-2. Block/archive запрещают создание новых sessions.
-3. Block/archive должны приводить к отзыву активных sessions в той же application-транзакции либо по более строгой security policy.
-4. Login активного пользователя уникален.
-5. Пользователь имеет не более одной активной role assignment в MVP.
-6. Повторное назначение ранее отозванной роли создаёт новую историческую сущность.
-7. Самостоятельное назначение `ADMIN` и `PHARMACIST` запрещено.
-8. Изменение password hash увеличивает security version/фиксирует `passwordChangedAt` и отзывает sessions согласно policy.
+2. `BLOCKED` и `ARCHIVED` запрещают новые sessions и защищённые команды.
+3. Block/archive отзывают активные sessions в той же application-транзакции.
+4. Block/archive не переписывают и не отзывают роль автоматически: роль — отдельная историческая бизнес-сущность; её отзыв выполняется явной командой.
+5. Login уникален согласно Database Design.
+6. Изменение password hash фиксирует `passwordChangedAt` и отзывает sessions согласно security policy.
+7. Failed-login counters не используются как источник authorization вне User aggregate.
 
-Команды агрегата:
+Команды: `ChangeProfile`, `ChangePasswordHash`, `RecordFailedLogin`, `RecordSuccessfulLogin`, `Block`, `Unblock`, `Archive`.
 
-- `ChangeProfile`;
-- `ChangePasswordHash`;
-- `RecordFailedLogin`;
-- `RecordSuccessfulLogin`;
-- `Block`;
-- `Unblock`;
-- `Archive`;
-- `AssignRole`;
-- `RevokeRole`.
+События: `UserCreated`, `UserBlocked`, `UserUnblocked`, `UserArchived`, `UserPasswordChanged`.
 
-Domain events:
+### 6.2 Aggregate `RoleAssignment`
 
-- `UserCreated`;
-- `UserBlocked`;
-- `UserUnblocked`;
-- `UserArchived`;
-- `UserPasswordChanged`;
-- `UserRoleAssigned`;
-- `UserRoleRevoked`.
+Отдельный aggregate root сохраняет историю назначения и отзыва роли.
 
-### 6.2 Aggregate `UserSession`
+Состояния:
 
-**Aggregate root:** `UserSession`.
+```text
+ACTIVE ──revoke(reason)──> REVOKED
+REVOKED ──X──> ACTIVE
+```
 
-Session является отдельным агрегатом, потому что имеет собственный lifecycle, конкурентную refresh rotation и независимый retention.
+Повторное назначение создаёт новый aggregate.
 
-`SessionState` вычисляется из timestamps:
+Инварианты:
+
+1. У пользователя не более одной active role assignment в MVP.
+2. Назначение `ADMIN` и `PHARMACIST` выполняется только разрешённым администратором.
+3. `assignedBy`, `revokedBy`, timestamps и reason формируют неизменяемую историю.
+4. Отзыв роли не удаляет пользователя и не изменяет старые документы.
+5. Отзыв активной роли отзывает sessions в той же transaction boundary, если после отзыва пользователь теряет защищённый доступ.
+
+События: `UserRoleAssigned`, `UserRoleRevoked`.
+
+### 6.3 Aggregate `UserSession`
+
+Session имеет собственный lifecycle, конкурентную refresh rotation и retention.
+
+Вычисляемые состояния:
 
 - `ACTIVE`: не отозвана и `now < expiresAt`;
 - `EXPIRED`: не отозвана и `now >= expiresAt`;
 - `REVOKED`: `revokedAt != null`.
-
-Переходы:
 
 ```text
 ACTIVE ──rotate──> REVOKED(ROTATED) + new ACTIVE session
@@ -284,36 +242,19 @@ REVOKED/EXPIRED ──X──> ACTIVE
 
 Правила:
 
-1. Raw refresh token никогда не входит в domain entity после issuance; хранится только hash.
+1. Raw refresh token не входит в persisted entity; хранится hash.
 2. Rotation создаёт новую session и отзывает предыдущую атомарно.
-3. `rotatedFromSessionID` не может ссылаться на ту же session.
-4. Одна исходная session может породить не более одной следующей session.
-5. Повторное использование уже rotated token отзывает всю token family.
-6. Session не подтверждает authorization без проверки текущего `User` и назначения.
-7. `lastUsedAt` не может быть раньше `createdAt`.
-
-Команды:
-
-- `Rotate`;
-- `Revoke`;
-- `TouchLastUsed`.
+3. Session не может ссылаться сама на себя.
+4. Одна source session порождает не более одной следующей session.
+5. Reuse rotated token отзывает всю token family.
+6. Session не подтверждает authorization без проверки текущего User, role и assignment.
+7. `lastUsedAt >= createdAt`; частота touch определяется security design и не обязана порождать write на каждый запрос.
 
 ## 7. Pharmacy context
 
 ### 7.1 Aggregate `Pharmacy`
 
-**Aggregate root:** `Pharmacy`.
-
-Свойства:
-
-- name;
-- address, landmark;
-- `GeoPoint`;
-- phone, working hours;
-- `PharmacyStatus`;
-- optimistic version.
-
-Состояния:
+Содержит публичный профиль, `GeoPoint`, `PharmacyStatus` и optimistic version.
 
 ```text
 ACTIVE ──block──> BLOCKED
@@ -325,23 +266,12 @@ ARCHIVED ──X──> ACTIVE/BLOCKED
 Инварианты:
 
 1. Только `ACTIVE` принимает новые receipt, sale, return-to-stock, write-off и adjustment команды.
-2. `BLOCKED` сохраняет чтение истории и расследование, но запрещает новые операционные эффекты.
-3. `ARCHIVED` не участвует в публичном поиске и не принимает новые назначения.
-4. Исторические документы сохраняют `PharmacyID` после блокировки/архивирования.
-5. Обновление публичного профиля использует optimistic concurrency.
+2. `BLOCKED` сохраняет чтение истории и расследование.
+3. `ARCHIVED` не участвует в публичном поиске и новых назначениях.
+4. Исторические документы сохраняют `PharmacyID`.
+5. Профиль изменяется с optimistic concurrency.
 
 ### 7.2 Aggregate `PharmacyAssignment`
-
-**Aggregate root:** `PharmacyAssignment`.
-
-Назначение моделируется отдельно, чтобы сохранять историю переводов аптекаря.
-
-Состояния:
-
-- `ACTIVE`: `endedAt == null`;
-- `ENDED`: `endedAt != null`.
-
-Переход:
 
 ```text
 ACTIVE ──end(reason)──> ENDED
@@ -352,26 +282,19 @@ ENDED ──X──> ACTIVE
 
 Инварианты:
 
-1. Назначаемый пользователь имеет активную роль `PHARMACIST`.
+1. Пользователь имеет active role `PHARMACIST`.
 2. Аптека не `ARCHIVED`.
-3. В MVP у аптекаря не более одного активного назначения.
+3. В MVP у аптекаря не более одного active assignment.
 4. `assignedBy` и `endedBy` являются разрешёнными администраторами.
-5. Наличие `pharmacy_id` в команде не заменяет проверку assignment.
+5. `pharmacy_id` из команды не заменяет assignment validation.
 
 ## 8. Catalog context
 
 ### 8.1 Aggregate `Product`
 
-**Aggregate root:** `Product`.
+`Product` владеет общими лекарственными атрибутами: название, МНН, форму, дозировку, производителя, страну, рецептурность, status и version.
 
-Внутренние сущности:
-
-- `ProductPresentation`;
-- `ProductBarcode` как дочерняя сущность presentation.
-
-Допустимая реализация может хранить presentation отдельным aggregate root для ограничения размера aggregate и независимого редактирования. Нормативное правило: изменение presentation и его barcode выполняется только через catalog context; `Product` не предоставляет mutable-коллекции наружу.
-
-`CatalogStatus`:
+`ProductPresentation` не является внутренней коллекцией Product aggregate. Это отдельный aggregate root, связанный через `ProductID`. Такое разделение нормативно для MVP и предотвращает неограниченный рост Product aggregate и конфликт независимых изменений фасовок.
 
 ```text
 ACTIVE <──activate/deactivate──> INACTIVE
@@ -379,18 +302,22 @@ ACTIVE/INACTIVE ──archive──> ARCHIVED
 ARCHIVED ──X──> ACTIVE/INACTIVE
 ```
 
+Изменение Product действует только на будущие операции и не переписывает snapshots.
+
+### 8.2 Aggregate `ProductPresentation`
+
+Владеет package data, `BaseUnitsPerPackage`, inner-unit semantics, status, version и дочерними `ProductBarcode`.
+
 Инварианты:
 
-1. Barcode глобально уникален среди допустимых записей.
+1. Barcode глобально уникален согласно Database Design.
 2. У presentation не более одного active primary barcode.
 3. Если `baseUnitsPerPackage > 1`, inner unit name обязателен.
-4. Изменение каталога действует только на будущие операции.
-5. Архивирование запрещает новые подключения/операции, но сохраняет историю.
-6. Product presentation не удаляется, если на неё ссылается ассортимент или история.
+4. Архивирование запрещает новые assortment links и операции, но сохраняет историю.
+5. Presentation не удаляется при наличии ссылок из ассортимента или истории.
+6. Barcode изменяется только через presentation root; наружу не выдаётся mutable collection.
 
-### 8.2 Aggregate `ProductRequest`
-
-Состояния:
+### 8.3 Aggregate `ProductRequest`
 
 ```text
 OPEN ──approve──> APPROVED
@@ -399,59 +326,35 @@ OPEN ──mark-duplicate──> DUPLICATE
 terminal ──X──> another state
 ```
 
-Terminal state требует resolver, resolved time и, для `APPROVED`/`DUPLICATE`, ссылки на resolved presentation согласно policy.
+Terminal state требует resolver и resolved time. `APPROVED`/`DUPLICATE` требуют resolved presentation согласно утверждённой policy.
 
-### 8.3 Aggregate `CatalogImport`
+### 8.4 Aggregate `ImportJob`
 
-**Aggregate root:** `ImportJob`; внутренние сущности — `ImportRow`.
-
-Состояния job:
+Внутренние сущности: `ImportRow`.
 
 ```text
 UPLOADED -> VALIDATING -> READY -> CONFIRMING -> COMPLETED
                    \-> HAS_ERRORS -> VALIDATING
-UPLOADED/VALIDATING/READY/CONFIRMING -> FAILED
+UPLOADED/VALIDATING/READY/HAS_ERRORS/CONFIRMING -> FAILED
 ```
-
-Состояния row:
-
-- `PENDING`;
-- `VALID`;
-- `ERROR`;
-- `MATCHED`;
-- `CREATE_NEW`;
-- `REJECTED`;
-- `PUBLISHED`.
 
 Инварианты:
 
-1. Catalog import не имеет pharmacy scope; initial stock import обязан иметь pharmacy scope.
+1. Catalog import имеет global scope; initial stock import — pharmacy scope.
 2. Row number уникален внутри job.
-3. `READY` допускается только при отсутствии blocking errors.
+3. `READY` требует отсутствие blocking errors.
 4. Publish использует idempotency и утверждённую atomic/partial policy.
-5. `COMPLETED` терминален.
-6. Raw file content не становится частью Domain; Domain получает нормализованные значения и validation decisions.
+5. `COMPLETED` и `FAILED` терминальны.
+6. Raw file не становится частью Domain; Domain получает нормализованные строки и validation decisions.
+7. Job counters согласованы с row states и проверяются перед terminal transition.
 
 ## 9. Assortment context
 
 ### 9.1 Aggregate `PharmacyProduct`
 
-**Aggregate root:** `PharmacyProduct`.
+Локальная продаваемая позиция, а не копия Product.
 
-Это локальная продаваемая позиция, а не копия глобального Product.
-
-Содержит:
-
-- `PharmacyID`;
-- `ProductPresentationID`;
-- текущие package/inner-unit prices;
-- inner unit sale policy;
-- min и target stock levels;
-- status;
-- inventory freshness marker;
-- version.
-
-Состояния:
+Содержит pharmacy/presentation IDs, текущие цены, inner-unit policy, min/target levels, status, inventory freshness marker и version.
 
 ```text
 ACTIVE <──activate/deactivate──> INACTIVE
@@ -460,49 +363,32 @@ ACTIVE/INACTIVE ──archive──> ARCHIVED
 
 Инварианты:
 
-1. Пара `(PharmacyID, ProductPresentationID)` уникальна.
-2. Inner-unit sale требует inner-unit price и presentation с поддерживаемой внутренней единицей.
+1. `(PharmacyID, ProductPresentationID)` уникальна.
+2. Inner-unit sale требует цены и presentation с внутренней единицей.
 3. `targetStock >= minStock >= 0`.
-4. Только `ACTIVE` позиция участвует в новой продаже и публичной availability projection.
-5. Текущая цена не изменяет historical price snapshots.
-6. `inventoryChangedAt` изменяется только успешной складской транзакцией, не обычным PATCH ассортимента.
+4. Только `ACTIVE` участвует в новой продаже и public availability.
+5. Текущая цена не изменяет historical snapshots.
+6. `inventoryChangedAt` изменяется только успешной складской транзакцией.
 
 ## 10. Inventory context
 
-### 10.1 Командная граница `InventoryLedger`
+### 10.1 Транзакционная модель `InventoryWorkingSet`
 
-`InventoryLedger` является доменной командной границей для согласованного изменения нескольких `StockLot`. Он не обязан материализоваться одной таблицей или загружаться как огромный объект.
+`InventoryWorkingSet` — не aggregate root и не persisted entity. Это ограниченный domain command model, собираемый Application layer внутри одной Unit of Work для атомарного изменения нескольких `StockLot`.
 
-Причина: одна Sale или Return может изменить несколько лотов. Моделирование каждого `StockLot` полностью независимым aggregate root без общей транзакционной координации позволило бы частичный commit и нарушило бы атомарность документа.
+Он включает:
 
-Командный inventory boundary включает:
-
-- заблокированные `PharmacyProduct`;
+- заблокированные `PharmacyProduct` snapshots;
 - выбранные `StockLot`;
-- новый `InventoryOperation`;
-- новые append-only `InventoryMovement`;
+- создаваемый `InventoryOperation`;
+- создаваемые append-only `InventoryMovement`;
 - проверку resulting balances.
 
-Application загружает только затронутый working set в детерминированном порядке.
+Application загружает только затронутый working set в детерминированном порядке. Нельзя превращать его в долгоживущий глобальный aggregate всей аптеки.
 
 ### 10.2 Entity `StockLot`
 
-Сущность имеет идентичность и изменяемый текущий остаток.
-
-Свойства:
-
-- `StockLotID`;
-- `PharmacyProductID`;
-- origin;
-- batch;
-- expiration;
-- current base-unit quantity;
-- historical price/package snapshots;
-- received time;
-- `StockLotStatus`;
-- version.
-
-Состояния:
+`StockLot` имеет идентичность и изменяемый current quantity, но изменяется только через inventory command boundary.
 
 ```text
 ACTIVE ──quantity becomes 0──> DEPLETED
@@ -512,67 +398,39 @@ QUARANTINED ──approved release──> ACTIVE/DEPLETED
 ACTIVE/DEPLETED/QUARANTINED ──archive──> ARCHIVED
 ```
 
-Допуск к продаже определяется не только статусом:
+Sellability определяется policy:
 
 ```text
-sellable = status == ACTIVE
-           AND quantity > 0
-           AND expirationDate >= businessDate
-           AND pharmacy/product are active
+status == ACTIVE
+AND quantity > 0
+AND expiration policy allows sale on businessDate
+AND pharmacy and assortment are active
 ```
+
+Точная трактовка продажи в календарную дату срока годности должна быть подтверждена legal/product policy; Domain не зашивает её неявно.
 
 Инварианты:
 
-1. Quantity никогда не отрицательна.
-2. Каждое изменение quantity имеет ровно одно соответствующее movement в той же транзакции.
-3. `quantityAfter` movement совпадает с новым состоянием lot.
-4. Lot origin и ссылка на receipt/return согласованы.
-5. Просроченный lot не переводится в продаваемый `ACTIVE`.
-6. Изменение batch, expiration и snapshots после создания запрещено, кроме отдельной корректирующей policy до начала операций; по умолчанию — запрещено.
+1. Quantity не отрицательна.
+2. Каждое изменение quantity имеет соответствующий movement в той же transaction.
+3. `quantityAfter` совпадает с новым состоянием lot.
+4. Origin и ссылка на receipt/return согласованы.
+5. Просроченный lot не переводится в sellable `ACTIVE`.
+6. Batch, expiration и snapshots после создания неизменяемы без отдельной корректирующей policy.
 
-### 10.3 Entity `InventoryOperation`
+### 10.3 `InventoryOperation` и `InventoryMovement`
 
-`InventoryOperation` — неизменяемый заголовок складского эффекта.
-
-Типы:
-
-- `RECEIPT`;
-- `INITIAL_STOCK`;
-- `SALE`;
-- `RETURN_TO_STOCK`;
-- `RETURN_WRITE_OFF`;
-- `RETURN_QUARANTINE`;
-- `WRITE_OFF`;
-- `INVENTORY_ADJUSTMENT`;
-- `REVERSAL`.
-
-Состояния:
+Operation types: `RECEIPT`, `INITIAL_STOCK`, `SALE`, `RETURN_TO_STOCK`, `RETURN_WRITE_OFF`, `RETURN_QUARANTINE`, `WRITE_OFF`, `INVENTORY_ADJUSTMENT`, `REVERSAL`.
 
 ```text
 POSTED ──reverse by separate operation──> REVERSED
 ```
 
-Исходная операция не переписывается. `REVERSAL` ссылается на одну исходную operation; одна operation не может быть сторнирована дважды.
+Исходная operation не переписывается. Одна operation сторнируется не более одного раза. Movement append-only и не имеет update/delete command.
 
-### 10.4 Entity `InventoryMovement`
+### 10.4 Aggregate `Receipt`
 
-Append-only проводка:
-
-- operation;
-- lot;
-- signed delta;
-- quantity after;
-- occurred/created time.
-
-У movement нет update/delete command. Исправление создаёт новую compensating operation и movement.
-
-### 10.5 Aggregate `Receipt`
-
-**Aggregate root:** `Receipt`; внутренние сущности — `ReceiptItem`.
-
-Receipt в базовом MVP создаётся сразу проведённым.
-
-Состояния:
+Root: `Receipt`; entities: `ReceiptItem`.
 
 ```text
 POSTED ──reverse──> REVERSED
@@ -581,192 +439,104 @@ POSTED ──reverse──> REVERSED
 Инварианты:
 
 1. Document number уникален в аптеке.
-2. Все items относятся к ассортименту той же аптеки.
-3. Quantity packages и base units согласованы.
+2. Items относятся к ассортименту той же аптеки.
+3. Package/base-unit quantities согласованы.
 4. Posting атомарно создаёт receipt, items, lots, operation, movements, idempotency result и audit.
-5. Posted receipt и items неизменяемы.
-6. Reverse является отдельным use case с отдельной operation; он не удаляет исходный receipt.
+5. Posted receipt/items неизменяемы.
+6. Reverse — отдельный compensating use case.
 
-### 10.6 Aggregate `WriteOff`
+### 10.5 Aggregate `WriteOff`
 
-**Aggregate root:** `WriteOff`; внутренние сущности — `WriteOffItem`.
+Root: `WriteOff`; entities: `WriteOffItem`; states: `COMPLETED`, `REVERSED`.
 
-Состояния: `COMPLETED`, `REVERSED`.
+Reason обязателен; quantities положительны; lots принадлежат pharmacy; недостаток quantity отклоняет всю команду; document, movements, balances, audit и idempotency атомарны.
 
-Правила:
+### 10.6 Aggregate `InventoryAdjustment`
 
-- reason обязателен;
-- quantity списания положительна;
-- все lots принадлежат pharmacy;
-- недостаток quantity отклоняет всю команду;
-- document, movements, balances, audit и idempotency атомарны.
+Root: `InventoryAdjustment`; entities: `InventoryAdjustmentItem`; states: `COMPLETED`, `REVERSED`.
 
-### 10.7 Aggregate `InventoryAdjustment`
-
-**Aggregate root:** `InventoryAdjustment`; внутренние сущности — `InventoryAdjustmentItem`.
-
-Каждая строка фиксирует expected, actual и delta.
-
-Инварианты:
-
-- `delta = actual - expected`;
-- actual не отрицателен;
-- approval обязателен согласно elevated-permission policy;
-- adjustment не является способом переписать movement history;
-- положительные и отрицательные движения фиксируются явно;
-- все изменения атомарны.
+Каждая строка фиксирует expected, actual и delta. `delta = actual - expected`; actual не отрицателен; elevated approval применяется согласно policy; adjustment не переписывает movement history; все эффекты атомарны.
 
 ## 11. Sales context
 
 ### 11.1 Aggregate `Sale`
 
-**Aggregate root:** `Sale`.
-
-Внутренние сущности:
-
-- `SaleItem`;
-- `SaleItemAllocation`.
-
-Состояния:
+Entities: `SaleItem`, `SaleItemAllocation`.
 
 ```text
 COMPLETED ──partial return──> PARTIALLY_REFUNDED
 COMPLETED/PARTIALLY_REFUNDED ──full return──> REFUNDED
 COMPLETED ──approved reversal──> REVERSED
-PARTIALLY_REFUNDED/REFUNDED ──X──> REVERSED без специальной policy
+PARTIALLY_REFUNDED/REFUNDED ──X──> REVERSED без отдельной policy
 ```
 
-В базовом MVP sale создаётся сразу `COMPLETED`; draft aggregate отсутствует.
+В MVP sale создаётся сразу `COMPLETED`; draft отсутствует.
 
 Инварианты:
 
-1. Sale имеет минимум одну item.
-2. В одной команде пара `(PharmacyProductID, SaleUnit)` уникальна.
+1. Минимум одна item.
+2. `(PharmacyProductID, SaleUnit)` уникальна в команде.
 3. Все items принадлежат pharmacy продажи.
-4. Количество каждой item в base units вычисляется backend.
-5. Unit price и totals вычисляются backend из заблокированного актуального состояния и snapshots.
-6. Сумма allocations каждой item равна quantity item.
-7. Allocation ссылается только на sellable lot того же PharmacyProduct.
-8. Выбор lots выполняется строго FEFO: expiration, receivedAt, ID.
-9. Нехватка одной item отклоняет всю sale.
-10. Prescription-required item требует подтверждения согласно утверждённой policy и audit.
-11. Completed sale, items и allocations неизменяемы.
-12. Returned quantity не хранится как свободно редактируемый counter; вычисляется/проверяется по завершённым return allocations под блокировкой.
+4. Base-unit quantity, prices и totals вычисляет backend.
+5. Сумма allocations равна item quantity.
+6. Allocation относится к sellable lot того же PharmacyProduct.
+7. FEFO: expiration, receivedAt, ID.
+8. Нехватка одной item отклоняет всю sale.
+9. Prescription-required item требует подтверждения и audit согласно policy.
+10. Completed sale/items/allocations неизменяемы.
+11. Returned quantity проверяется по completed non-reversed return allocations под блокировкой, а не доверяется editable counter.
 
-Методы/фабрики:
-
-- `PrepareSale` — чистая валидация command lines;
-- `AllocateFEFO` — domain service;
-- `Complete` — создаёт неизменяемый aggregate из рассчитанных items/allocations;
-- `MarkPartiallyRefunded`;
-- `MarkRefunded`;
-- `MarkReversed`.
-
-Domain events:
-
-- `SaleCompleted`;
-- `SalePartiallyRefunded`;
-- `SaleRefunded`;
-- `SaleReversed`.
+События: `SaleCompleted`, `SalePartiallyRefunded`, `SaleRefunded`, `SaleReversed`.
 
 ### 11.2 Domain service `FEFOAllocator`
 
-Вход:
+Получает required quantity, ordered sellable lot snapshots и business date. Возвращает `LotAllocation[]` либо `InsufficientStock`.
 
-- требуемая quantity;
-- ordered sellable lot snapshots;
-- business date.
-
-Выход:
-
-- набор `LotAllocation` либо `InsufficientStock`.
-
-Service является чистым: он не выполняет SQL и не блокирует строки. Repository обязан предоставить lots уже в нормативном порядке и под необходимыми locks. Application повторно проверяет результат перед persistence.
+Service чистый: не выполняет SQL и не блокирует строки. Repository предоставляет rows в нормативном порядке под lock; Application проверяет результат перед persistence.
 
 ### 11.3 Domain service `SalePricingPolicy`
 
-Рассчитывает line subtotal, discount и totals. Клиентские totals могут использоваться только для обнаружения расхождения, но не как источник истины.
-
-Policy обязана:
-
-- работать с `Money`;
-- проверять overflow;
-- фиксировать применённые snapshots;
-- быть детерминированной для одного входа.
+Рассчитывает line subtotal, discount и totals, работает с `Money`, проверяет overflow, фиксирует snapshots и детерминирован для одного входа. Client totals не являются источником истины.
 
 ## 12. Returns context
 
 ### 12.1 Aggregate `SaleReturn`
 
-**Aggregate root:** `SaleReturn`.
-
-Внутренние сущности:
-
-- `SaleReturnItem`;
-- `SaleReturnItemAllocation`.
-
-Состояния:
+Entities: `SaleReturnItem`, `SaleReturnItemAllocation`.
 
 ```text
 COMPLETED ──approved reversal──> REVERSED
 ```
 
-В MVP возврат создаётся сразу completed после всех проверок. Юридически запрещённый сценарий не создаёт aggregate.
+Юридически запрещённый сценарий не создаёт aggregate.
 
-`ReturnAction`:
-
-- `RESTOCK`;
-- `WRITE_OFF`;
-- `QUARANTINE`;
-- `NO_PHYSICAL_RETURN`.
+`ReturnAction`: `RESTOCK`, `WRITE_OFF`, `QUARANTINE`, `NO_PHYSICAL_RETURN`.
 
 Инварианты:
 
-1. Return относится к одной исходной Sale.
-2. Каждая return item относится к item этой Sale.
-3. Каждая return allocation относится к исходной allocation той же sale item.
-4. Сумма return allocations равна returned quantity item.
-5. Нельзя вернуть больше исходной allocation с учётом всех completed non-reversed returns.
-6. Нельзя вернуть больше sale item quantity.
-7. Refund рассчитывается backend по immutable sale snapshots и refund policy.
-8. Total refund равен сумме item refunds.
-9. Только `RESTOCK` требует target stock lot и увеличивает sellable quantity.
-10. Для `WRITE_OFF`, `QUARANTINE`, `NO_PHYSICAL_RETURN` sellable target lot отсутствует.
-11. Просроченный/повреждённый/сомнительный товар не возвращается в active sellable lot.
-12. Completed return, items и allocations неизменяемы.
-13. Sale status обновляется в той же транзакции.
-14. Return production command остаётся недоступной до утверждения legal policy.
+1. Return относится к одной Sale.
+2. Return item относится к item этой Sale.
+3. Return allocation относится к source allocation той же item.
+4. Сумма allocations равна returned quantity.
+5. Совокупный completed non-reversed return не превышает source allocation/item.
+6. Refund рассчитывается по immutable sale snapshots.
+7. Total refund равен сумме item refunds.
+8. `RESTOCK` требует target lot и положительное movement; target может быть исходным или отдельным return lot только согласно явной suitability policy.
+9. `WRITE_OFF`, `QUARANTINE`, `NO_PHYSICAL_RETURN` не увеличивают sellable stock и не имеют sellable target lot.
+10. Непригодный товар не возвращается в active sellable lot.
+11. Completed return/items/allocations неизменяемы.
+12. Sale status меняется в той же transaction.
+13. Production command disabled до утверждения legal policy.
 
-### 12.2 Domain service `ReturnEligibilityPolicy`
+### 12.2 `ReturnEligibilityPolicy` и `RefundCalculator`
 
-Вход:
+Policy получает immutable sale snapshot, previous completed return usage, requested lines, legal policy, business time и condition/disposition data. Она не читает БД.
 
-- immutable Sale snapshot;
-- previous completed return allocations;
-- requested return lines;
-- legal policy;
-- current business time/date;
-- condition/disposition data.
-
-Выход:
-
-- разрешённые quantities и actions;
-- рассчитанный refund;
-- либо domain violation.
-
-Policy не читает БД самостоятельно. Application загружает и блокирует исходную Sale и allocations до вызова.
-
-### 12.3 Domain service `RefundCalculator`
-
-Рассчитывает refund на основе исходной line price/discount allocation и уже возвращённого количества. Правило округления должно быть зафиксировано до production возвратов.
+Refund calculator распределяет исходные line discount/refund amounts по утверждённой rounding policy. До её утверждения partial refund production path disabled.
 
 ## 13. Reliability context
 
 ### 13.1 Aggregate `IdempotencyRecord`
-
-**Aggregate root:** `IdempotencyRecord`.
-
-Состояния:
 
 ```text
 IN_PROGRESS ──complete(response)──> COMPLETED
@@ -777,50 +547,29 @@ COMPLETED ──replay──> COMPLETED
 
 Инварианты:
 
-1. Scope уникален независимо от наличия pharmacy ID.
-2. Один key в одном scope связан с одним request fingerprint.
+1. Scope уникален и для pharmacy, и для global commands.
+2. Key в scope связан с одним fingerprint.
 3. Same key + same fingerprint возвращает исходный результат.
 4. Same key + different fingerprint — conflict.
-5. `COMPLETED` имеет сохранённый response status, completion time и replayable result/reference.
-6. Запись критической команды создаётся/захватывается и завершается атомарно с бизнес-эффектом.
-7. Неизвестный результат после сетевого разрыва безопасно читается повтором.
-8. Expiration не означает разрешение повторно выполнить юридически значимый документ без дополнительной business uniqueness.
-
-Idempotency — application/reliability concern, но его состояния и инварианты являются частью модели согласованности.
+5. `COMPLETED` имеет response status, completion time и replayable body/reference.
+6. Business effect и переход записи в `COMPLETED` находятся в одной transaction.
+7. `FAILED_RETRYABLE` сохраняется только если failure classification и transaction design позволяют зафиксировать его без ложного утверждения о rollback/commit; запись, откатившаяся вместе с business transaction, может отсутствовать.
+8. Expiration технической записи не отменяет business uniqueness юридически значимого документа.
 
 ## 14. Audit context
 
-### 14.1 Entity/Aggregate `AuditEvent`
-
-`AuditEvent` является append-only aggregate root без команд изменения.
-
-Содержит:
-
-- actor type;
-- user/session IDs при user actor;
-- pharmacy scope;
-- action;
-- object type/ID;
-- result;
-- request/trace IDs;
-- IP/user agent;
-- безопасную metadata;
-- occurred time.
+`AuditEvent` — append-only record/aggregate root без команд изменения.
 
 Инварианты:
 
-1. `USER` требует actor user; session при наличии принадлежит этому user.
-2. `SYSTEM` не маскируется под user actor.
-3. Metadata не содержит password, raw token, secret, full sensitive payload, SQL или stack trace.
-4. Событие после insert не обновляется и не удаляется обычным runtime role.
-5. Для fail-closed операций отсутствие обязательного audit event откатывает всю бизнес-транзакцию.
-6. Denied authentication/authorization события могут фиксироваться в отдельной короткой транзакции, поскольку основная бизнес-транзакция не начинается.
+1. `USER` требует actor user; session при наличии принадлежит user.
+2. `SYSTEM` не маскируется под user.
+3. Metadata не содержит passwords, raw tokens, secrets, full sensitive payload, SQL или stack traces.
+4. Runtime role не обновляет и не удаляет audit.
+5. Для fail-closed операций отсутствие audit откатывает business transaction.
+6. Denied auth события могут фиксироваться отдельной короткой transaction.
 
 ## 15. Alerts context
-
-### 15.1 Aggregate `Alert`
-
-Состояния:
 
 ```text
 ACTIVE ──acknowledge──> ACKNOWLEDGED
@@ -828,359 +577,255 @@ ACTIVE/ACKNOWLEDGED ──resolve──> RESOLVED
 RESOLVED ──X──> ACTIVE
 ```
 
-Новое обнаружение после resolved создаёт новый Alert с тем же semantic deduplication key, а не переоткрывает историческую строку, если отдельная reopen policy не утверждена.
+Повторное обнаружение после `RESOLVED` создаёт новый Alert. Active deduplication key уникален в pharmacy scope. Acknowledge/resolve фиксируют actor, time и audit.
 
-Инварианты:
+## 16. Read models
 
-- один active/non-resolved alert на deduplication scope;
-- acknowledge требует actor и time;
-- resolved требует resolved time;
-- alert не изменяет stock автоматически;
-- reconciliation mismatch никогда не исправляется alert worker-ом автоматически.
+Следующие объекты не являются агрегатами:
 
-Alerts обычно eventual-consistent и создаются post-commit/background jobs, кроме случаев, где SRS явно требует синхронное предупреждение.
-
-## 16. Read models и объекты вне агрегатов
-
-Следующие представления не являются командными агрегатами:
-
-- публичная availability карточка;
-- агрегированный текущий остаток по PharmacyProduct;
-- inventory history;
+- public product search result;
+- pharmacy availability;
+- inventory balance view;
+- movement history;
+- sale/receipt printable view;
 - audit search result;
 - replenishment recommendation;
-- expiring stock dashboard;
-- return eligibility preview;
-- import report;
-- reconciliation report.
+- alert dashboard counters.
 
-Read model может объединять данные нескольких contexts и быть денормализованным. Через read model запрещены изменения domain state.
+Они могут объединять данные нескольких contexts, возвращаться query services и быть eventually consistent. Через них запрещены command mutations.
 
-Публичная availability не раскрывает точный stock quantity, purchase price, batch, internal IDs и audit data. Её freshness определяется `inventoryChangedAt`/projection timestamp.
+## 17. Domain errors
 
-## 17. Доменные ошибки
+Domain возвращает стабильные typed errors, например:
 
-Domain возвращает типизированные ошибки/категории, совместимые с централизованным mapper:
+- `InvalidStateTransition`;
+- `InsufficientStock`;
+- `LotNotSellable`;
+- `DuplicateSaleLine`;
+- `PrescriptionConfirmationRequired`;
+- `ReturnQuantityExceeded`;
+- `ReturnNotAllowed`;
+- `AssignmentConflict`;
+- `SessionAlreadyRotated`;
+- `IdempotencyConflict`;
+- `ConcurrentModification`.
 
-- invalid argument: structurally invalid value object/command;
-- unauthenticated: не domain concern большинства агрегатов;
-- forbidden: application authorization concern;
-- not found: repository/application concern;
-- conflict: concurrent version, duplicate business identity, idempotency mismatch;
-- business rule violation: valid command нарушает invariant;
-- unavailable: infrastructure/application concern.
+Domain errors не содержат HTTP status. Централизованный mapper переводит их в API error codes.
 
-Примеры domain codes:
-
-- `ACCOUNT_BLOCKED`;
-- `PHARMACY_INACTIVE`;
-- `RESOURCE_ARCHIVED`;
-- `INNER_UNIT_SALE_DISABLED`;
-- `DUPLICATE_SALE_ITEM`;
-- `INSUFFICIENT_STOCK`;
-- `LOT_EXPIRED`;
-- `LOT_QUARANTINED`;
-- `PRESCRIPTION_CONFIRMATION_REQUIRED`;
-- `RETURN_QUANTITY_EXCEEDED`;
-- `RETURN_NOT_LEGALLY_ALLOWED`;
-- `IMPORT_HAS_ERRORS`;
-- `CONCURRENT_MODIFICATION`.
-
-Domain errors не содержат SQL, table/constraint names или HTTP concepts.
-
-## 18. Транзакционные границы
+## 18. Transaction boundaries
 
 ### 18.1 Общие правила
 
-1. Одна пользовательская команда имеет одну явную транзакционную границу, если создаёт согласованный бизнес-эффект.
-2. Unit of Work открывается Application layer.
-3. Repository не начинает скрытую nested transaction для части многомодульного use case.
-4. Isolation по умолчанию — `READ COMMITTED` с явными locks.
-5. Locks берутся только после валидации формата команды, но до расчёта конкурентно изменяемых totals/limits.
-6. Одинаковые сущности блокируются в детерминированном порядке по ID; FEFO выбор дополнительно сортируется по expiration/received/ID.
-7. После получения locks authorization и business conditions перечитываются/перепроверяются.
-8. External network calls внутри transaction callback запрещены.
-9. Domain events, требующие только eventual consistency, публикуются после commit.
-10. Fail-closed audit и idempotency критической команды входят в основную транзакцию.
+1. Transaction boundary принадлежит Application use case.
+2. Межмодульные атомарные операции выполняются через Unit of Work.
+3. Repository не открывает скрытую transaction внутри общей команды.
+4. Default isolation — `READ COMMITTED` с явными locks.
+5. Locks берутся только после deterministic validation, но до чтения mutable state, влияющего на решение.
+6. Одинаковые сущности блокируются по ID; FEFO rows — expiration/received/ID.
+7. После locks повторно проверяются authorization и business conditions.
+8. Network calls внутри transaction callback запрещены.
+9. Fail-closed audit и completed idempotency result входят в основную transaction.
+10. Post-commit reactions не могут изменить результат проведённой команды.
 
-### 18.2 Матрица use cases
+### 18.2 Command ownership matrix
 
-| Use case | В одной транзакции | Locks / concurrency | Post-commit |
+| Use case | Coordinator | Primary roots / working set | Атомарный результат |
 |---|---|---|---|
-| Login success | user login state, new session, audit success | lock user; rate-limit state отдельно по policy | token encoding/response |
-| Refresh session | old session revoke, new session, family checks, audit | lock source session; при reuse — family sessions | token response |
-| Block/archive user | user status, role/session revocation, audit | lock user, active sessions in ID order | security notification |
-| Assign pharmacist | user/role validation, assignment creation, audit | lock user and active assignment | none |
-| End assignment | assignment end, audit | lock assignment | none |
-| Update mutable catalog/assortment | version check, update, audit | optimistic version or row lock | search projection invalidation |
-| Publish catalog import | claim idempotency, selected rows/products/presentations/barcodes, job completion, audit | job + rows deterministic; uniqueness constraints | indexing/projection |
-| Post receipt | idempotency, authorization recheck, receipt/items, lots, operation, movements, inventory timestamps, audit | pharmacy product IDs, then lots if existing | alerts/search projection |
-| Confirm initial stock | idempotency, import job/rows, receipt-equivalent document, lots, movements, audit | job, rows, products/lots deterministic | report/search projection |
-| Complete sale | idempotency, scope recheck, sale/items/allocations, lot quantities, operation/movements, audit | pharmacy products by ID; sellable lots FEFO with row locks | receipt rendering, alerts/search projection |
-| Complete return | idempotency, sale status, return/items/return allocations, target lots, movements, refund state, audit | sale; sale items IDs; source allocations IDs; pharmacy products IDs; lots IDs | receipt/report, alerts/search projection |
-| Write-off | idempotency, document/items, lot balances, operation/movements, audit | lots by ID | alerts/search projection |
-| Inventory adjustment | idempotency, document/items, lot balances, operation/movements, audit | pharmacy products/lots by ID | reconciliation/alerts/search projection |
-| Reverse document | idempotency, source document status, reversal operation/movements, balances, audit | source document then affected lots deterministic | projections/alerts |
-| Acknowledge/resolve alert | alert state, audit | optimistic version/row lock | none |
-| Public search | read-only; transaction обычно не требуется | consistent query/projection | none |
+| Login | Identity application service | `User`, new `UserSession` | login state, session, audit |
+| Refresh | Identity application service | source/new sessions, token family | rotation/reuse handling, audit |
+| Block/archive user | Identity application service | `User`, active sessions | status, session revocation, audit |
+| Assign/revoke role | Identity application service | `User`, `RoleAssignment`, sessions if access lost | role history, session revocation, audit |
+| Assign/end pharmacist | Pharmacy application service | `User` snapshot, role, `PharmacyAssignment` | assignment history, audit |
+| Catalog update | Catalog application service | `Product` or `ProductPresentation` | versioned update, audit |
+| Publish import | Catalog application service | `ImportJob`, rows, catalog roots | published rows/resources, audit, idempotency |
+| Post receipt | Inventory application service | `Receipt`, `InventoryWorkingSet` | document, lots, movements, audit, idempotency |
+| Complete sale | Sales coordinator | `Sale`, assortment snapshots, `InventoryWorkingSet` | sale, allocations, stock, movements, audit, idempotency |
+| Complete return | Returns coordinator | source `Sale`, `SaleReturn`, `InventoryWorkingSet` | return, sale status, stock/refund effect, audit, idempotency |
+| Write-off | Inventory application service | `WriteOff`, `InventoryWorkingSet` | document, stock, movements, audit, idempotency |
+| Adjustment | Inventory application service | `InventoryAdjustment`, `InventoryWorkingSet` | document, stock, movements, audit, idempotency |
+| Reverse document | owning module coordinator | source document, reversal working set | source status, compensating operation, audit, idempotency |
+| Alert transition | Alerts application service | `Alert` | state, actor/time, audit |
 
-### 18.3 Продажа: нормативный порядок
+### 18.3 Нормативный порядок продажи
 
-1. Validate command и duplicate lines без БД.
+1. Validate command and duplicate lines без БД.
 2. Claim/find idempotency scope.
-3. Lock actor/user/assignment/pharmacy state либо перечитать его внутри транзакции.
-4. Lock `PharmacyProduct` по отсортированным IDs.
+3. Lock/revalidate actor, role, assignment и pharmacy.
+4. Lock `PharmacyProduct` по IDs.
 5. Read/lock sellable lots в FEFO порядке.
-6. Recalculate eligibility, quantities, prices and totals.
-7. Build `Sale` aggregate and allocations.
-8. Persist sale, items, allocations.
-9. Persist inventory operation and movements; update lot balances.
+6. Recalculate eligibility, quantities, prices и totals.
+7. Build Sale and allocations.
+8. Persist sale/items/allocations.
+9. Persist operation/movements и update lot balances.
 10. Update inventory freshness.
 11. Persist mandatory audit.
-12. Complete idempotency record with response.
+12. Complete idempotency result.
 13. Commit.
 
-Любая ошибка до commit откатывает весь эффект.
-
-### 18.4 Возврат: нормативный порядок
+### 18.4 Нормативный порядок возврата
 
 1. Validate command and legal feature availability.
 2. Claim idempotency.
-3. Recheck actor, assignment and pharmacy.
+3. Revalidate actor, assignment и pharmacy.
 4. Lock source Sale.
 5. Lock selected SaleItems by ID.
 6. Lock source SaleItemAllocations by ID.
-7. Read completed non-reversed previous returns and re-evaluate remaining quantities.
-8. For physical actions lock PharmacyProducts and target/source StockLots in deterministic order.
+7. Read completed non-reversed return usage and re-evaluate remaining quantity.
+8. Для physical action lock PharmacyProducts и lots в deterministic order.
 9. Run eligibility/refund policies.
-10. Persist SaleReturn, items and return allocations.
-11. Persist inventory effects according to disposition.
+10. Persist SaleReturn/items/allocations.
+11. Persist inventory/refund effects.
 12. Update Sale status.
-13. Persist audit and idempotency result.
+13. Persist audit and complete idempotency.
 14. Commit.
 
-### 18.5 Eventual consistency boundaries
+### 18.5 Eventual consistency и доставка событий
 
-После успешного commit могут асинхронно обновляться:
+После commit могут обновляться public search, alerts, replenishment, analytics и notifications.
 
-- public search projection;
-- low-stock/expiration alerts;
-- replenishment recommendations;
-- analytics/reporting projections;
-- notification delivery;
-- non-critical metrics.
+Без transactional outbox in-process post-commit callback является best-effort и может быть потерян при crash после commit. Поэтому:
 
-Эти операции не могут изменить результат уже проведённой sale/receipt/return и не должны автоматически исправлять stock mismatch.
+1. потеря callback не должна нарушать committed business invariant;
+2. projections должны иметь rebuild/reconciliation mechanism;
+3. guaranteed delivery нельзя заявлять до принятия outbox ADR и добавления outbox storage;
+4. критические stock/document/audit/idempotency effects не выносятся в event handler.
 
 ## 19. Доменные события
 
-Минимальный каталог внутренних событий:
+Минимальный каталог:
 
-### Identity
+- Identity: `UserCreated`, `UserBlocked`, `UserUnblocked`, `UserArchived`, `UserPasswordChanged`, `UserRoleAssigned`, `UserRoleRevoked`, `SessionCreated`, `SessionRotated`, `SessionRevoked`, `PharmacistAssigned`, `PharmacistAssignmentEnded`;
+- Catalog: `ProductCreated`, `ProductArchived`, `PresentationCreated`, `BarcodeAssigned`, `CatalogImportCompleted`;
+- Assortment: `PharmacyProductActivated`, `PharmacyProductPriceChanged`;
+- Inventory/trade: `ReceiptPosted`, `InitialStockConfirmed`, `SaleCompleted`, `SalePartiallyRefunded`, `SaleRefunded`, `SaleReturnCompleted`, `WriteOffCompleted`, `InventoryAdjusted`, `InventoryOperationReversed`.
 
-- `UserCreated`;
-- `UserBlocked`;
-- `UserArchived`;
-- `PasswordChanged`;
-- `RoleAssigned`;
-- `RoleRevoked`;
-- `SessionCreated`;
-- `SessionRotated`;
-- `SessionRevoked`;
-- `PharmacistAssigned`;
-- `PharmacistAssignmentEnded`.
-
-### Catalog and assortment
-
-- `ProductCreated`;
-- `ProductArchived`;
-- `PresentationCreated`;
-- `BarcodeAssigned`;
-- `CatalogImportCompleted`;
-- `PharmacyProductActivated`;
-- `PharmacyProductPriceChanged`.
-
-### Inventory and trade
-
-- `ReceiptPosted`;
-- `InitialStockConfirmed`;
-- `SaleCompleted`;
-- `SalePartiallyRefunded`;
-- `SaleRefunded`;
-- `SaleReturnCompleted`;
-- `WriteOffCompleted`;
-- `InventoryAdjusted`;
-- `InventoryOperationReversed`.
-
-Domain events не являются заменой транзакции. Критический синхронный эффект записывается напрямую в той же транзакции. Event используется для post-commit reactions.
-
-До появления надёжного outbox события могут оставаться in-process post-commit callbacks. При необходимости гарантированной доставки должен быть принят отдельный ADR и добавлена transactional outbox table.
+Событие содержит stable event name/version, occurred time, aggregate type/ID и минимальный безопасный payload. Domain event не является DTO ответа и не содержит infrastructure objects.
 
 ## 20. Repository boundaries
 
-Репозиторий определяется агрегатом/use case, а не таблицей:
+Command repositories определяются агрегатом/use case:
 
 - `UserRepository`;
+- `RoleAssignmentRepository`;
 - `SessionRepository`;
 - `PharmacyRepository`;
 - `AssignmentRepository`;
-- `ProductRepository` / `PresentationRepository`;
-- `CatalogImportRepository`;
+- `ProductRepository`;
+- `PresentationRepository`;
+- `ImportJobRepository`;
 - `PharmacyProductRepository`;
 - `ReceiptRepository`;
-- `InventoryRepository` с lock-oriented methods для working set;
+- `InventoryRepository` с lock-oriented methods;
 - `SaleRepository`;
 - `SaleReturnRepository`;
 - `IdempotencyRepository`;
 - `AuditRepository`;
 - `AlertRepository`.
 
-Допустимы специализированные методы:
+Допустимы `GetForUpdate`, `ListSellableLotsForUpdateFEFO`, `LockByIDsSorted`, `LoadReturnUsageForUpdate`, `InsertMovements`, `ClaimIdempotency`.
 
-- `GetForUpdate`;
-- `ListSellableLotsForUpdateFEFO`;
-- `LockByIDsSorted`;
-- `LoadReturnUsageForUpdate`;
-- `InsertMovements`;
-- `ClaimIdempotency`.
+Недопустимы универсальный `Save(any)` и раскрытие `pgx.Tx` в Domain/Application API. Query services отделены от command repositories.
 
-Недопустим универсальный repository с `Save(any)` или раскрытие `pgx.Tx` в Domain/Application API.
+## 21. Authorization и межагрегатные инварианты
 
-Read repositories/query services отделяются от command repositories и могут возвращать специализированные projections без восстановления агрегата.
+Application повторно проверяет User status, active role, active PharmacyAssignment, Pharmacy status и resource state внутри stale-sensitive transaction. JWT claims — подсказка идентичности, а не источник актуальных прав.
 
-## 21. Authorization и domain model
+Межагрегатные инварианты:
 
-RBAC и scope authorization координируются Application layer, но Domain хранит состояния, на которых основано решение:
-
-- User status;
-- active RoleAssignment;
-- active PharmacyAssignment;
-- Pharmacy status;
-- resource status.
-
-Критическая команда обязана повторно проверить эти состояния внутри транзакции. JWT claims используются как подсказка идентичности, а не как окончательный источник прав.
-
-Domain aggregate не должен самостоятельно обращаться в identity repository. Application передаёт подтверждённый `Actor`/`AuthorizationContext` как value object:
-
-```text
-Actor {
-    userID
-    sessionID?
-    role
-    pharmacyScope?
-    isSystem
-}
-```
-
-`Actor` не заменяет повторную repository-проверку для stale-sensitive команды.
-
-## 22. Инварианты между агрегатами
-
-Следующие правила принадлежат use case и не могут быть обеспечены одним aggregate:
-
-1. Role пользователя соответствует создаваемому PharmacyAssignment.
+1. Role соответствует PharmacyAssignment.
 2. PharmacyProduct принадлежит Pharmacy документа.
-3. StockLot принадлежит PharmacyProduct из той же Pharmacy.
-4. Sale allocation относится к lot той же sale item.
+3. StockLot принадлежит PharmacyProduct той же Pharmacy.
+4. Sale allocation относится к lot той же item.
 5. Return item/allocation принадлежит source Sale.
-6. Совокупный возврат не превышает исходную allocation.
-7. InventoryOperation соответствует business document и pharmacy.
-8. Idempotency result соответствует реально committed resource.
+6. Совокупный return не превышает source allocation.
+7. InventoryOperation соответствует document и pharmacy.
+8. Idempotency result соответствует committed resource.
 9. Audit actor/session согласованы с identity state.
-10. Public availability публикуется только для active pharmacy, active assortment и sellable stock.
+10. Public availability требует active pharmacy, active assortment и sellable stock.
 
-Эти правила проверяются в Application transaction и подкрепляются FK, unique/check constraints и integration tests.
+Они проверяются в Application transaction и подкрепляются FK, unique/check constraints и integration tests.
 
-## 23. Testing requirements для Domain Model
+## 22. Testing requirements
 
-### 23.1 Unit tests
+### 22.1 Unit tests
 
-Обязательны table-driven tests для:
+Обязательны table-driven tests для value objects, state transitions, terminal rejection, Money/quantity overflow, conversion, FEFO, totals, return limits/rounding, lot transitions, idempotency state machine и session rotation/reuse.
 
-- каждого value object;
-- каждого state transition;
-- terminal state rejection;
-- Money/quantity overflow;
-- package/base-unit conversion;
-- FEFO allocation;
-- sale totals;
-- return limits и refund rounding;
-- lot status transitions;
-- idempotency state machine;
-- session rotation/reuse semantics.
+Domain tests не используют PostgreSQL, Gin и реальные часы.
 
-Domain unit tests не используют PostgreSQL, Gin и реальные часы.
+### 22.2 Integration/concurrency tests
 
-### 23.2 Integration tests
+Обязательны:
 
-Обязательны tests с PostgreSQL для:
-
-- unique active role и повторного назначения;
+- unique active role и повторное назначение;
+- role revoke versus session refresh;
 - active pharmacy assignment races;
-- refresh rotation concurrency;
-- same idempotency key concurrency;
-- global idempotency scope;
-- two simultaneous sales against same lots;
+- refresh rotation/reuse concurrency;
+- same idempotency key concurrency и global scope;
+- concurrent sales against same lots;
 - sale versus write-off/adjustment;
-- two simultaneous returns;
+- simultaneous returns;
 - return versus sale/reversal;
 - operation/movement/balance atomicity;
 - fail-closed audit rollback;
 - optimistic concurrency;
 - reversal uniqueness;
-- alert dedup lifecycle.
+- alert dedup lifecycle;
+- projection reconciliation after simulated lost post-commit callback.
 
-Каждый test проверяет не только ответ, но и итоговые documents, balances, movements, audit and idempotency records.
+Test проверяет response и итоговые documents, balances, movements, audit и idempotency records.
 
-## 24. Anti-patterns
+## 23. Anti-patterns
 
 Запрещены:
 
-- anemic entities, в которых все invariants находятся в handler/service setters;
-- один гигантский `Pharmacy` aggregate со всем каталогом, лотами и продажами;
+- anemic entities с invariants только в handlers/setters;
+- гигантский Pharmacy/Product/User aggregate с неограниченной историей;
 - один aggregate на каждую таблицу без анализа consistency boundary;
-- загрузка всей истории movements внутрь StockLot для обычной продажи;
-- изменение aggregate другого context прямым repository вызовом из Domain;
-- передача database models в HTTP response;
+- самостоятельный save каждого StockLot внутри одной sale;
+- загрузка всей movement/role history для обычной команды;
+- изменение aggregate другого context из Domain;
+- database models в HTTP response;
 - trusted client totals/stock/role;
-- скрытые repository transactions;
-- domain event как замена обязательной атомарной записи;
+- hidden repository transactions;
+- event как замена атомарной записи;
 - update/delete проведённых documents, movements и audit;
-- `time.Now()` внутри правил, которые должны детерминированно тестироваться;
+- `time.Now()` внутри детерминированных правил;
 - generic status setter;
-- generic `Save(entity interface{})`;
-- использование nullable primitive вместо выраженного value object, когда отсутствие имеет бизнес-смысл.
+- generic `Save(any)`;
+- nullable primitives вместо value objects, когда отсутствие имеет бизнес-смысл.
 
-## 25. Открытые решения
+## 24. Открытые решения
 
-До production-ready реализации необходимо отдельно утвердить:
+До production-ready реализации утверждаются:
 
-1. юридическую `ReturnEligibilityPolicy`;
-2. правила распределения line discount и округления partial refund;
-3. необходимость отдельного `Permission` model сверх ролей MVP;
-4. session TTL, absolute lifetime и reuse response;
-5. atomic или partial publish catalog import;
-6. elevated approval policy для reversal и inventory adjustment;
-7. outbox requirement для гарантированной доставки post-commit событий;
-8. точную модель initial stock document: специализированный aggregate или Receipt subtype;
-9. reopen policy alerts;
-10. политику исправления ошибочных catalog snapshots до первой операции.
+1. юридическая `ReturnEligibilityPolicy`;
+2. line discount allocation и partial refund rounding;
+3. Permission model сверх ролей MVP;
+4. session TTL, absolute lifetime, touch и reuse response;
+5. atomic/partial catalog publish;
+6. elevated approval для reversal/adjustment;
+7. transactional outbox requirement;
+8. initial stock aggregate или Receipt subtype;
+9. alert reopen policy;
+10. исправление catalog snapshots до первой операции;
+11. трактовка календарной даты expiration для sellability;
+12. suitability policy выбора исходного или отдельного return lot.
 
-Открытый вопрос не разрешается неявно в коде. До принятия решения соответствующая production-функция должна оставаться ограниченной или disabled.
+Открытый вопрос не разрешается неявно в коде; соответствующая production-функция остаётся ограниченной или disabled.
 
-## 26. Definition of Done для domain feature
+## 25. Definition of Done для domain feature
 
-Domain feature завершена только если:
+Feature завершена только если:
 
-1. определён aggregate root и consistency boundary;
-2. invariants выражены в Domain и БД там, где возможно;
-3. state transitions не реализованы общим setter;
-4. value objects валидируют значения при создании;
-5. Application use case фиксирует authorization и transaction boundary;
-6. lock order документирован и протестирован;
-7. idempotency и audit включены для критической команды;
-8. domain errors mapped через централизованный error responder;
-9. unit, integration и concurrency tests покрывают happy path и нарушения;
-10. SRS, API Design, Database Design и этот документ синхронизированы;
-11. post-commit reactions не влияют на уже committed business result;
-12. исторические данные не редактируются обходным CRUD endpoint-ом.
+1. определены aggregate root, command owner и consistency boundary;
+2. invariants выражены в Domain и БД, где возможно;
+3. transitions не реализованы generic setter;
+4. cross-aggregate rules размещены в Application use case;
+5. transaction, locks и idempotency описаны;
+6. mandatory audit определён;
+7. snapshots защищают историю;
+8. unit/integration/concurrency tests покрывают happy path и races;
+9. API и Database Design синхронизированы;
+10. eventual-consistency reaction не выдаётся за гарантированную без outbox;
+11. открытые legal/security policies не реализованы скрытыми defaults.
