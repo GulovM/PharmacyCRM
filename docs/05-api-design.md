@@ -1,14 +1,16 @@
 # PharmacyCRM — API Design
 
 **Статус документа:** Draft  
-**Версия:** 0.1  
-**Дата:** 2026-07-17
+**Версия:** 0.2  
+**Дата:** 2026-07-17  
+**Связанные документы:** `01-product-vision.md`, `02-srs.md`, `03-system-context.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `06-database-design.md`  
+**Связанные ADR:** ADR-0011, ADR-0012, ADR-0013, ADR-0014, ADR-0016, ADR-0017
 
-## 1. Назначение
+## 1. Назначение и нормативная роль
 
-Этот документ является единым человекочитаемым каталогом HTTP API PharmacyCRM. Он определяет общие правила API, форматы запросов и ответов, модель ошибок, авторизацию, пагинацию, идемпотентность и полный перечень планируемых endpoint-ов.
+Этот документ является единым человекочитаемым каталогом HTTP API PharmacyCRM. Он определяет общие правила API, форматы запросов и ответов, модель ошибок, authentication, authorization, пагинацию, конкурентное обновление, идемпотентность, асинхронные операции и перечень планируемых endpoint-ов.
 
-Документ предназначен для backend-, frontend- и QA-разработки. После реализации endpoint-а его фактический контракт — URL, method, headers, request DTO, response DTO, status codes и ошибки — должен быть описан здесь в том же change set.
+Документ предназначен для backend-, frontend-, QA- и security-разработки. Frontend не должен изучать handlers, use cases, repository или SQL для восстановления внешнего контракта.
 
 При противоречии применяется следующий приоритет:
 
@@ -19,30 +21,26 @@
 5. этот документ;
 6. реализация и тесты.
 
+Код не может молча расходиться с этим документом. Изменение URL, method, request/response DTO, status code, error code, authorization или side effects должно обновлять `05-api-design.md` в том же change set.
+
 ## 2. Границы API
 
 API разделяется на три контура:
 
-1. **Public API** — поиск лекарств и получение публичной информации об аптеках без авторизации.
-2. **Protected API** — функции авторизованного пользователя, аптекаря и администратора.
-3. **Operational API** — health, readiness и другие технические endpoint-ы, не относящиеся к бизнес-контракту frontend.
+1. **Public API** — публичный поиск лекарств и получение публичных данных активных аптек без авторизации.
+2. **Protected API** — функции `CLIENT`, `PHARMACIST`, `ADMIN` и возможных будущих служебных ролей.
+3. **Operational API** — health, readiness, metrics и иные технические endpoint-ы, не являющиеся frontend-контрактом.
 
 MVP использует REST-подобный JSON API поверх HTTPS. Gin применяется только в HTTP delivery-слое. `gin.Context` не передаётся в application, domain и repository.
 
-## 3. Base URL и версионирование
+API не предоставляет общий CRUD для проведённых документов, складских движений и аудита. Для них используются предметные команды и read-only представления.
+
+## 3. Base URL, naming и версионирование
 
 Базовый путь бизнес-API:
 
 ```text
 /api/v1
-```
-
-Примеры:
-
-```text
-GET  /api/v1/public/products/search
-POST /api/v1/pharmacies/{pharmacy_id}/sales
-GET  /api/v1/admin/audit-events
 ```
 
 Технические endpoint-ы не входят в `/api/v1`:
@@ -52,219 +50,200 @@ GET /healthz
 GET /readyz
 ```
 
-Версия меняется при несовместимом изменении контракта. Добавление необязательного поля ответа, нового endpoint-а или нового необязательного query-параметра обычно считается обратно совместимым. Удаление поля, изменение его типа, изменение обязательности request-поля, изменение значения enum или семантики существующего status code требует новой версии либо формального deprecation-периода.
+Правила naming:
 
-## 4. Content negotiation и кодировка
+- paths используют kebab-case и существительные во множественном числе;
+- path parameters используют snake_case: `{pharmacy_id}`;
+- JSON-поля и query parameters используют snake_case;
+- команды, которые нельзя корректно выразить CRUD-семантикой, оформляются action endpoint-ами: `/archive`, `/confirm`, `/reverse`;
+- action endpoint не должен дублировать обычный `PATCH`, если операция является простым изменением разрешённых полей.
 
-Для JSON-запросов:
+Несовместимыми считаются удаление или переименование поля, изменение его типа или nullable-семантики, добавление обязательного request-поля, удаление enum-значения, изменение authorization, side effects или семантики status code. Такое изменение требует новой версии либо формального deprecation-периода.
+
+Добавление необязательного response-поля обычно обратно совместимо, однако клиент обязан игнорировать неизвестные поля.
+
+## 4. Content negotiation, кодировка и локализация
+
+Для JSON:
 
 ```http
 Content-Type: application/json
 Accept: application/json
 ```
 
-Кодировка — UTF-8.
+Кодировка — UTF-8. JSON должен быть синтаксически строгим: trailing comma и комментарии запрещены. Неизвестные request-поля по умолчанию отклоняются кодом `UNKNOWN_FIELD`, если endpoint явно не разрешает forward-compatible payload.
 
-Файловые загрузки используют `multipart/form-data`. Выгрузки могут возвращать JSON, CSV или XLSX в зависимости от endpoint-а и заголовка `Accept`.
+Файловые загрузки используют `multipart/form-data`. Выгрузки могут возвращать JSON, CSV или XLSX согласно endpoint-контракту и `Accept`.
 
-Неизвестный или неподдерживаемый media type возвращает `415 UNSUPPORTED_MEDIA_TYPE`. Неподдерживаемый формат ответа возвращает `406 NOT_ACCEPTABLE`.
+- неподдерживаемый `Accept` → `406 NOT_ACCEPTABLE`;
+- превышение лимита body/file → `413 PAYLOAD_TOO_LARGE`;
+- неподдерживаемый `Content-Type` → `415 UNSUPPORTED_MEDIA_TYPE`.
+
+Стабильным контрактом является `error.code`, а не локализованный `message`. На первом этапе server messages могут быть английскими. Frontend должен локализовать известные коды самостоятельно. Позднее `Accept-Language` может использоваться только как обратно совместимое расширение.
 
 ## 5. Идентификаторы и базовые типы
 
 ### 5.1 Идентификаторы
 
-Внешние идентификаторы сущностей передаются как строки. Конкретный внутренний тип БД не является частью публичного контракта.
+Внешние ID передаются как строки. Клиент не должен предполагать внутренний тип БД, последовательность или возможность арифметики над ID.
 
 ```json
-{
-  "id": "01JZX3E2J9Q4JY3N8VY6F7XH2A"
-}
+{"id":"01JZX3E2J9Q4JY3N8VY6F7XH2A"}
 ```
 
-Frontend не должен выполнять арифметику над ID или предполагать, что ID последовательны.
+Невалидный формат ID возвращает `400 INVALID_ARGUMENT`; корректно сформированный, но отсутствующий или скрытый ресурс — `404 NOT_FOUND`.
 
 ### 5.2 Даты и время
 
-Дата без времени:
+- дата: `YYYY-MM-DD`;
+- datetime: RFC 3339 с timezone;
+- duration, если потребуется: целое число секунд с суффиксом `_seconds`.
 
-```text
-YYYY-MM-DD
-```
-
-Дата и время:
-
-```text
-RFC 3339 / ISO 8601 с часовым поясом
-```
-
-Пример:
-
-```text
-2026-07-17T14:30:00+05:00
-```
-
-Серверное время является источником истины для `created_at`, `posted_at`, `completed_at`, аудита и иных юридически или операционно значимых временных меток.
+Серверное время является источником истины для `created_at`, `posted_at`, `completed_at`, аудита и иных значимых временных меток. Клиентское время не подменяет время проведения операции.
 
 ### 5.3 Деньги
 
-Все денежные значения передаются целыми числами в дирамах — минимальной денежной единице сомони.
+Все денежные значения передаются целыми числами в дирамах:
 
 ```json
-{
-  "amount_dirams": 12550,
-  "currency": "TJS"
-}
+{"amount_dirams":12550,"currency":"TJS"}
 ```
 
-Денежные значения с плавающей точкой запрещены.
+`float` для денег запрещён. В MVP допустима только `TJS`, если endpoint не говорит иное. Backend рассчитывает итоговые цены, скидки и refund; frontend не является источником итоговой суммы.
 
-### 5.4 Количества
+### 5.4 Количества и единицы
 
-Складской остаток хранится и передаётся в целых базовых единицах отпуска.
-
-Поля количества должны явно указывать единицу в имени:
+Остатки передаются в целых базовых единицах. Имя поля обязано отражать единицу:
 
 - `quantity_base_units`;
 - `quantity_packages`;
-- `display_quantity` вместе с `sale_unit`;
-- `base_units_per_package`.
+- `base_units_per_package`;
+- `display_quantity` вместе с `sale_unit`.
 
-### 5.5 Nullable и отсутствующие поля
+Поддерживаемые `sale_unit` MVP: `PACKAGE`, `INNER_UNIT`. Неизвестное значение enum отклоняется.
 
-Отсутствующее поле и `null` имеют разную семантику:
+### 5.5 Nullable, omitted и empty
 
 - отсутствующее поле в `PATCH` означает «не изменять»;
-- `null` означает явную очистку значения, если это разрешено контрактом;
-- обязательное non-nullable поле не может отсутствовать и не может быть `null`.
+- `null` означает явную очистку только когда это разрешено;
+- пустая строка не эквивалентна `null`;
+- обязательное non-nullable поле не может отсутствовать или быть `null`;
+- response не должен произвольно менять поле между omitted и `null` без изменения контракта.
 
 ## 6. Общие HTTP-заголовки
 
-### 6.1 Request headers
+### 6.1 Request
 
 | Header | Обязательность | Назначение |
 |---|---|---|
-| `Authorization` | для protected API | bearer access token |
-| `Content-Type` | для request body | формат тела запроса |
-| `Accept` | рекомендуется | ожидаемый формат ответа |
-| `Idempotency-Key` | для критических команд | защита от повторного эффекта |
+| `Authorization` | protected API | bearer access token |
+| `Content-Type` | request body | формат тела |
+| `Accept` | рекомендуется | формат ответа |
+| `Idempotency-Key` | критические команды | защита от повторного эффекта |
 | `X-Request-ID` | необязательно | клиентский correlation ID |
+| `If-Match` | endpoint-specific | optimistic concurrency по ETag/version |
+| `Accept-Language` | необязательно | предпочтительный язык сообщений, если поддерживается |
 
-### 6.2 Response headers
+### 6.2 Response
 
 | Header | Назначение |
 |---|---|
 | `Content-Type` | формат ответа |
 | `X-Request-ID` | идентификатор запроса |
-| `Location` | URL созданного ресурса для применимых `201` |
-| `Retry-After` | рекомендуемая задержка для применимых `429` или `503` |
-| `Deprecation` | признак deprecated endpoint-а |
-| `Sunset` | дата отключения deprecated endpoint-а |
+| `Location` | canonical URL созданного ресурса |
+| `ETag` | версия изменяемого ресурса, если контракт поддерживает concurrency control |
+| `Retry-After` | задержка для применимых `429`/`503` |
+| `Deprecation` | deprecated contract |
+| `Sunset` | дата отключения deprecated contract |
+| `Cache-Control` | политика кэширования |
 
-Если клиент не передал допустимый `X-Request-ID`, сервер генерирует его самостоятельно. Сервер не обязан принимать произвольную строку без проверки длины и формата.
+`X-Request-ID` валидируется по длине и формату. Недопустимое значение заменяется серверным. Публичные read endpoint-ы могут применять `ETag` и cache headers; ответы с токенами, сессиями, внутренними остатками и чувствительными данными используют `Cache-Control: no-store`.
 
 ## 7. Success envelope
 
-Все JSON-ответы с телом используют единый envelope:
+Все JSON-ответы с телом используют envelope:
 
 ```json
 {
   "success": true,
-  "data": {
-    "id": "01JZX3E2J9Q4JY3N8VY6F7XH2A"
-  },
-  "meta": {
-    "request_id": "01JZX3G15D8RT7R1N3QFJ8Q5PX"
-  }
+  "data": {"id":"01JZX3E2J9Q4JY3N8VY6F7XH2A"},
+  "meta": {"request_id":"01JZX3G15D8RT7R1N3QFJ8Q5PX"}
 }
 ```
 
 Правила:
 
-1. `success` всегда равен `true`.
+1. `success` всегда `true`.
 2. `data` содержит ресурс, коллекцию или результат команды.
 3. `meta.request_id` присутствует во всех JSON-ответах.
-4. `meta.pagination` добавляется только для пагинированных коллекций.
-5. Endpoint с `204 No Content` не возвращает envelope и body.
-6. В одном ответе не могут одновременно присутствовать `data` и `error`.
+4. `meta.pagination` присутствует только у пагинированной коллекции.
+5. `meta.idempotency_replayed=true` присутствует при replay, если endpoint это поддерживает.
+6. `204 No Content` не возвращает body.
+7. `data` и `error` не присутствуют одновременно.
+8. Пустая коллекция возвращает `200` и `items: []`, а не `404`.
 
-Пример коллекции:
+Пример пагинации:
 
 ```json
 {
   "success": true,
-  "data": {
-    "items": []
-  },
+  "data": {"items":[]},
   "meta": {
-    "request_id": "01JZX3G15D8RT7R1N3QFJ8Q5PX",
-    "pagination": {
-      "next_cursor": null,
-      "has_more": false,
-      "limit": 50
-    }
+    "request_id":"01JZX3G15D8RT7R1N3QFJ8Q5PX",
+    "pagination":{"next_cursor":null,"has_more":false,"limit":50}
   }
 }
 ```
 
-## 8. Error envelope
+## 8. Error envelope и централизованный mapping
 
-Все JSON-ошибки формируются централизованным HTTP error responder. Сравнение ошибок выполняется только через `errors.Is()`; handlers не сопоставляют ошибки вручную по строке, `err.Error()` или PostgreSQL-коду.
-
-Базовый формат:
+Handlers передают ошибку единому responder. Категория определяется только через `errors.Is()`. Запрещены сравнение по `err.Error()`, substring matching и прямое сопоставление PostgreSQL-кодов в delivery/application.
 
 ```json
 {
   "success": false,
   "error": {
-    "code": "BUSINESS_RULE_VIOLATION",
-    "message": "operation violates a business rule",
-    "details": [
-      {
-        "field": "items[0].display_quantity",
-        "code": "INSUFFICIENT_STOCK",
-        "message": "requested quantity is unavailable"
-      }
+    "code":"BUSINESS_RULE_VIOLATION",
+    "message":"operation violates a business rule",
+    "details":[
+      {"field":"items[0].display_quantity","code":"INSUFFICIENT_STOCK","message":"requested quantity is unavailable"}
     ]
   },
-  "meta": {
-    "request_id": "01JZX3G15D8RT7R1N3QFJ8Q5PX"
-  }
+  "meta":{"request_id":"01JZX3G15D8RT7R1N3QFJ8Q5PX"}
 }
 ```
 
-`details` необязательно и используется для безопасных структурированных ошибок валидации или нескольких бизнес-нарушений. Поле не содержит SQL, stack trace, имена таблиц, constraint names, токены, пароли, filesystem paths и необработанный текст внутренних ошибок.
+`details` используется для безопасных структурированных ошибок. Нельзя возвращать SQL, stack trace, table/constraint names, токены, пароли, filesystem paths, driver errors и panic values.
 
-### 8.1 Общая таблица ошибок
+### 8.1 Общие категории
 
-| HTTP | Public code | Назначение | Retry |
-|---:|---|---|---|
-| 400 | `INVALID_ARGUMENT` | некорректный JSON, path/query-параметр или формат поля | после исправления запроса |
-| 401 | `UNAUTHENTICATED` | отсутствует, истёк или недействителен access token | после повторной аутентификации |
-| 403 | `FORBIDDEN` | роль или область полномочий не разрешает операцию | нет без изменения прав |
-| 404 | `NOT_FOUND` | ресурс не найден или скрыт политикой авторизации | обычно нет |
-| 409 | `CONFLICT` | конфликт состояния, уникальности или idempotency key | зависит от причины |
-| 413 | `PAYLOAD_TOO_LARGE` | превышен лимит body или файла | после уменьшения payload |
-| 415 | `UNSUPPORTED_MEDIA_TYPE` | неподдерживаемый Content-Type | после исправления запроса |
-| 422 | `BUSINESS_RULE_VIOLATION` | валидный запрос нарушает доменное правило | после изменения команды |
-| 429 | `RATE_LIMITED` | превышен rate limit | да, с учётом `Retry-After` |
-| 500 | `INTERNAL_ERROR` | неизвестная внутренняя ошибка | неавтоматически клиентом без политики |
-| 503 | `SERVICE_UNAVAILABLE` | обязательная зависимость временно недоступна | ограниченный retry |
+| HTTP | Public code | Семантика |
+|---:|---|---|
+| 400 | `INVALID_ARGUMENT` | JSON, path/query/header или field format invalid |
+| 401 | `UNAUTHENTICATED` | отсутствует или недействителен credential |
+| 403 | `FORBIDDEN` | роль или scope не разрешает операцию |
+| 404 | `NOT_FOUND` | ресурс отсутствует или намеренно скрыт |
+| 406 | `NOT_ACCEPTABLE` | неподдерживаемый response format |
+| 409 | `CONFLICT` | state, uniqueness, version или idempotency conflict |
+| 412 | `PRECONDITION_FAILED` | `If-Match` не соответствует текущей версии |
+| 413 | `PAYLOAD_TOO_LARGE` | body/file exceeds limit |
+| 415 | `UNSUPPORTED_MEDIA_TYPE` | неподдерживаемый content type |
+| 422 | `BUSINESS_RULE_VIOLATION` | синтаксически валидная команда нарушает доменное правило |
+| 429 | `RATE_LIMITED` | превышен rate limit |
+| 500 | `INTERNAL_ERROR` | неизвестная внутренняя ошибка |
+| 503 | `SERVICE_UNAVAILABLE` | обязательная зависимость недоступна |
 
-Endpoint может определять более точный стабильный код, например `INSUFFICIENT_STOCK`, `PHARMACY_INACTIVE`, `IDEMPOTENCY_KEY_REUSED`, `PRESCRIPTION_CONFIRMATION_REQUIRED`, но он должен отображаться в одну из общих категорий.
+Transport validation возвращает `400`; доменные ограничения — `422`; конфликт текущего состояния или уникальности — `409`.
 
-### 8.2 Validation details
+### 8.2 Validation detail
 
 ```json
-{
-  "field": "phone",
-  "code": "INVALID_FORMAT",
-  "message": "phone has invalid format"
-}
+{"field":"phone","code":"INVALID_FORMAT","message":"phone has invalid format"}
 ```
 
-`field` использует путь request DTO. Для ошибок, не связанных с одним полем, `field` отсутствует.
+`field` использует путь request DTO. Для cross-field ошибки поле может отсутствовать. Порядок `details` должен быть детерминированным.
 
-## 9. Authentication
+## 9. Authentication и sessions
 
 Protected API использует bearer access token:
 
@@ -272,72 +251,52 @@ Protected API использует bearer access token:
 Authorization: Bearer <access-token>
 ```
 
-Окончательная схема access/refresh token, сроки жизни, хранение refresh session, rotation и forced logout фиксируются в `09-security-design.md`.
+Окончательная политика access/refresh token, TTL, rotation, storage и forced logout фиксируется в `09-security-design.md`. До её принятия auth contract остаётся `Planned`.
 
 Базовые правила:
 
-1. Пароль передаётся только по HTTPS.
-2. Пароль и токены никогда не возвращаются в error details и не логируются.
-3. Access token идентифицирует пользователя, но не является единственным источником авторизации.
-4. Backend повторно проверяет актуальный статус пользователя, блокировку, роль и применимые назначения.
-5. Самостоятельная регистрация `ADMIN` и `PHARMACIST` отсутствует.
-6. Публичный поиск не требует токена.
+1. credentials передаются только по HTTPS;
+2. пароли и токены не логируются и не попадают в error details;
+3. access token идентифицирует principal, но не является единственным источником authorization;
+4. backend повторно проверяет актуальный статус пользователя и необходимые назначения;
+5. публичный поиск не требует токена;
+6. самостоятельная регистрация `ADMIN` и `PHARMACIST` отсутствует;
+7. login не раскрывает, существует ли пользователь;
+8. refresh token rotation обязана обнаруживать replay согласно security design;
+9. auth/session responses используют `Cache-Control: no-store`.
 
-Планируемые auth endpoint-ы используют refresh-session модель, а не бессрочный access token.
+Способ передачи refresh token — защищённая cookie либо response body — должен быть выбран только в `09-security-design.md`; API design не фиксирует небезопасную схему заранее.
 
 ## 10. Authorization
 
-Роли MVP:
+Роли MVP: `CLIENT`, `PHARMACIST`, `ADMIN`.
 
-- `CLIENT`;
-- `PHARMACIST`;
-- `ADMIN`.
+Проверка состоит из:
 
-Авторизация состоит из двух проверок:
+1. **RBAC** — разрешена ли операция роли;
+2. **scope authorization** — имеет ли principal доступ к аптеке/объекту;
+3. **current-state authorization** — активны ли пользователь, назначение, аптека и ресурс на момент операции.
 
-1. **RBAC** — разрешена ли операция роли пользователя.
-2. **Scope authorization** — имеет ли пользователь доступ к конкретной аптеке или объекту.
+`pharmacy_id` в URL не предоставляет доступ. Для `PHARMACIST` backend проверяет активное назначение именно этой аптеке. `ADMIN` не получает автоматическое право обходить доменные инварианты и immutable history.
 
-Для `PHARMACIST` наличие `pharmacy_id` в URL не даёт права доступа. Backend обязан проверить активное назначение пользователя этой аптеке и активность самой аптеки.
+Для предотвращения object enumeration защищённый endpoint может возвращать `404` вместо `403`; выбор фиксируется детальным контрактом и тестами.
 
-Чтобы снизить риск раскрытия существования чужого объекта, endpoint может возвращать `404 NOT_FOUND` вместо `403 FORBIDDEN`, если это определено его контрактом.
+## 11. Пагинация, фильтрация и сортировка
 
-## 11. Пагинация
-
-### 11.1 Базовая модель
-
-Для изменяемых и потенциально больших коллекций используется cursor pagination (пагинация по непрозрачному курсору):
+Для потенциально больших или изменяемых коллекций используется cursor pagination:
 
 ```text
-?limit=50&cursor=eyJpZCI6Ii4uLiJ9
+?limit=50&cursor=<opaque>
 ```
-
-Параметры:
 
 | Параметр | Default | Ограничение |
 |---|---:|---:|
 | `limit` | 50 | 1–100 |
-| `cursor` | отсутствует | непрозрачная строка, выданная сервером |
+| `cursor` | absent | opaque server-issued value |
 
-Ответ:
+Курсор связывается с endpoint, actor/scope, filter set, sort и schema version. Изменение этих параметров делает cursor недействительным и возвращает `400 INVALID_CURSOR`.
 
-```json
-{
-  "pagination": {
-    "next_cursor": "eyJpZCI6Ii4uLiJ9",
-    "has_more": true,
-    "limit": 50
-  }
-}
-```
-
-Клиент не должен декодировать или конструировать cursor самостоятельно.
-
-### 11.2 Детерминированный порядок
-
-Каждая пагинированная выборка имеет полный стабильный порядок с уникальным tie-breaker, обычно `id`.
-
-Примеры:
+Каждая выборка имеет стабильный total order с уникальным tie-breaker:
 
 ```text
 created_at DESC, id DESC
@@ -345,412 +304,418 @@ expiration_date ASC, received_at ASC, id ASC
 name ASC, id ASC
 ```
 
-Изменение filters, sort или scope делает ранее выданный cursor недействительным.
+Offset pagination допускается только для небольшого стабильного справочника и должна быть явно обоснована.
 
-### 11.3 Offset pagination
+Фильтры передаются отдельными query parameters. `sort` принимает только allowlist значений, а не SQL columns. `q` нормализуется по trim; минимальная длина и поведение пустой строки фиксируются endpoint-ом.
 
-Offset pagination допускается только для небольших административных справочников, если её преимущества доказаны конкретным контрактом. По умолчанию новые endpoint-ы используют cursor pagination.
+По умолчанию API не возвращает `total_count`, поскольку его вычисление может быть дорогим и семантически нестабильным. Если count нужен, он должен быть явно описан.
 
-## 12. Фильтрация, сортировка и поиск
+## 12. Idempotency
 
-Фильтры передаются отдельными query-параметрами:
+`Idempotency-Key` обязателен для команд, создающих складской/финансовый эффект или проводящих документ:
 
-```text
-?status=ACTIVE&expiration_before=2026-08-17
-```
+- receipt posting/reversal;
+- initial stock confirmation;
+- sale/void;
+- return/reversal;
+- write-off;
+- inventory adjustment;
+- staging publish;
+- другие явно отмеченные команды.
 
-Сортировка:
+Формат: непустая ASCII-строка длиной 1–128; рекомендуемый UUID v4.
 
-```text
-?sort=price_asc
-```
-
-Допустимые значения `sort` перечисляются в контракте endpoint-а. Произвольные имена SQL-колонок от клиента не принимаются.
-
-Строковый поиск использует параметр `q`. Пробелы по краям нормализуются. Пустой `q` либо отклоняется, либо трактуется как отсутствие фильтра — правило определяется endpoint-ом.
-
-## 13. Idempotency
-
-### 13.1 Обязательные endpoint-ы
-
-`Idempotency-Key` обязателен для команд, создающих складской или финансовый эффект либо проводящих бизнес-документ:
-
-- проведение поступления;
-- подтверждение импорта начальных остатков;
-- проведение продажи;
-- проведение возврата;
-- проведение списания;
-- проведение инвентаризационной корректировки;
-- публикация staging-строк;
-- другие операции, явно отмеченные в контракте.
-
-### 13.2 Формат и scope
-
-```http
-Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000
-```
-
-Ключ — непустая строка длиной до 128 символов. Рекомендуемый формат — UUID v4.
-
-Scope ключа для pharmacy-команд:
+Scope pharmacy-команды:
 
 ```text
-actor + pharmacy_id + endpoint operation + idempotency key
+actor_id + pharmacy_id + operation_id + idempotency_key
 ```
 
-Для admin-команд scope определяется конкретным endpoint-ом.
+`operation_id` — стабильное логическое имя команды, а не raw URL. Scope не должен позволять случайно переиспользовать ключ для разных операций.
 
-### 13.3 Semantic hash
-
-Сервер сохраняет hash канонического смыслового payload. В hash не включаются transport-поля, которые не меняют смысл операции, например порядок JSON-ключей и `X-Request-ID`.
+Backend хранит canonical semantic hash. В него входят все поля, влияющие на смысл операции, включая path scope и нормализованный payload. Не входят `X-Request-ID`, порядок JSON keys и другие transport-only данные.
 
 Поведение:
 
-1. новый ключ — операция выполняется;
-2. тот же ключ и тот же semantic payload — возвращается исходный результат без повторного эффекта;
-3. тот же ключ и другой semantic payload — `409 IDEMPOTENCY_KEY_REUSED`;
-4. параллельные запросы с одним ключом сериализуются;
-5. неизвестный итог после сетевого разрыва безопасно проверяется повтором с тем же ключом.
+1. новый ключ — команда выполняется;
+2. тот же key + semantic hash — возвращается исходный HTTP status и representation без повторного эффекта;
+3. тот же key + другой hash — `409 IDEMPOTENCY_KEY_REUSED`;
+4. параллельные одинаковые запросы сериализуются;
+5. запись idempotency и бизнес-эффект фиксируются атомарно;
+6. failed validation до начала команды не резервирует ключ, если детальный контракт не определяет иное;
+7. неопределённый сетевой исход проверяется повтором того же запроса.
 
-Минимальный срок хранения результата критической операции — 24 часа. Для юридически значимых документов запись связи с idempotency key может храниться дольше согласно retention policy.
+Replay должен возвращать тот же успешный status (`201` остаётся `201`), а не менять его на `200`; отличие указывается через `meta.idempotency_replayed` и/или response header. Это исключает зависимость клиента от истории доставки.
+
+Минимальный retention — 24 часа. Для юридически значимых документов связь может храниться столько же, сколько документ.
+
+## 13. Concurrency, preconditions и retries
+
+Идемпотентность защищает от повторной доставки, но не от lost update. Для изменяемых справочников endpoint может возвращать `ETag` и требовать:
+
+```http
+If-Match: "<version>"
+```
+
+Несовпадение версии → `412 PRECONDITION_FAILED`. Если endpoint не использует `ETag`, он обязан явно определить иной механизм concurrency control либо last-write-wins.
+
+Backend может ограниченно повторять PostgreSQL `40P01`/`40001` только для безопасных transactional use cases согласно ADR. Клиент не должен автоматически retry `4xx`, кроме явно retryable `409`, `429` и auth refresh flow. `503` retry допускается с bounded backoff и `Retry-After`.
 
 ## 14. HTTP status codes
 
 | Status | Использование |
 |---:|---|
-| 200 | успешное чтение, команда с синхронным результатом или idempotent replay |
-| 201 | создан новый ресурс или проведён новый документ |
-| 202 | принята асинхронная задача импорта/обработки |
-| 204 | успешная команда без тела ответа |
-| 400 | transport/format validation error |
-| 401 | authentication required/failed |
+| 200 | чтение или синхронная команда без создания нового ресурса |
+| 201 | новый ресурс или проведённый документ; replay сохраняет `201` |
+| 202 | принята асинхронная job |
+| 204 | успешная команда без body |
+| 400 | malformed/invalid transport input |
+| 401 | authentication failed |
 | 403 | authenticated but forbidden |
-| 404 | resource not found or intentionally concealed |
-| 409 | state, uniqueness or idempotency conflict |
+| 404 | absent or concealed resource |
+| 406 | unacceptable response media type |
+| 409 | state/uniqueness/idempotency conflict |
+| 412 | failed conditional update |
 | 413 | body/file too large |
 | 415 | unsupported media type |
-| 422 | domain/business rule violation |
-| 429 | rate limit exceeded |
+| 422 | domain rule violation |
+| 429 | rate limited |
 | 500 | unexpected internal error |
 | 503 | mandatory dependency unavailable |
 
-Создание проведённого документа возвращает `201`, даже если его побочные эффекты применены в той же транзакции. Повтор по idempotency key может возвращать `200` с тем же представлением и признаком replay в `meta`.
+`POST` не означает автоматически `201`: action endpoint возвращает статус по фактической семантике. `DELETE` может возвращать `204`; завершение assignment/session не означает физическое удаление исторических данных.
 
 ## 15. PATCH, архивирование и исторические данные
 
-`PATCH` используется только для разрешённых изменяемых полей текущего состояния.
+`PATCH` используется только для разрешённых изменяемых полей. Request должен содержать хотя бы одно изменяемое поле; пустой `PATCH` возвращает `400 EMPTY_PATCH`.
 
-Проведённые поступления, продажи, возвраты, списания, корректировки, складские движения и аудит:
+Проведённые receipts, sales, returns, write-offs, adjustments, inventory movements и audit events:
 
-- не редактируются через общий CRUD endpoint;
+- не редактируются через CRUD;
 - не удаляются физически;
-- исправляются отдельной компенсирующей или сторнирующей операцией;
-- сохраняют исторические snapshots.
+- исправляются отдельной компенсирующей операцией;
+- сохраняют snapshots;
+- не меняются каскадно при редактировании справочников.
 
-Для справочников применяется архивирование или изменение статуса вместо физического удаления, если ресурс связан с операционной историей.
+Архивирование не равняется удалению и должно быть идемпотентным по состоянию: повторное архивирование либо возвращает текущее состояние, либо стабильный conflict — выбор фиксируется endpoint-ом.
 
-## 16. Upload/download contracts
+## 16. Async jobs и file contracts
 
-Файловая загрузка выполняется через `multipart/form-data` с полем `file`.
+Upload использует `multipart/form-data` с полем `file`. Ограничиваются MIME, extension, size, row count и parser. Client filename не используется как filesystem path.
 
-Общие ограничения:
+Длительная обработка возвращает `202`:
 
-1. разрешены только явно перечисленные MIME-типы и расширения;
-2. размер файла и количество строк ограничены конфигурацией;
-3. файл не исполняется и не публикуется как активный контент;
-4. импорт сначала попадает в staging или validation job;
-5. длительная обработка возвращает `202 Accepted` и job ID;
-6. статус и отчёт запрашиваются отдельными endpoint-ами;
-7. ошибки отдельных строк доступны в структурированном отчёте.
+```json
+{
+  "success":true,
+  "data":{"job_id":"...","status":"QUEUED","status_url":"/api/v1/..."},
+  "meta":{"request_id":"..."}
+}
+```
 
-## 17. Rate limiting
+Базовые job status: `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED` — конкретный endpoint может использовать подмножество. Job response содержит timestamps, progress/counters, safe error summary и links на report. Нельзя использовать бесконечный HTTP request вместо status polling.
 
-Минимально rate limiting применяется к:
+Повторная загрузка файла сама по себе не обязана быть idempotent; команда publish/confirm обязана. Политика частичной или атомарной публикации фиксируется до реализации.
 
-- login;
-- refresh;
-- публичному поиску;
-- файловым upload endpoint-ам;
-- административным массовым операциям.
+Downloads обязаны задавать безопасный `Content-Disposition`; пользовательские значения не вставляются в filename без sanitization.
 
-При превышении лимита возвращается `429 RATE_LIMITED` и, где возможно, `Retry-After`.
+## 17. Cache, rate limits и CORS
 
-Конкретные лимиты определяются security и deployment design, а не жёстко фиксируются в frontend.
+Публичные GET могут кэшироваться только если freshness semantics не вводят пользователя в заблуждение. Availability response обязан содержать `inventory_changed_at`/`as_of` и короткую cache policy. Protected responses по умолчанию `private, no-store`, если endpoint явно не разрешает иное.
 
-## 18. Каталог планируемых endpoint-ов
+Rate limiting минимум применяется к login, refresh, public search, uploads и массовым admin-командам. `429` возвращает `Retry-After`, когда возможно. Лимиты конфигурируются server-side.
 
-Все endpoint-ы ниже имеют статус `Planned`, пока код и обязательные тесты не реализованы и не сверены с этим документом.
+Production CORS использует allowlist origins, methods и headers. `*` с credentials запрещён.
 
-### 18.1 Operational
+## 18. Batch operations
 
-| Method | Path | Access | Назначение |
-|---|---|---|---|
-| GET | `/healthz` | public operational | liveness без проверки готовности зависимостей |
-| GET | `/readyz` | public/internal operational | readiness с обязательной проверкой PostgreSQL |
+Batch endpoint не вводится автоматически ради уменьшения количества запросов. Если batch требуется:
 
-### 18.2 Authentication and current user
+- должен быть определён max item count;
+- порядок результатов соответствует request либо содержит client correlation key;
+- политика atomic/all-or-nothing или partial success фиксируется явно;
+- partial success не кодируется неструктурированным message;
+- batch не обходит per-item authorization, validation, audit и idempotency.
 
-| Method | Path | Access | Назначение |
-|---|---|---|---|
-| POST | `/api/v1/auth/login` | public | вход по идентификатору и паролю |
-| POST | `/api/v1/auth/refresh` | refresh session | ротация access/refresh session |
-| POST | `/api/v1/auth/logout` | authenticated | завершение текущей сессии |
-| POST | `/api/v1/auth/logout-all` | authenticated | завершение всех сессий пользователя |
-| GET | `/api/v1/me` | authenticated | текущий пользователь, роль и доступный scope |
-| PATCH | `/api/v1/me` | authenticated | изменение разрешённых собственных профильных полей |
-| POST | `/api/v1/me/password` | authenticated | смена собственного пароля |
-| GET | `/api/v1/me/sessions` | authenticated | список активных сессий без секретов |
-| DELETE | `/api/v1/me/sessions/{session_id}` | authenticated | отзыв выбранной сессии |
+В MVP критические складские документы остаются атомарными бизнес-командами, а не generic bulk CRUD.
 
-### 18.3 Public catalog and pharmacy search
+## 19. Каталог планируемых endpoint-ов
 
-| Method | Path | Access | Назначение |
-|---|---|---|---|
-| GET | `/api/v1/public/products/search` | public | поиск по торговому названию и МНН |
-| GET | `/api/v1/public/products/{product_id}` | public | публичная карточка продукта |
-| GET | `/api/v1/public/presentations/{presentation_id}` | public | публичная карточка фасовки |
-| GET | `/api/v1/public/presentations/{presentation_id}/availability` | public | аптеки, цена и статус наличия |
-| GET | `/api/v1/public/pharmacies/{pharmacy_id}` | public | публичные данные активной аптеки |
+Все endpoint-ы ниже имеют статус `Planned`, пока реализация и обязательные тесты не сверены с контрактом. Столбец `Idem` показывает обязательность `Idempotency-Key`.
 
-Публичный API не возвращает точные остатки, закупочные цены, номера партий, внутренний аудит или закрытые пользовательские данные.
+### 19.1 Operational
 
-### 18.4 Admin users and assignments
+| Method | Path | Access | Idem | Назначение |
+|---|---|---|---|---|
+| GET | `/healthz` | operational | no | liveness без проверки зависимостей |
+| GET | `/readyz` | operational | no | readiness с проверкой PostgreSQL |
 
-| Method | Path | Access | Назначение |
-|---|---|---|---|
-| GET | `/api/v1/admin/users` | ADMIN | список пользователей |
-| POST | `/api/v1/admin/users` | ADMIN | создание пользователя |
-| GET | `/api/v1/admin/users/{user_id}` | ADMIN | карточка пользователя |
-| PATCH | `/api/v1/admin/users/{user_id}` | ADMIN | изменение разрешённых профильных полей и статуса |
-| POST | `/api/v1/admin/users/{user_id}/block` | ADMIN | блокировка пользователя |
-| POST | `/api/v1/admin/users/{user_id}/unblock` | ADMIN | снятие блокировки |
-| POST | `/api/v1/admin/users/{user_id}/archive` | ADMIN | архивирование пользователя |
-| GET | `/api/v1/admin/users/{user_id}/pharmacy-assignments` | ADMIN | назначения аптекаря |
-| POST | `/api/v1/admin/users/{user_id}/pharmacy-assignments` | ADMIN | назначение аптекаря аптеке |
-| DELETE | `/api/v1/admin/users/{user_id}/pharmacy-assignments/{assignment_id}` | ADMIN | завершение назначения |
-| POST | `/api/v1/admin/users/{user_id}/password-reset` | ADMIN | административный запуск безопасного сброса пароля |
+### 19.2 Authentication and current user
 
-### 18.5 Pharmacies
+| Method | Path | Access | Idem | Назначение |
+|---|---|---|---|---|
+| POST | `/api/v1/auth/login` | public | no | вход по identifier/password |
+| POST | `/api/v1/auth/refresh` | refresh session | no | rotation session |
+| POST | `/api/v1/auth/logout` | authenticated/session | no | завершение текущей сессии |
+| POST | `/api/v1/auth/logout-all` | authenticated | recommended | отзыв всех сессий |
+| GET | `/api/v1/me` | authenticated | no | текущий principal, role и scope |
+| PATCH | `/api/v1/me` | authenticated | no | собственные изменяемые profile fields |
+| POST | `/api/v1/me/password` | authenticated | recommended | смена собственного пароля и session policy |
+| GET | `/api/v1/me/sessions` | authenticated | no | список сессий без secrets |
+| DELETE | `/api/v1/me/sessions/{session_id}` | authenticated + ownership | no | отзыв выбранной сессии |
 
-| Method | Path | Access | Назначение |
-|---|---|---|---|
-| GET | `/api/v1/admin/pharmacies` | ADMIN | список аптек, включая неактивные |
-| POST | `/api/v1/admin/pharmacies` | ADMIN | создание аптеки |
-| GET | `/api/v1/admin/pharmacies/{pharmacy_id}` | ADMIN | административная карточка аптеки |
-| PATCH | `/api/v1/admin/pharmacies/{pharmacy_id}` | ADMIN | изменение административных и публичных полей |
-| POST | `/api/v1/admin/pharmacies/{pharmacy_id}/activate` | ADMIN | активация аптеки |
-| POST | `/api/v1/admin/pharmacies/{pharmacy_id}/block` | ADMIN | блокировка новых операций |
-| POST | `/api/v1/admin/pharmacies/{pharmacy_id}/archive` | ADMIN | архивирование аптеки |
-| GET | `/api/v1/pharmacies/{pharmacy_id}` | PHARMACIST, ADMIN + scope | внутренняя карточка аптеки |
-| PATCH | `/api/v1/pharmacies/{pharmacy_id}/public-profile` | PHARMACIST, ADMIN + scope | изменение публичных данных аптеки |
+### 19.3 Public catalog and availability
 
-### 18.6 Global catalog
+| Method | Path | Access | Idem | Назначение |
+|---|---|---|---|---|
+| GET | `/api/v1/public/products/search` | public | no | поиск по торговому названию/МНН |
+| GET | `/api/v1/public/products/{product_id}` | public | no | публичная карточка active product |
+| GET | `/api/v1/public/presentations/{presentation_id}` | public | no | публичная карточка active presentation |
+| GET | `/api/v1/public/presentations/{presentation_id}/availability` | public | no | active pharmacies, price, status, freshness |
+| GET | `/api/v1/public/pharmacies/{pharmacy_id}` | public | no | публичная карточка active pharmacy |
 
-| Method | Path | Access | Назначение |
-|---|---|---|---|
-| GET | `/api/v1/catalog/products` | PHARMACIST, ADMIN | внутренний поиск глобального каталога |
-| POST | `/api/v1/admin/catalog/products` | ADMIN | создание продукта |
-| GET | `/api/v1/catalog/products/{product_id}` | PHARMACIST, ADMIN | полная карточка продукта |
-| PATCH | `/api/v1/admin/catalog/products/{product_id}` | ADMIN | изменение разрешённых полей продукта |
-| POST | `/api/v1/admin/catalog/products/{product_id}/archive` | ADMIN | архивирование продукта |
-| POST | `/api/v1/admin/catalog/products/{product_id}/presentations` | ADMIN | создание фасовки |
-| GET | `/api/v1/catalog/presentations/{presentation_id}` | PHARMACIST, ADMIN | полная карточка фасовки |
-| PATCH | `/api/v1/admin/catalog/presentations/{presentation_id}` | ADMIN | изменение фасовки для будущих операций |
-| POST | `/api/v1/admin/catalog/presentations/{presentation_id}/archive` | ADMIN | архивирование фасовки |
-| POST | `/api/v1/admin/catalog/presentations/{presentation_id}/barcodes` | ADMIN | добавление штрихкода |
-| PATCH | `/api/v1/admin/catalog/barcodes/{barcode_id}` | ADMIN | изменение primary/status штрихкода |
-| DELETE | `/api/v1/admin/catalog/barcodes/{barcode_id}` | ADMIN | удаление неиспользуемого ошибочного штрихкода по политике каталога |
-| POST | `/api/v1/catalog/product-requests` | PHARMACIST + scope | запрос на добавление отсутствующего товара |
-| GET | `/api/v1/admin/catalog/product-requests` | ADMIN | очередь запросов аптекарей |
-| PATCH | `/api/v1/admin/catalog/product-requests/{request_id}` | ADMIN | решение по запросу |
+Публичный API не возвращает точные остатки, закупочные цены, lot number, audit IDs или персональные данные.
 
-### 18.7 Catalog staging import
+### 19.4 Admin users and assignments
 
-| Method | Path | Access | Назначение |
-|---|---|---|---|
-| POST | `/api/v1/admin/catalog-imports` | ADMIN | загрузка CSV/XLSX и создание import job |
-| GET | `/api/v1/admin/catalog-imports` | ADMIN | список import jobs |
-| GET | `/api/v1/admin/catalog-imports/{import_id}` | ADMIN | статус и итоговые счётчики |
-| GET | `/api/v1/admin/catalog-imports/{import_id}/rows` | ADMIN | строки staging с фильтрами |
-| PATCH | `/api/v1/admin/catalog-imports/{import_id}/rows/{row_id}` | ADMIN | исправление нормализованных данных/решения |
-| POST | `/api/v1/admin/catalog-imports/{import_id}/validate` | ADMIN | повторная валидация job |
-| POST | `/api/v1/admin/catalog-imports/{import_id}/publish` | ADMIN + idempotency | публикация подтверждённых строк |
-| GET | `/api/v1/admin/catalog-imports/{import_id}/report` | ADMIN | загрузка отчёта ошибок |
+| Method | Path | Access | Idem | Назначение |
+|---|---|---|---|---|
+| GET | `/api/v1/admin/users` | ADMIN | no | список пользователей |
+| POST | `/api/v1/admin/users` | ADMIN | recommended | создание пользователя |
+| GET | `/api/v1/admin/users/{user_id}` | ADMIN | no | карточка пользователя |
+| PATCH | `/api/v1/admin/users/{user_id}` | ADMIN | no | profile/status с concurrency control |
+| POST | `/api/v1/admin/users/{user_id}/block` | ADMIN | recommended | блокировка и session revocation policy |
+| POST | `/api/v1/admin/users/{user_id}/unblock` | ADMIN | recommended | снятие блокировки |
+| POST | `/api/v1/admin/users/{user_id}/archive` | ADMIN | recommended | архивирование |
+| GET | `/api/v1/admin/users/{user_id}/pharmacy-assignments` | ADMIN | no | назначения аптекаря |
+| POST | `/api/v1/admin/users/{user_id}/pharmacy-assignments` | ADMIN | recommended | создание назначения |
+| DELETE | `/api/v1/admin/users/{user_id}/pharmacy-assignments/{assignment_id}` | ADMIN | no | завершение назначения без удаления истории |
+| POST | `/api/v1/admin/users/{user_id}/password-reset` | ADMIN | recommended | безопасный reset flow, не выдача пароля |
 
-Политика атомарной или частичной публикации должна быть окончательно определена в детальном контракте до реализации `publish`.
+### 19.5 Pharmacies
 
-### 18.8 Pharmacy assortment
+| Method | Path | Access | Idem | Назначение |
+|---|---|---|---|---|
+| GET | `/api/v1/admin/pharmacies` | ADMIN | no | список, включая inactive |
+| POST | `/api/v1/admin/pharmacies` | ADMIN | recommended | создание аптеки |
+| GET | `/api/v1/admin/pharmacies/{pharmacy_id}` | ADMIN | no | административная карточка |
+| PATCH | `/api/v1/admin/pharmacies/{pharmacy_id}` | ADMIN | no | разрешённые поля/status |
+| POST | `/api/v1/admin/pharmacies/{pharmacy_id}/activate` | ADMIN | recommended | активация |
+| POST | `/api/v1/admin/pharmacies/{pharmacy_id}/block` | ADMIN | recommended | блокировка новых операций |
+| POST | `/api/v1/admin/pharmacies/{pharmacy_id}/archive` | ADMIN | recommended | архивирование |
+| GET | `/api/v1/pharmacies/{pharmacy_id}` | PHARMACIST/ADMIN + scope | no | внутренняя карточка |
+| PATCH | `/api/v1/pharmacies/{pharmacy_id}/public-profile` | PHARMACIST/ADMIN + scope | no | публичные поля |
 
-| Method | Path | Access | Назначение |
-|---|---|---|---|
-| GET | `/api/v1/pharmacies/{pharmacy_id}/assortment` | PHARMACIST, ADMIN + scope | список локального ассортимента |
-| POST | `/api/v1/pharmacies/{pharmacy_id}/assortment` | PHARMACIST, ADMIN + scope | подключение глобальной фасовки к аптеке |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/assortment/{pharmacy_product_id}` | PHARMACIST, ADMIN + scope | карточка локального товара |
-| PATCH | `/api/v1/pharmacies/{pharmacy_id}/assortment/{pharmacy_product_id}` | PHARMACIST, ADMIN + scope | цены, правила продажи и уровни остатка |
-| POST | `/api/v1/pharmacies/{pharmacy_id}/assortment/{pharmacy_product_id}/archive` | PHARMACIST, ADMIN + scope | исключение из новых операций без удаления истории |
-| POST | `/api/v1/pharmacies/{pharmacy_id}/assortment/{pharmacy_product_id}/activate` | PHARMACIST, ADMIN + scope | повторная активация при допустимом состоянии |
+### 19.6 Global catalog and product requests
 
-### 18.9 Receipts
+| Method | Path | Access | Idem | Назначение |
+|---|---|---|---|---|
+| GET | `/api/v1/catalog/products` | PHARMACIST/ADMIN | no | внутренний поиск каталога |
+| GET | `/api/v1/catalog/products/{product_id}` | PHARMACIST/ADMIN | no | полная карточка product |
+| POST | `/api/v1/admin/catalog/products` | ADMIN | recommended | создание product |
+| PATCH | `/api/v1/admin/catalog/products/{product_id}` | ADMIN | no | изменение будущего состояния |
+| POST | `/api/v1/admin/catalog/products/{product_id}/archive` | ADMIN | recommended | архивирование |
+| POST | `/api/v1/admin/catalog/products/{product_id}/presentations` | ADMIN | recommended | создание presentation |
+| GET | `/api/v1/catalog/presentations/{presentation_id}` | PHARMACIST/ADMIN | no | полная карточка presentation |
+| PATCH | `/api/v1/admin/catalog/presentations/{presentation_id}` | ADMIN | no | изменения только для будущих операций |
+| POST | `/api/v1/admin/catalog/presentations/{presentation_id}/archive` | ADMIN | recommended | архивирование |
+| POST | `/api/v1/admin/catalog/presentations/{presentation_id}/barcodes` | ADMIN | recommended | добавление barcode |
+| PATCH | `/api/v1/admin/catalog/barcodes/{barcode_id}` | ADMIN | no | primary/status |
+| DELETE | `/api/v1/admin/catalog/barcodes/{barcode_id}` | ADMIN | no | удаление только ошибочного неиспользуемого barcode |
+| POST | `/api/v1/catalog/product-requests` | PHARMACIST + scope | recommended | запрос отсутствующей позиции |
+| GET | `/api/v1/admin/catalog/product-requests` | ADMIN | no | очередь запросов |
+| PATCH | `/api/v1/admin/catalog/product-requests/{request_id}` | ADMIN | no | решение по запросу |
 
-| Method | Path | Access | Назначение |
-|---|---|---|---|
-| GET | `/api/v1/pharmacies/{pharmacy_id}/receipts` | PHARMACIST, ADMIN + scope | список проведённых поступлений |
-| POST | `/api/v1/pharmacies/{pharmacy_id}/receipts` | PHARMACIST, ADMIN + scope + idempotency | атомарное проведение поступления |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/receipts/{receipt_id}` | PHARMACIST, ADMIN + scope | поступление, строки и связанные лоты |
-| POST | `/api/v1/pharmacies/{pharmacy_id}/receipts/{receipt_id}/reverse` | elevated permission + idempotency | отдельная компенсирующая операция |
+### 19.7 Catalog staging import
 
-Draft CRUD для поступлений не включён в базовый MVP: endpoint `POST /receipts` проводит документ атомарно. Если продукту потребуется отдельный жизненный цикл draft/post, он оформляется изменением SRS и API design.
+| Method | Path | Access | Idem | Назначение |
+|---|---|---|---|---|
+| POST | `/api/v1/admin/catalog-imports` | ADMIN | no | upload и создание job |
+| GET | `/api/v1/admin/catalog-imports` | ADMIN | no | список jobs |
+| GET | `/api/v1/admin/catalog-imports/{import_id}` | ADMIN | no | status/counters |
+| GET | `/api/v1/admin/catalog-imports/{import_id}/rows` | ADMIN | no | staging rows |
+| PATCH | `/api/v1/admin/catalog-imports/{import_id}/rows/{row_id}` | ADMIN | no | normalized data/decision |
+| POST | `/api/v1/admin/catalog-imports/{import_id}/validate` | ADMIN | recommended | повторная validation job |
+| POST | `/api/v1/admin/catalog-imports/{import_id}/publish` | ADMIN | required | публикация подтверждённых строк |
+| GET | `/api/v1/admin/catalog-imports/{import_id}/report` | ADMIN | no | error report |
 
-### 18.10 Initial stock imports
+Политика atomic/partial publish должна быть выбрана до реализации.
 
-| Method | Path | Access | Назначение |
-|---|---|---|---|
-| GET | `/api/v1/initial-stock-import-template` | PHARMACIST, ADMIN | стандартный CSV/XLSX-шаблон |
-| POST | `/api/v1/pharmacies/{pharmacy_id}/initial-stock-imports` | PHARMACIST, ADMIN + scope | загрузка и создание validation job |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/initial-stock-imports` | PHARMACIST, ADMIN + scope | список jobs |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/initial-stock-imports/{import_id}` | PHARMACIST, ADMIN + scope | статус, preview и счётчики |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/initial-stock-imports/{import_id}/rows` | PHARMACIST, ADMIN + scope | строки и ошибки сопоставления |
-| PATCH | `/api/v1/pharmacies/{pharmacy_id}/initial-stock-imports/{import_id}/rows/{row_id}` | PHARMACIST, ADMIN + scope | исправление сопоставления |
-| POST | `/api/v1/pharmacies/{pharmacy_id}/initial-stock-imports/{import_id}/confirm` | PHARMACIST, ADMIN + scope + idempotency | атомарное начальное оприходование |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/initial-stock-imports/{import_id}/report` | PHARMACIST, ADMIN + scope | отчёт ошибок |
+### 19.8 Pharmacy assortment
 
-### 18.11 Sales
+| Method | Path | Access | Idem | Назначение |
+|---|---|---|---|---|
+| GET | `/api/v1/pharmacies/{pharmacy_id}/assortment` | PHARMACIST/ADMIN + scope | no | локальный ассортимент |
+| POST | `/api/v1/pharmacies/{pharmacy_id}/assortment` | PHARMACIST/ADMIN + scope | recommended | подключение presentation |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/assortment/{pharmacy_product_id}` | PHARMACIST/ADMIN + scope | no | карточка local product |
+| PATCH | `/api/v1/pharmacies/{pharmacy_id}/assortment/{pharmacy_product_id}` | PHARMACIST/ADMIN + scope | no | цены, sale rules, stock levels |
+| POST | `/api/v1/pharmacies/{pharmacy_id}/assortment/{pharmacy_product_id}/archive` | PHARMACIST/ADMIN + scope | recommended | исключение из новых операций |
+| POST | `/api/v1/pharmacies/{pharmacy_id}/assortment/{pharmacy_product_id}/activate` | PHARMACIST/ADMIN + scope | recommended | повторная активация |
 
-| Method | Path | Access | Назначение |
-|---|---|---|---|
-| GET | `/api/v1/pharmacies/{pharmacy_id}/sales` | PHARMACIST, ADMIN + scope | список продаж |
-| POST | `/api/v1/pharmacies/{pharmacy_id}/sales` | PHARMACIST, ADMIN + scope + idempotency | атомарное проведение продажи с FEFO |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/sales/{sale_id}` | PHARMACIST, ADMIN + scope | чек, строки и допустимая информация об аллокациях |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/sales/{sale_id}/return-eligibility` | PHARMACIST, ADMIN + scope | уже возвращённые и максимально доступные количества |
-| POST | `/api/v1/pharmacies/{pharmacy_id}/sales/{sale_id}/void` | elevated permission + idempotency | сторнирование только по явно утверждённой политике |
+### 19.9 Receipts
 
-В одном request одинаковые `pharmacy_product_id + sale_unit` должны быть отклонены кодом `DUPLICATE_SALE_ITEM`, а не неявно объединяться. Это делает клиентскую ошибку заметной и сохраняет однозначную связь request-строк с ответом.
+| Method | Path | Access | Idem | Назначение |
+|---|---|---|---|---|
+| GET | `/api/v1/pharmacies/{pharmacy_id}/receipts` | PHARMACIST/ADMIN + scope | no | список проведённых receipts |
+| POST | `/api/v1/pharmacies/{pharmacy_id}/receipts` | PHARMACIST/ADMIN + scope | required | атомарное проведение receipt |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/receipts/{receipt_id}` | PHARMACIST/ADMIN + scope | no | receipt, items, lots |
+| POST | `/api/v1/pharmacies/{pharmacy_id}/receipts/{receipt_id}/reverse` | elevated permission | required | компенсирующая операция |
 
-### 18.12 Returns
+Draft CRUD для receipts не входит в MVP.
 
-| Method | Path | Access | Назначение |
-|---|---|---|---|
-| GET | `/api/v1/pharmacies/{pharmacy_id}/returns` | PHARMACIST, ADMIN + scope | список возвратов |
-| POST | `/api/v1/pharmacies/{pharmacy_id}/returns` | PHARMACIST, ADMIN + scope + idempotency | атомарное проведение возврата по исходной продаже |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/returns/{return_id}` | PHARMACIST, ADMIN + scope | возврат, строки, refund и disposition |
-| POST | `/api/v1/pharmacies/{pharmacy_id}/returns/{return_id}/reverse` | elevated permission + idempotency | компенсирующая операция при допустимой политике |
+### 19.10 Initial stock imports
 
-До юридического подтверждения production-политики endpoint проведения возврата остаётся `Planned` и не должен автоматически разрешать возврат любой лекарственной позиции.
+| Method | Path | Access | Idem | Назначение |
+|---|---|---|---|---|
+| GET | `/api/v1/initial-stock-import-template` | PHARMACIST/ADMIN | no | стандартный template |
+| POST | `/api/v1/pharmacies/{pharmacy_id}/initial-stock-imports` | PHARMACIST/ADMIN + scope | no | upload/validation job |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/initial-stock-imports` | PHARMACIST/ADMIN + scope | no | список jobs |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/initial-stock-imports/{import_id}` | PHARMACIST/ADMIN + scope | no | status/preview/counters |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/initial-stock-imports/{import_id}/rows` | PHARMACIST/ADMIN + scope | no | rows/errors |
+| PATCH | `/api/v1/pharmacies/{pharmacy_id}/initial-stock-imports/{import_id}/rows/{row_id}` | PHARMACIST/ADMIN + scope | no | mapping correction |
+| POST | `/api/v1/pharmacies/{pharmacy_id}/initial-stock-imports/{import_id}/confirm` | PHARMACIST/ADMIN + scope | required | атомарное initial posting |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/initial-stock-imports/{import_id}/report` | PHARMACIST/ADMIN + scope | no | error report |
 
-### 18.13 Write-offs and inventory adjustments
+### 19.11 Sales
 
-| Method | Path | Access | Назначение |
-|---|---|---|---|
-| GET | `/api/v1/pharmacies/{pharmacy_id}/write-offs` | PHARMACIST, ADMIN + scope | список списаний |
-| POST | `/api/v1/pharmacies/{pharmacy_id}/write-offs` | PHARMACIST, ADMIN + scope + idempotency | проведение списания с причиной |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/write-offs/{write_off_id}` | PHARMACIST, ADMIN + scope | документ списания |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/inventory-adjustments` | PHARMACIST, ADMIN + scope | список корректировок |
-| POST | `/api/v1/pharmacies/{pharmacy_id}/inventory-adjustments` | elevated permission + idempotency | проведение инвентаризационной корректировки |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/inventory-adjustments/{adjustment_id}` | PHARMACIST, ADMIN + scope | документ корректировки |
+| Method | Path | Access | Idem | Назначение |
+|---|---|---|---|---|
+| GET | `/api/v1/pharmacies/{pharmacy_id}/sales` | PHARMACIST/ADMIN + scope | no | список sales |
+| POST | `/api/v1/pharmacies/{pharmacy_id}/sales` | PHARMACIST/ADMIN + scope | required | атомарная sale с FEFO |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/sales/{sale_id}` | PHARMACIST/ADMIN + scope | no | receipt representation и допустимые allocations |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/sales/{sale_id}/return-eligibility` | PHARMACIST/ADMIN + scope | no | доступные quantities для return |
+| POST | `/api/v1/pharmacies/{pharmacy_id}/sales/{sale_id}/void` | elevated permission | required | сторнирование по утверждённой политике |
 
-### 18.14 Inventory and stock lots
+Одинаковые `pharmacy_product_id + sale_unit` в одном request отклоняются `DUPLICATE_SALE_ITEM`; backend не объединяет их неявно.
 
-| Method | Path | Access | Назначение |
-|---|---|---|---|
-| GET | `/api/v1/pharmacies/{pharmacy_id}/inventory` | PHARMACIST, ADMIN + scope | агрегированный внутренний остаток по ассортименту |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/stock-lots` | PHARMACIST, ADMIN + scope | лоты с фильтрами срока и статуса |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/stock-lots/{lot_id}` | PHARMACIST, ADMIN + scope | лот и вычисляемое представление упаковок |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/stock-lots/{lot_id}/movements` | PHARMACIST, ADMIN + scope | append-only движения лота |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/inventory-operations` | PHARMACIST, ADMIN + scope | журнал складских операций |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/inventory-operations/{operation_id}` | PHARMACIST, ADMIN + scope | операция и связанные движения |
-| POST | `/api/v1/admin/pharmacies/{pharmacy_id}/inventory-reconciliation` | ADMIN | запуск диагностической сверки |
-| GET | `/api/v1/admin/pharmacies/{pharmacy_id}/inventory-reconciliation/{job_id}` | ADMIN | результат сверки без автоисправления |
+### 19.12 Returns
 
-Для `inventory_movements` отсутствуют POST/PATCH/DELETE endpoint-ы.
+| Method | Path | Access | Idem | Назначение |
+|---|---|---|---|---|
+| GET | `/api/v1/pharmacies/{pharmacy_id}/returns` | PHARMACIST/ADMIN + scope | no | список returns |
+| POST | `/api/v1/pharmacies/{pharmacy_id}/returns` | PHARMACIST/ADMIN + scope | required | атомарный return по исходной sale |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/returns/{return_id}` | PHARMACIST/ADMIN + scope | no | items/refund/disposition |
+| POST | `/api/v1/pharmacies/{pharmacy_id}/returns/{return_id}/reverse` | elevated permission | required | компенсирующая операция |
 
-### 18.15 Alerts and recommendations
+Проведение return остаётся `Planned` до юридического утверждения policy.
 
-| Method | Path | Access | Назначение |
-|---|---|---|---|
-| GET | `/api/v1/pharmacies/{pharmacy_id}/alerts` | PHARMACIST, ADMIN + scope | активные и исторические предупреждения |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/alerts/{alert_id}` | PHARMACIST, ADMIN + scope | карточка предупреждения |
-| POST | `/api/v1/pharmacies/{pharmacy_id}/alerts/{alert_id}/acknowledge` | PHARMACIST, ADMIN + scope | подтверждение просмотра |
-| POST | `/api/v1/pharmacies/{pharmacy_id}/alerts/{alert_id}/resolve` | PHARMACIST, ADMIN + scope | ручное закрытие, если разрешено типом |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/replenishment-recommendations` | PHARMACIST, ADMIN + scope | рекомендации без автоматического заказа |
+### 19.13 Write-offs and adjustments
 
-### 18.16 Audit
+| Method | Path | Access | Idem | Назначение |
+|---|---|---|---|---|
+| GET | `/api/v1/pharmacies/{pharmacy_id}/write-offs` | PHARMACIST/ADMIN + scope | no | список write-offs |
+| POST | `/api/v1/pharmacies/{pharmacy_id}/write-offs` | PHARMACIST/ADMIN + scope | required | проведение с причиной |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/write-offs/{write_off_id}` | PHARMACIST/ADMIN + scope | no | документ write-off |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/inventory-adjustments` | PHARMACIST/ADMIN + scope | no | список adjustments |
+| POST | `/api/v1/pharmacies/{pharmacy_id}/inventory-adjustments` | elevated permission | required | ожидаемое/factual/delta |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/inventory-adjustments/{adjustment_id}` | PHARMACIST/ADMIN + scope | no | adjustment document |
 
-| Method | Path | Access | Назначение |
-|---|---|---|---|
-| GET | `/api/v1/admin/audit-events` | ADMIN | системный аудит с фильтрами и пагинацией |
-| GET | `/api/v1/admin/audit-events/{audit_event_id}` | ADMIN | безопасные детали события |
-| GET | `/api/v1/pharmacies/{pharmacy_id}/audit-events` | ADMIN или ограниченная аудиторская роль | аудит в пределах аптеки |
+### 19.14 Inventory and reconciliation
 
-Для audit events отсутствуют PATCH и DELETE endpoint-ы.
+| Method | Path | Access | Idem | Назначение |
+|---|---|---|---|---|
+| GET | `/api/v1/pharmacies/{pharmacy_id}/inventory` | PHARMACIST/ADMIN + scope | no | агрегированный внутренний stock |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/stock-lots` | PHARMACIST/ADMIN + scope | no | lots with filters |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/stock-lots/{lot_id}` | PHARMACIST/ADMIN + scope | no | lot details |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/stock-lots/{lot_id}/movements` | PHARMACIST/ADMIN + scope | no | immutable lot ledger |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/inventory-operations` | PHARMACIST/ADMIN + scope | no | operation journal |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/inventory-operations/{operation_id}` | PHARMACIST/ADMIN + scope | no | operation and movements |
+| POST | `/api/v1/admin/pharmacies/{pharmacy_id}/inventory-reconciliation` | ADMIN | recommended | diagnostic reconciliation job |
+| GET | `/api/v1/admin/pharmacies/{pharmacy_id}/inventory-reconciliation/{job_id}` | ADMIN | no | result without auto-fix |
 
-## 19. Общие коды бизнес-ошибок
+Для inventory movements отсутствуют POST/PATCH/DELETE endpoint-ы.
 
-Начальный каталог стабильных кодов:
+### 19.15 Alerts and recommendations
+
+| Method | Path | Access | Idem | Назначение |
+|---|---|---|---|---|
+| GET | `/api/v1/pharmacies/{pharmacy_id}/alerts` | PHARMACIST/ADMIN + scope | no | active/history alerts |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/alerts/{alert_id}` | PHARMACIST/ADMIN + scope | no | alert details |
+| POST | `/api/v1/pharmacies/{pharmacy_id}/alerts/{alert_id}/acknowledge` | PHARMACIST/ADMIN + scope | recommended | acknowledgement |
+| POST | `/api/v1/pharmacies/{pharmacy_id}/alerts/{alert_id}/resolve` | PHARMACIST/ADMIN + scope | recommended | manual resolve if allowed |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/replenishment-recommendations` | PHARMACIST/ADMIN + scope | no | recommendations without ordering |
+
+### 19.16 Audit
+
+| Method | Path | Access | Idem | Назначение |
+|---|---|---|---|---|
+| GET | `/api/v1/admin/audit-events` | ADMIN | no | system audit |
+| GET | `/api/v1/admin/audit-events/{audit_event_id}` | ADMIN | no | safe event details |
+| GET | `/api/v1/pharmacies/{pharmacy_id}/audit-events` | ADMIN/future auditor role | no | pharmacy-scoped audit |
+
+Audit API не имеет POST/PATCH/DELETE.
+
+## 20. Общие business error codes
 
 | Code | Category | Назначение |
 |---|---|---|
-| `INVALID_CREDENTIALS` | unauthenticated | неверные данные входа без уточнения существования пользователя |
-| `ACCOUNT_BLOCKED` | forbidden | пользователь заблокирован |
-| `SESSION_REVOKED` | unauthenticated | refresh/access session отозвана |
-| `PHARMACY_ACCESS_DENIED` | forbidden/not found | нет активного назначения аптеке |
-| `PHARMACY_INACTIVE` | business rule | аптека не принимает новые операции |
-| `RESOURCE_ARCHIVED` | business rule | ресурс архивирован для новых операций |
-| `DUPLICATE_BARCODE` | conflict | штрихкод уже принадлежит другой фасовке |
-| `DUPLICATE_DOCUMENT_NUMBER` | conflict | номер документа уже используется в аптеке |
-| `DUPLICATE_SALE_ITEM` | invalid argument | повтор товара и единицы в одном sale request |
-| `INNER_UNIT_SALE_DISABLED` | business rule | продажа внутренней единицы запрещена |
-| `PRESCRIPTION_CONFIRMATION_REQUIRED` | business rule | нет обязательного подтверждения рецепта |
-| `INSUFFICIENT_STOCK` | business rule | недостаточный допустимый остаток |
-| `LOT_EXPIRED` | business rule | операция пытается использовать просроченный лот |
-| `LOT_QUARANTINED` | business rule | лот находится в карантине |
-| `RETURN_QUANTITY_EXCEEDED` | business rule | превышен доступный остаток возврата |
-| `RETURN_NOT_LEGALLY_ALLOWED` | business rule | возврат запрещён утверждённой политикой |
-| `IDEMPOTENCY_KEY_REQUIRED` | invalid argument | отсутствует обязательный ключ |
-| `IDEMPOTENCY_KEY_REUSED` | conflict | ключ повторно использован с другим payload |
-| `IMPORT_HAS_ERRORS` | business rule | job нельзя подтвердить из-за ошибок строк |
-| `IMPORT_ALREADY_CONFIRMED` | conflict | импорт уже проведён |
-| `CONCURRENT_MODIFICATION` | conflict | состояние изменилось конкурентной операцией |
+| `INVALID_CREDENTIALS` | unauthenticated | generic login failure |
+| `ACCOUNT_BLOCKED` | forbidden | user blocked |
+| `SESSION_REVOKED` | unauthenticated | session revoked |
+| `PHARMACY_ACCESS_DENIED` | forbidden/not found | нет active assignment |
+| `PHARMACY_INACTIVE` | business rule | pharmacy blocks operations |
+| `RESOURCE_ARCHIVED` | business rule | archived for new operations |
+| `DUPLICATE_BARCODE` | conflict | barcode already assigned |
+| `DUPLICATE_DOCUMENT_NUMBER` | conflict | duplicate within pharmacy scope |
+| `DUPLICATE_SALE_ITEM` | invalid argument | duplicate product/unit pair |
+| `INNER_UNIT_SALE_DISABLED` | business rule | inner-unit sale forbidden |
+| `PRESCRIPTION_CONFIRMATION_REQUIRED` | business rule | missing confirmation |
+| `INSUFFICIENT_STOCK` | business rule | insufficient eligible stock |
+| `LOT_EXPIRED` | business rule | expired lot |
+| `LOT_QUARANTINED` | business rule | quarantined lot |
+| `RETURN_QUANTITY_EXCEEDED` | business rule | return exceeds sold remainder |
+| `RETURN_NOT_LEGALLY_ALLOWED` | business rule | legal policy rejects return |
+| `IDEMPOTENCY_KEY_REQUIRED` | invalid argument | required key absent |
+| `IDEMPOTENCY_KEY_REUSED` | conflict | same key, different semantic hash |
+| `INVALID_CURSOR` | invalid argument | cursor incompatible/invalid |
+| `EMPTY_PATCH` | invalid argument | no mutable fields supplied |
+| `UNKNOWN_FIELD` | invalid argument | request contains unknown field |
+| `PRECONDITION_FAILED` | conflict | stale ETag/version |
+| `IMPORT_HAS_ERRORS` | business rule | job cannot publish/confirm |
+| `IMPORT_ALREADY_CONFIRMED` | conflict | already posted |
+| `CONCURRENT_MODIFICATION` | conflict | concurrent state conflict |
 
-Каталог расширяется только стабильными machine-readable значениями. Текст `message` может локализоваться или уточняться без изменения `code`.
+`message` не является стабильным идентификатором и может уточняться. Новый code добавляется только когда клиенту действительно нужно отличать сценарий программно.
 
-## 20. Contract status и сопровождение
+## 21. Шаблон детального endpoint-контракта
 
-Статусы endpoint-а:
+Перед переводом endpoint-а в `Implemented` его раздел обязан содержать:
 
-- `Planned`;
-- `In Progress`;
-- `Implemented`;
-- `Deprecated`;
-- `Removed`.
+1. status и owner/module;
+2. method/path/access;
+3. path/query parameters;
+4. headers;
+5. request body с field table и корректным JSON example;
+6. success statuses и response examples;
+7. endpoint-specific error matrix;
+8. idempotency scope/hash/replay policy;
+9. concurrency/precondition policy;
+10. transaction boundary и side effects;
+11. audit event;
+12. cache/rate-limit policy;
+13. security/privacy notes;
+14. contract/integration/concurrency test requirements.
 
-HTTP feature считается завершённой только если:
+## 22. Contract status и Definition of Done
 
-1. endpoint соответствует SRS;
+Статусы: `Planned`, `In Progress`, `Implemented`, `Deprecated`, `Removed`.
+
+HTTP feature завершена только если:
+
+1. контракт соответствует SRS и ADR;
 2. handler не содержит бизнес-логики;
-3. request/response DTO отделены от domain entities;
-4. ошибки проходят через централизованный responder;
-5. authentication и scope authorization проверяются;
-6. добавлены contract/integration tests;
-7. endpoint полностью описан в этом документе;
-8. JSON-примеры соответствуют фактическим DTO;
-9. idempotency и transaction boundaries протестированы, если применимы;
-10. статус изменён на `Implemented` только после полной сверки.
+3. DTO отделены от domain entities;
+4. errors проходят через centralized responder и `errors.Is()`;
+5. authentication, RBAC и scope authorization протестированы;
+6. transaction, idempotency и concurrency semantics протестированы;
+7. реальные status, headers и JSON совпадают с документом;
+8. отсутствует утечка secrets/internal errors;
+9. endpoint описан достаточно для frontend без чтения backend-кода;
+10. статус `Implemented` выставлен после contract review.
 
-## 21. Следующий этап детализации
+## 23. Следующая детализация
 
-Перед реализацией каждой feature соответствующий раздел должен быть расширен до полного endpoint-контракта:
-
-- path/query parameters;
-- headers;
-- request JSON и таблица полей;
-- success responses;
-- endpoint-specific errors;
-- idempotency semantic hash;
-- transaction side effects;
-- audit behavior;
-- корректный request/response/error example.
-
-Первой рекомендуется детализировать вертикальный срез:
+Первым вертикальным срезом рекомендуется детализировать:
 
 1. `POST /api/v1/auth/login`;
 2. `GET /api/v1/me`;
@@ -760,4 +725,17 @@ HTTP feature считается завершённой только если:
 6. `GET /api/v1/pharmacies/{pharmacy_id}/inventory`;
 7. `POST /api/v1/pharmacies/{pharmacy_id}/sales`.
 
-Этот набор проверяет authentication, authorization, каталог, pharmacy scope, Unit of Work, idempotency, immutable movements, FEFO и единые response envelopes на одном сквозном сценарии.
+Этот срез проверяет authentication, authorization, catalog, pharmacy scope, Unit of Work, immutable movements, idempotency, FEFO, error mapping и response envelopes в одном сквозном сценарии.
+
+## 24. Открытые решения
+
+До реализации соответствующих endpoint-ов должны быть закрыты:
+
+1. refresh token transport и rotation policy в `09-security-design.md`;
+2. юридическая policy возврата лекарств;
+3. atomic или partial catalog staging publish;
+4. точная модель elevated permissions для void/reverse/adjustment;
+5. retention idempotency records и audit exports;
+6. ETag/version policy для mutable resources;
+7. поддерживаемые MIME/size/row limits импортов;
+8. публичная cache TTL и freshness policy availability.
