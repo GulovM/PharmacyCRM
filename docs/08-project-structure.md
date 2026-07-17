@@ -1,74 +1,114 @@
 # PharmacyCRM — Project Structure
 
 **Статус документа:** Draft  
-**Версия:** 1.1  
+**Версия:** 1.2  
 **Дата:** 2026-07-17  
 **Связанные документы:** `02-srs.md`, `03-system-context.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `05-api-design.md`, `06-database-design.md`, `07-domain-model.md`  
 **Связанные ADR:** ADR-0011, ADR-0013, ADR-0014, ADR-0015, ADR-0016, ADR-0017
 
 ## 1. Назначение и нормативная роль
 
-Документ определяет целевую физическую структуру репозитория PharmacyCRM: каталоги backend, frontend, миграций, тестов, локальной инфраструктуры и документации, а также правила размещения кода и допустимых зависимостей между пакетами.
+Документ определяет физическую структуру репозитория PharmacyCRM и правила размещения backend-, frontend-, deployment-, test- и documentation-кода.
+
+Главное структурное правило проекта:
+
+- `backend/` и `frontend/` являются двумя независимыми приложениями верхнего уровня;
+- оба каталога находятся непосредственно в корне репозитория;
+- `frontend/` не является частью `backend/` и никогда не размещается внутри него;
+- `backend/` не содержит frontend source code, frontend build artifacts, `package.json`, Vite config или frontend dependencies;
+- `frontend/` не содержит Go backend packages, migrations или backend runtime configuration.
 
 Документ отвечает на вопросы:
 
 - где должен находиться новый код;
-- какой модуль владеет конкретным package и таблицами;
+- как разделяются backend и frontend;
+- какой backend-модуль владеет конкретным package и таблицами;
 - как разделяются Domain, Application, Infrastructure и Delivery;
-- где собираются межмодульные Unit of Work;
-- где находятся HTTP DTO, PostgreSQL-модели и query projections;
+- где размещаются межмодульные Unit of Work;
+- где находятся HTTP DTO, PostgreSQL adapters и query projections;
 - как организуются frontend features и shared UI;
 - где размещаются unit, integration, concurrency и end-to-end tests;
-- какие каталоги и зависимости запрещены.
+- какие структуры и зависимости запрещены.
 
-Project Structure не заменяет Domain Model. Package boundary обязан отражать bounded context, aggregate ownership и transaction boundaries из `07-domain-model.md`, а не форму таблиц или список endpoint-ов.
+Project Structure не заменяет Domain Model. Package boundary обязан отражать bounded context, aggregate ownership и transaction boundaries из `07-domain-model.md`.
 
-При расхождении с ранним примером структуры в `04-01-backend-architecture.md` настоящий документ является более детальной целевой конкретизацией. Архитектурные правила и направление зависимостей остаются нормативными согласно `04-architecture.md` и ADR.
+При расхождении с ранним примером структуры в `04-01-backend-architecture.md` настоящий документ является более детальной целевой конкретизацией.
 
-## 2. Нормативные имена корневых каталогов
+## 2. Модель репозитория
 
-В существующем monorepo используются следующие корневые каталоги:
+Репозиторий содержит два самостоятельных приложения:
 
-- `backend/` — Go backend, migrations и backend tests;
-- `frontend/` — React/TypeScript frontend;
-- `deploy/` — локальная и production-oriented инфраструктура;
-- `docs/` — проектная документация и ADR.
+1. `backend/` — Go backend со своим `go.mod`, migrations, Dockerfile, tests и executable entrypoints;
+2. `frontend/` — React/TypeScript frontend со своим `package.json`, TypeScript/Vite configuration, Dockerfile и frontend tests.
 
-Имя `frontend/` является фактическим и нормативным. Каталоги `web/`, `client/`, `ui/` или `app/` как альтернативный корень frontend не создаются.
+Они имеют:
+
+- независимые dependency graphs;
+- независимые build commands;
+- независимые Docker build contexts;
+- отдельные CI jobs;
+- отдельные lint/test pipelines;
+- отдельные runtime configuration boundaries.
+
+Их интеграционный контракт — HTTP API, описанный в `05-api-design.md`. Frontend не импортирует backend source code, Go-модели или PostgreSQL-модели. Backend не импортирует TypeScript-типы.
+
+Термин `monorepo` в документации не используется как архитектурное описание, чтобы не создавать ложного впечатления общего application workspace или вложенности одного приложения в другое. Используется формулировка: **единый репозиторий с двумя независимыми корневыми приложениями**.
+
+## 3. Нормативные корневые каталоги
+
+```text
+PharmacyCRM/
+├── backend/
+├── frontend/
+├── deploy/
+├── docs/
+├── .github/
+├── .env.example
+├── .gitignore
+├── docker-compose.yml
+├── Makefile
+└── README.md
+```
+
+Нормативные имена:
+
+- `backend/` — backend application root;
+- `frontend/` — frontend application root;
+- `deploy/` — deployment и operational scripts;
+- `docs/` — документация и ADR;
+- `.github/` — CI workflows и repository automation.
+
+Запрещённые альтернативы для frontend application root:
+
+- `backend/frontend/`;
+- `backend/web/`;
+- `backend/client/`;
+- `web/`;
+- `client/`;
+- `ui/`.
 
 Изменение имени `backend/` или `frontend/` требует синхронного обновления:
 
-- root и component Makefile;
+- root Makefile;
+- component Makefile/scripts;
 - Dockerfile и Compose build contexts;
-- CI workflow paths и working directories;
-- TypeScript, Vite и test configuration;
+- CI paths и working directories;
 - deployment scripts;
-- README и проектной документации.
+- README;
+- документации;
+- generated-client paths.
 
-## 3. Основные принципы
-
-1. Репозиторий является monorepo с отдельными `backend/` и `frontend/`.
-2. Backend является модульным монолитом, а не набором технических глобальных слоёв.
-3. Код группируется сначала по бизнес-модулю, затем по архитектурному слою.
-4. Каждый бизнес-модуль владеет своей domain model, use cases, ports, PostgreSQL adapters и HTTP delivery.
-5. Общие каталоги `handlers`, `services`, `repositories`, `models` и `utils` для всех модулей запрещены.
-6. Domain не зависит от Application, Infrastructure, Delivery, Gin, pgx, JSON или конфигурации.
-7. Application зависит от Domain и объявленных ports, но не от Gin и pgx.
-8. Infrastructure реализует ports и может зависеть от pgx, файловой системы и внешних клиентов.
-9. Delivery зависит от application contracts и transport helpers, но не выполняет бизнес-логику и SQL.
-10. Concrete dependency graph создаётся только в composition root.
-11. Межмодульная транзакция не превращает один модуль в владельца чужих таблиц.
-12. Read models могут пересекать несколько модулей, но являются явно выделенными query projections без права записи.
-13. Файл создаётся по одной связной ответственности; недопустимы монолитные `handler.go`, `service.go` или `repository.go`, содержащие весь модуль.
-14. Package не создаётся заранее без реальной ответственности и публичного контракта.
-15. Вся реализация Go-приложения, кроме executables, находится под `backend/internal`.
-
-## 4. Целевая структура репозитория
+## 4. Полная целевая структура
 
 ```text
 PharmacyCRM/
 ├── .github/
 │   └── workflows/
+│       ├── backend.yml
+│       ├── frontend.yml
+│       ├── migrations.yml
+│       ├── integration.yml
+│       └── docs.yml
 ├── backend/
 │   ├── cmd/
 │   │   ├── api/
@@ -121,11 +161,30 @@ PharmacyCRM/
 └── README.md
 ```
 
-## 5. Backend: верхний уровень
+## 5. Backend application root
+
+`backend/` является полностью самостоятельным Go application root.
+
+Он содержит:
+
+- собственный `go.mod` и `go.sum`;
+- backend executables;
+- backend internal packages;
+- PostgreSQL migrations;
+- backend tests;
+- backend Dockerfile;
+- backend-specific Makefile targets.
+
+В `backend/` запрещено размещать:
+
+- `package.json`;
+- `node_modules`;
+- React components;
+- Vite configuration;
+- frontend public assets;
+- frontend build output.
 
 ### 5.1 `backend/cmd`
-
-Каждый каталог под `cmd` содержит отдельный executable и только минимальный bootstrap.
 
 ```text
 backend/cmd/
@@ -134,26 +193,27 @@ backend/cmd/
 └── migrate/main.go
 ```
 
+Каждый каталог содержит отдельный executable и минимальный bootstrap.
+
 `main.go` может:
 
-- принять process-level параметры запуска;
+- принять process-level параметры;
 - вызвать constructor из `internal/bootstrap`;
 - установить signal handling;
-- запустить и корректно остановить приложение;
-- вернуть process exit code.
+- запустить приложение;
+- выполнить graceful shutdown;
+- вернуть корректный exit code.
 
-`main.go` не должен:
+`main.go` не содержит:
 
-- содержать бизнес-логику;
-- вручную собирать большой граф репозиториев;
-- регистрировать маршруты по одному;
-- содержать SQL;
-- читать бизнес-конфигурацию из environment в разных местах;
-- использовать mutable package-level globals.
+- бизнес-логику;
+- SQL;
+- ручную регистрацию десятков dependencies;
+- HTTP handlers;
+- repository implementations;
+- package-level mutable globals.
 
 ### 5.2 `backend/internal/bootstrap`
-
-`bootstrap` является composition root приложения.
 
 ```text
 backend/internal/bootstrap/
@@ -166,33 +226,29 @@ backend/internal/bootstrap/
 └── shutdown.go
 ```
 
+`bootstrap` является composition root backend-приложения.
+
 Он отвечает за:
 
-- загрузку и валидацию конфигурации;
+- загрузку и валидацию backend config;
 - создание Zap logger;
-- открытие pgx pool;
-- создание transactor и PostgreSQL adapters;
-- создание application services и orchestrators;
-- создание middleware и HTTP handlers;
+- создание pgx pool;
+- создание transaction runner;
+- создание infrastructure adapters;
+- создание module services и orchestrators;
+- создание HTTP handlers и middleware;
 - регистрацию routes;
 - запуск workers;
-- graceful shutdown в обратном порядке зависимостей.
+- graceful shutdown.
 
-`bootstrap` может импортировать concrete infrastructure packages всех модулей. Бизнес-модули не импортируют `bootstrap`.
+Ни один бизнес-модуль не импортирует `bootstrap`.
 
 ### 5.3 `backend/internal/platform`
-
-`platform` содержит технические механизмы без бизнес-семантики.
 
 ```text
 backend/internal/platform/
 ├── config/
 ├── database/
-│   ├── pool.go
-│   ├── transaction.go
-│   ├── retry.go
-│   ├── errors.go
-│   └── health.go
 ├── httpserver/
 ├── logging/
 ├── observability/
@@ -203,19 +259,28 @@ backend/internal/platform/
 └── validation/
 ```
 
-`platform` не объявляет бизнес-типы вроде `SaleRepository`, `UserService` или `InventoryPolicy`. Он предоставляет transaction runner, clock, ID generator, crypto adapters, storage, logger, tracing и HTTP server primitives.
+`platform` содержит только технические primitives без бизнес-семантики.
+
+Допустимо:
+
+- connection pool;
+- transaction runner;
+- context-aware retry;
+- HTTP server;
+- logger;
+- clock;
+- ID generator;
+- password hashing adapter;
+- file storage adapter;
+- metrics/tracing primitives.
+
+Запрещено объявлять здесь `SaleRepository`, `UserService`, `InventoryPolicy` и другие бизнес-интерфейсы.
 
 ### 5.4 `backend/internal/shared`
-
-`shared` содержит только малый стабильный shared kernel.
 
 ```text
 backend/internal/shared/
 ├── kernel/
-│   ├── money.go
-│   ├── quantity.go
-│   ├── pagination.go
-│   └── time.go
 ├── apperror/
 ├── authcontext/
 ├── httpx/
@@ -224,15 +289,13 @@ backend/internal/shared/
 
 Правила:
 
-1. Тип помещается в `shared` только при одинаковой семантике минимум в двух bounded contexts.
-2. Бизнес-правило конкретного модуля не переносится в shared ради устранения импорта.
-3. `shared` не зависит от `modules`.
-4. `shared/kernel` не импортирует Gin, pgx и infrastructure.
-5. Каталог `utils` запрещён.
+1. shared type имеет одинаковую семантику минимум в двух bounded contexts;
+2. бизнес-правило отдельного модуля не переносится в shared;
+3. `shared` не импортирует `modules`;
+4. `shared/kernel` не зависит от Gin и pgx;
+5. общий каталог `utils` запрещён.
 
 ### 5.5 `backend/internal/orchestration`
-
-Здесь находятся межмодульные application use cases и transaction-scoped Unit of Work contracts.
 
 ```text
 backend/internal/orchestration/
@@ -244,9 +307,18 @@ backend/internal/orchestration/
 └── catalogpublish/
 ```
 
-Orchestrator создаётся только для сценария, который атомарно координирует несколько module owners. Он не является новым bounded context и не владеет таблицами.
+Orchestration package создаётся только для use case, который атомарно координирует несколько module owners.
 
-## 6. Backend: модули
+Он:
+
+- не является новым bounded context;
+- не владеет таблицами;
+- не содержит SQL;
+- не обходит module ports;
+- определяет узкую transaction boundary;
+- координирует один Unit of Work.
+
+## 6. Backend business modules
 
 ```text
 backend/internal/modules/
@@ -264,9 +336,19 @@ backend/internal/modules/
 └── replenishment/
 ```
 
-Названия синхронизированы с `04-architecture.md`, `06-database-design.md` и `07-domain-model.md`.
+Модульные имена синхронизированы с Architecture, Database Design и Domain Model.
 
-## 7. Шаблон бизнес-модуля
+Запрещены глобальные технические каталоги:
+
+```text
+backend/internal/handlers/
+backend/internal/services/
+backend/internal/repositories/
+backend/internal/models/
+backend/internal/utils/
+```
+
+## 7. Шаблон backend-модуля
 
 ```text
 backend/internal/modules/sales/
@@ -289,236 +371,139 @@ backend/internal/modules/sales/
 │   └── projection/
 └── delivery/
     └── http/
-        ├── routes.go
-        ├── complete_sale_handler.go
-        ├── get_sale_handler.go
-        ├── request.go
-        ├── response.go
-        └── mapper.go
 ```
 
-Неиспользуемые каталоги заранее не создаются.
+Не каждый модуль обязан содержать все подкаталоги. Пустые слои заранее не создаются.
 
 ### 7.1 Domain
 
-Содержит aggregate roots, entities, value objects, state machines, domain services, policies, errors и events.
+Содержит:
 
-Не содержит HTTP DTO, JSON/DB tags, pgx, logger, environment config и use case orchestration.
+- aggregate roots;
+- entities;
+- value objects;
+- state machines;
+- domain services;
+- policies;
+- domain errors;
+- domain events;
+- чистые unit tests.
+
+Не содержит:
+
+- Gin;
+- pgx;
+- SQL;
+- HTTP DTO;
+- JSON transport models;
+- logger;
+- environment config.
 
 ### 7.2 Application
 
-Содержит commands, queries, use cases, application models, ports, authorization checks уровня сценария и post-commit intents.
+Содержит:
 
-Application не импортирует Gin и pgx и не возвращает HTTP status codes.
+- commands;
+- queries;
+- use cases;
+- input/output models;
+- ports;
+- authorization checks уровня сценария;
+- transaction orchestration внутри одного module boundary;
+- post-commit intents.
+
+Application не импортирует Gin и pgx.
 
 ### 7.3 Infrastructure
 
-Содержит PostgreSQL adapters, scan/mapping code, external clients и projection adapters.
+Содержит:
 
-SQL остаётся внутри infrastructure package модуля-владельца.
+- PostgreSQL repositories;
+- SQL queries;
+- scanners/mappers;
+- external adapters;
+- projection writers/readers;
+- module-specific infrastructure configuration.
+
+Concrete adapters реализуют ports, объявленные consumer/application package.
 
 ### 7.4 Delivery
 
-HTTP handler:
+Содержит:
 
-- декодирует transport input;
-- выполняет transport validation;
-- строит command/query;
-- передаёт `context.Context`;
-- вызывает application use case;
-- отображает result/error в API contract.
+- HTTP routes;
+- handlers;
+- request DTO;
+- response DTO;
+- transport validation;
+- mapping application result в HTTP response.
 
-Handler не выполняет FEFO, pricing, authorization recheck, SQL или transaction management.
+Handler не выполняет:
 
-## 8. Правила зависимостей
+- SQL;
+- FEFO;
+- расчёт доверенной цены;
+- открытие транзакции;
+- обновление остатка;
+- ручную классификацию domain errors через строковые сравнения.
 
-Допустимое направление:
+## 8. Unit of Work placement
+
+Низкоуровневый transaction runner находится в:
 
 ```text
-Delivery / Infrastructure -> Application -> Domain
-Bootstrap -> concrete implementations
-Orchestration -> published module application/transaction ports
+backend/internal/platform/database/
 ```
 
-Запрещено:
+Business transaction contracts находятся:
 
-- Domain импортирует Application, Infrastructure или Delivery;
-- Application импортирует Gin или pgx;
-- один module импортирует concrete repository другого module;
-- shared импортирует modules;
-- Delivery импортирует postgres implementation;
-- platform владеет бизнес-интерфейсами;
-- frontend импортирует файлы backend или полагается на SQL schema как API contract.
+- в application package модуля, если use case затрагивает один module owner;
+- в `backend/internal/orchestration/<usecase>/`, если use case координирует несколько module owners.
 
-## 9. Unit of Work
+Запрещены:
 
-Unit of Work определяется конкретным use case, а не всей системой.
+- передача `pgx.Tx` в Domain/Application API;
+- один глобальный UoW со всеми repositories;
+- service locator `Repository(name string)`;
+- скрытые transactions внутри repository многомодульного сценария;
+- создание repository при каждом accessor call.
+
+## 9. PostgreSQL migrations
+
+Все backend migrations находятся только в:
 
 ```text
-backend/internal/orchestration/sale/
-├── service.go
-├── command.go
-├── ports.go
-└── uow.go
+backend/migrations/
+```
+
+Frontend не содержит migrations.
+
+Пример:
+
+```text
+backend/migrations/
+├── 20260717090000_identity_core.sql
+├── 20260717091000_pharmacy_core.sql
+├── 20260717092000_catalog_core.sql
+├── 20260717093000_assortment_core.sql
+├── 20260717094000_inventory_core.sql
+├── 20260717095000_sales_core.sql
+├── 20260717100000_returns_core.sql
+├── 20260717101000_reliability_audit.sql
+└── 20260717102000_cross_module_constraints.sql
 ```
 
 Правила:
 
-1. Transaction callback получает только типизированный use-case UoW.
-2. `pgx.Tx` не выходит в Application и Domain.
-3. Все transaction-scoped repositories используют один physical transaction.
-4. Accessor возвращает уже созданный repository instance.
-5. Retry повторяет всю callback только для утверждённых SQLSTATE.
-6. Внешний I/O внутри retryable callback запрещён.
-7. UUID, idempotency key и стабильный input создаются до callback.
+- timestamp prefix задаёт порядок;
+- имя отражает module owner;
+- migration имеет одну связную ответственность;
+- destructive changes используют expand/migrate/contract;
+- production reference data создаются migration;
+- demo/test fixtures не входят в production migration;
+- DDL синхронизируется с `06-database-design.md`.
 
-Запрещены глобальный UoW со всеми repositories и service locator `Repository(name)`.
-
-## 10. HTTP routing и DTO
-
-Root router собирается в bootstrap, но route ownership остаётся у модуля.
-
-```go
-api := router.Group("/api/v1")
-identityHTTP.RegisterRoutes(api, deps.Identity)
-catalogHTTP.RegisterRoutes(api, deps.Catalog)
-```
-
-В модуле допустимы:
-
-```text
-routes.go
-public_routes.go
-protected_routes.go
-admin_routes.go
-```
-
-Request/response DTO находятся в `delivery/http`. Database models и domain entities не используются как transport contracts.
-
-## 11. PostgreSQL и migrations
-
-Persistence implementation находится рядом с module owner. Cross-module read projection может выполнять разрешённые joins, но не получает write ownership.
-
-```text
-backend/migrations/
-├── *_identity_core.sql
-├── *_pharmacy_core.sql
-├── *_catalog_core.sql
-├── *_assortment_core.sql
-├── *_inventory_core.sql
-├── *_sales_core.sql
-├── *_returns_core.sql
-├── *_reliability_audit.sql
-└── *_cross_module_constraints.sql
-```
-
-Migration должна иметь связную ответственность, module-oriented имя и синхронизироваться с `06-database-design.md`.
-
-Production reference data создаётся migration. Development/demo fixtures в production migration не помещаются.
-
-## 12. Workers
-
-Worker использует те же application contracts, что HTTP API.
-
-Job handler обязан:
-
-- принимать `context.Context`;
-- быть идемпотентным;
-- использовать bounded batch;
-- применять locking policy через repository;
-- корректно фиксировать system actor/audit;
-- поддерживать graceful shutdown;
-- не удерживать транзакцию во время внешнего I/O.
-
-Worker не вызывает HTTP endpoint собственного приложения и не обходит use case прямым SQL update.
-
-## 13. Frontend: корень и структура
-
-Frontend физически находится в корневом каталоге `frontend/`.
-
-```text
-frontend/
-├── src/
-│   ├── app/
-│   │   ├── App.tsx
-│   │   ├── router.tsx
-│   │   ├── providers/
-│   │   ├── config/
-│   │   └── styles/
-│   ├── pages/
-│   │   ├── PublicSearchPage/
-│   │   ├── LoginPage/
-│   │   ├── PharmacyDashboardPage/
-│   │   ├── SalesPage/
-│   │   ├── InventoryPage/
-│   │   └── AdminPage/
-│   ├── features/
-│   │   ├── auth/
-│   │   ├── public-search/
-│   │   ├── manage-assortment/
-│   │   ├── post-receipt/
-│   │   ├── complete-sale/
-│   │   ├── complete-return/
-│   │   ├── write-off-stock/
-│   │   ├── adjust-inventory/
-│   │   ├── catalog-import/
-│   │   ├── manage-users/
-│   │   └── manage-assignments/
-│   ├── entities/
-│   │   ├── user/
-│   │   ├── pharmacy/
-│   │   ├── product/
-│   │   ├── pharmacy-product/
-│   │   ├── stock-lot/
-│   │   ├── sale/
-│   │   └── alert/
-│   ├── shared/
-│   │   ├── api/
-│   │   ├── ui/
-│   │   ├── lib/
-│   │   ├── config/
-│   │   ├── hooks/
-│   │   └── types/
-│   └── test/
-│       ├── setup.ts
-│       ├── mocks/
-│       └── fixtures/
-├── public/
-├── package.json
-├── package-lock.json
-├── tsconfig.json
-├── vite.config.ts
-└── Dockerfile
-```
-
-### 13.1 Направление зависимостей
-
-```text
-app -> pages -> features -> entities -> shared
-```
-
-Нижний слой не импортирует верхний. Feature не импортирует другую feature напрямую; координация выполняется page/application composition либо через нижележащую capability.
-
-### 13.2 API client
-
-`frontend/src/shared/api` содержит base client, envelope parsing, typed API error, auth/session integration, request ID, abort support и безопасную retry policy.
-
-Endpoint-specific types и functions находятся рядом с соответствующей feature/entity, а не в гигантском `frontend/src/api.ts`.
-
-### 13.3 Frontend security boundaries
-
-- UI role checks не заменяют backend authorization;
-- frontend не является источником trusted stock, price, total или refund;
-- sensitive state не сохраняется без необходимости;
-- критический retry повторно использует тот же idempotency key;
-- stale response не должен восстанавливать очищенное sensitive state;
-- token storage определяется `09-security-design.md`.
-
-## 14. Tests
-
-Domain и application unit tests располагаются рядом с кодом.
-
-Central backend suites:
+## 10. Backend tests
 
 ```text
 backend/test/
@@ -530,185 +515,370 @@ backend/test/
 └── testkit/
 ```
 
-Frontend tests располагаются рядом с feature/component либо в `frontend/src/test` для общего setup, mocks и fixtures.
+Domain/application unit tests размещаются рядом с кодом.
 
-Обязательные правила:
+Integration/concurrency tests используют реальный PostgreSQL.
 
-- concurrency tests используют реальный PostgreSQL;
-- E2E запускается на migration-clean database;
-- fixture builder не обходит constraints проверяемого invariant;
-- frontend tests не зависят от backend package internals.
+`backend/test` не содержит frontend component tests.
 
-## 15. Generated code
+## 11. Frontend application root
 
-Generated code отделяется и получает стандартный заголовок `Code generated ... DO NOT EDIT.`
+`frontend/` является полностью самостоятельным React/TypeScript application root и находится рядом с `backend/` в корне репозитория.
 
-Допустимые места:
+Правильное расположение:
 
 ```text
-backend/internal/modules/<module>/infrastructure/postgres/generated/
+PharmacyCRM/
+├── backend/
+└── frontend/
+```
+
+Неправильное расположение:
+
+```text
+PharmacyCRM/
+└── backend/
+    └── frontend/
+```
+
+`frontend/` содержит:
+
+- собственный `package.json`;
+- lock file;
+- TypeScript config;
+- Vite config;
+- frontend source code;
+- frontend tests;
+- frontend Dockerfile;
+- frontend build output rules.
+
+В `frontend/` запрещено размещать:
+
+- Go packages;
+- `go.mod`;
+- PostgreSQL migrations;
+- backend secrets;
+- backend repository implementations;
+- прямой доступ к БД.
+
+## 12. Frontend source structure
+
+```text
+frontend/src/
+├── app/
+│   ├── App.tsx
+│   ├── router.tsx
+│   ├── providers/
+│   ├── config/
+│   └── styles/
+├── pages/
+├── features/
+├── entities/
+├── shared/
+└── test/
+```
+
+Рекомендуемые features:
+
+```text
+frontend/src/features/
+├── auth/
+├── public-search/
+├── manage-assortment/
+├── post-receipt/
+├── complete-sale/
+├── complete-return/
+├── write-off-stock/
+├── adjust-inventory/
+├── catalog-import/
+├── manage-users/
+└── manage-assignments/
+```
+
+Dependency direction:
+
+```text
+app -> pages -> features -> entities -> shared
+```
+
+Нижний слой не импортирует верхний.
+
+Feature не импортирует другую feature напрямую. Общая capability переносится в entity/shared либо координируется page/application layer frontend.
+
+## 13. Frontend API boundary
+
+```text
+frontend/src/shared/api/
+```
+
+Содержит:
+
+- base HTTP client;
+- API base URL config;
+- auth/session integration;
+- request ID support;
+- response envelope parsing;
+- typed API error;
+- request cancellation;
+- безопасную retry policy.
+
+Endpoint-specific DTO и API functions размещаются рядом с соответствующей feature/entity, а не в одном гигантском `api.ts`.
+
+Generated client, если появится, находится в:
+
+```text
 frontend/src/shared/api/generated/
 ```
 
-Generated DTO/client не становится Domain Model. Mappers и wrappers защищают application/domain от generator-specific types.
+Generated TypeScript code не импортируется backend-приложением.
 
-## 16. Configuration и secrets
+## 14. Frontend tests
 
-- `.env.example` содержит только имена и безопасные примеры;
-- реальные `.env`, ключи и token secrets не commit-ятся;
-- backend config загружается один раз в bootstrap;
-- модуль получает типизированный config subset;
-- `os.Getenv` внутри domain/application запрещён;
-- frontend получает только public build-time/runtime config;
-- frontend secrets не существует: любое значение в browser bundle считается публичным.
+Frontend tests находятся только под `frontend/`:
 
-## 17. Naming conventions
+```text
+frontend/src/test/
+frontend/src/**/*.test.ts
+frontend/src/**/*.test.tsx
+frontend/e2e/
+```
 
-### Go
+Backend tests не запускают frontend test runner, кроме отдельного repository-level E2E pipeline.
 
-- package names короткие и lowercase;
-- `common`, `misc`, `helpers`, `utils` запрещены;
-- interface обычно объявляется consumer package;
-- constructor именуется `New...`;
-- command use cases: `CompleteSale`, `PostReceipt`, `BlockUser`;
-- query use cases: `GetSale`, `ListStockLots`;
-- transport files: `<operation>_handler.go`;
-- tests: `<subject>_test.go`.
+## 15. Docker и build contexts
 
-### TypeScript/React
+Backend image:
 
-- components: PascalCase;
-- hooks: `use...`;
-- API functions: verb + resource;
-- feature directories: kebab-case;
-- barrel exports не должны скрывать циклические зависимости;
-- generic `components`, `services`, `helpers` в корне `frontend/src` запрещены.
+```text
+context: ./backend
+dockerfile: Dockerfile
+```
 
-## 18. Cohesion и размер файлов
+Frontend image:
 
-Файл разделяется, если:
+```text
+context: ./frontend
+dockerfile: Dockerfile
+```
 
-- содержит несколько независимых use cases;
-- имеет несколько несвязанных причин изменения;
-- handler смешивает admin/public/protected flows;
-- repository смешивает locking commands, writes и сложные read projections;
-- test file перестаёт иметь понятный subject;
-- review требует читать большую несвязанную часть файла.
+Запрещено использовать backend build context для сборки frontend или наоборот без отдельного архитектурного решения.
 
-Жёсткий числовой лимит строк не заменяет анализ cohesion.
+Compose может находиться в корне, но каждый service использует собственный application root.
 
-## 19. Dependency enforcement
+Пример:
 
-CI обязан проверять:
+```yaml
+services:
+  backend:
+    build:
+      context: ./backend
+  frontend:
+    build:
+      context: ./frontend
+```
 
-- `go test ./...` и `go vet ./...` из `backend/`;
+## 16. Root Makefile
+
+Root Makefile является orchestration entrypoint и вызывает команды отдельных приложений.
+
+Пример:
+
+```make
+backend-test:
+	$(MAKE) -C backend test
+
+frontend-test:
+	cd frontend && npm test
+
+backend-run:
+	$(MAKE) -C backend run
+
+frontend-run:
+	cd frontend && npm run dev
+```
+
+Root Makefile не смешивает dependency installation двух приложений в один скрытый workspace.
+
+## 17. CI boundaries
+
+Backend workflow:
+
+```text
+working-directory: backend
+paths:
+  - backend/**
+```
+
+Frontend workflow:
+
+```text
+working-directory: frontend
+paths:
+  - frontend/**
+```
+
+Repository-wide workflows могут дополнительно реагировать на:
+
+- `docs/**`;
+- `deploy/**`;
+- `docker-compose.yml`;
+- root Makefile;
+- shared API contract changes.
+
+Backend CI не должен выполнять `npm install` внутри `backend/`. Frontend CI не должен выполнять Go migrations внутри `frontend/`.
+
+## 18. Configuration boundaries
+
+Backend config:
+
+- загружается внутри backend bootstrap;
+- содержит DB, JWT/session, logging, server и worker settings;
+- не передаётся frontend build process;
+- secrets не публикуются в frontend bundle.
+
+Frontend config:
+
+- содержит только public runtime/build-time values;
+- не содержит DB credentials;
+- не содержит JWT signing secrets;
+- не содержит internal backend config.
+
+Корневой `.env.example` может документировать compose-level variables, но component-specific examples допустимо хранить отдельно:
+
+```text
+backend/.env.example
+frontend/.env.example
+```
+
+## 19. Naming и cohesion
+
+Go:
+
+- package names — lowercase и предметные;
+- запрещены `common`, `misc`, `helpers`, `utils`;
+- command use case — `CompleteSale`, `PostReceipt`, `BlockUser`;
+- query — `GetSale`, `ListStockLots`;
+- transport file — `<operation>_handler.go`.
+
+TypeScript/React:
+
+- components — PascalCase;
+- hooks — `use...`;
+- feature directories — kebab-case;
+- generic root `components`, `services`, `helpers` запрещены;
+- barrel exports не должны скрывать циклические dependencies.
+
+Файл разделяется, если содержит несколько независимых use cases или несвязанных причин изменения. Жёсткий line limit не вводится.
+
+## 20. Dependency enforcement
+
+Минимальные backend checks:
+
+- `go test ./...` из `backend/`;
+- `go vet ./...` из `backend/`;
 - static analysis;
-- запрещённые Go imports;
-- frontend lint/typecheck/tests из `frontend/`;
-- frontend import boundaries;
-- migration validation;
-- generated code consistency;
-- отсутствие ссылок на несуществующий корневой каталог `web/` в scripts/config/docs.
+- architecture import tests;
+- migration validation.
 
-Architecture checks должны подтверждать, что:
+Минимальные frontend checks:
 
-- Domain не импортирует Gin, pgx и platform;
-- Application не импортирует Gin и pgx;
-- module не импортирует concrete infrastructure другого module;
+- install из `frontend/`;
+- TypeScript typecheck;
+- lint;
+- unit/component tests;
+- production build;
+- frontend import-boundary lint.
+
+Architecture checks должны подтверждать:
+
+- Domain не импортирует Gin/pgx/platform;
+- Application не импортирует Gin/pgx;
+- modules не импортируют concrete infrastructure другого module;
 - shared не импортирует modules;
-- Delivery не импортирует postgres implementation;
-- production packages не импортируют `backend/test`.
+- delivery не импортирует postgres packages;
+- `backend/` не зависит от files под `frontend/`;
+- `frontend/` не зависит от files под `backend/`;
+- integration выполняется только через HTTP contract или generated independent client artifacts.
 
-## 20. CI layout
+## 21. Порядок добавления новой feature
 
-```text
-.github/workflows/
-├── backend.yml
-├── frontend.yml
-├── migrations.yml
-├── integration.yml
-└── docs.yml
-```
+Backend feature:
 
-Frontend workflow использует `frontend/` как `working-directory` и path filter.
+1. определить module owner;
+2. проверить aggregate и transaction boundary;
+3. добавить Domain/Application code в `backend/internal/modules/...`;
+4. добавить orchestration только при реальной межмодульной транзакции;
+5. добавить infrastructure adapters;
+6. добавить HTTP delivery;
+7. обновить migrations при необходимости;
+8. обновить `05-api-design.md`;
+9. добавить tests.
 
-Root Makefile может делегировать команды:
+Frontend feature:
 
-```text
-make backend-test
-make backend-integration
-make frontend-install
-make frontend-lint
-make frontend-test
-make frontend-build
-make compose-up
-make compose-down
-```
+1. определить page/feature/entity ownership;
+2. использовать API contract из `05-api-design.md`;
+3. добавить код только под `frontend/src`;
+4. не копировать backend domain entity как mutable frontend model;
+5. добавить request cancellation и error handling;
+6. добавить frontend tests;
+7. обновить generated client только через утверждённый generation flow.
 
-Команды frontend обязаны выполнять package manager внутри `frontend/`.
-
-## 21. Запрещённые структуры
+## 22. Запрещённые структуры
 
 ```text
-internal/handlers/
-internal/services/
-internal/repositories/
-internal/models/
-internal/utils/
-backend/internal/api/handler.go
-frontend/src/components/
+backend/frontend/
+backend/web/
+backend/client/
+backend/internal/handlers/
+backend/internal/services/
+backend/internal/repositories/
+backend/internal/models/
+backend/internal/utils/
+frontend/backend/
 frontend/src/services/
-web/
+frontend/src/helpers/
+frontend/src/components/
 ```
 
 Также запрещены:
 
-- один handler/repository/service для всего приложения;
-- прямой SQL из HTTP handler;
-- hidden transaction внутри repository многомодульного use case;
-- копирование business rules в worker и frontend;
-- импорт backend database model во frontend contract;
-- второй frontend root параллельно `frontend/`.
+- frontend source code внутри backend Docker context;
+- backend source code внутри frontend package;
+- общий dependency workspace, скрывающий независимые application roots, без отдельного ADR;
+- frontend direct database access;
+- использование backend DB models как frontend DTO;
+- один общий `handler.go` для всех endpoint-ов;
+- один общий `service.go` для всех use cases;
+- один общий `repository.go` для всех module owners;
+- скрытые transaction boundaries;
+- shared package как свалка бизнес-логики.
 
-## 22. Порядок добавления feature
+## 23. Открытые решения
 
-1. Определить owner context и aggregate boundary.
-2. Обновить SRS/API/Domain/Data documents при изменении контракта.
-3. Добавить domain types и tests.
-4. Добавить application command/query и ports.
-5. Реализовать infrastructure adapters.
-6. Создать orchestrator только при реальной межмодульной транзакции.
-7. Добавить HTTP delivery и routes.
-8. Добавить migrations и PostgreSQL tests при изменении данных.
-9. Добавить frontend feature внутри `frontend/src/features` и необходимые entity/shared части.
-10. Добавить integration, concurrency, contract и E2E tests.
-11. Обновить CI/Makefile/Docker только при изменении build/runtime graph.
+До production-ready реализации отдельно утверждаются:
 
-## 23. Definition of Done
+1. способ генерации TypeScript API client;
+2. размещение repository-level E2E browser tests;
+3. необходимость отдельных `backend/.env.example` и `frontend/.env.example`;
+4. ownership root Docker Compose и deployment overlays;
+5. package manager frontend;
+6. формат frontend runtime config;
+7. необходимость shared contract generation artifact без source-level coupling.
+
+## 24. Definition of Done для structural change
 
 Структурное изменение завершено только если:
 
-1. код находится в модуле-владельце;
-2. package dependencies направлены внутрь;
-3. aggregate и repository boundaries соответствуют `07-domain-model.md`;
-4. SQL остаётся у module owner;
-5. межмодульная транзакция использует типизированный UoW;
-6. HTTP DTO не протекают в Domain;
-7. frontend код находится под `frontend/`;
-8. Makefile, CI, Docker и deployment используют `frontend/` как единственный frontend root;
-9. tests расположены на правильном уровне;
-10. architecture checks проходят;
-11. документация не содержит устаревших путей `web/`.
-
-## 24. Открытые решения
-
-До начала соответствующей реализации необходимо определить:
-
-1. package manager frontend и lockfile policy;
-2. способ генерации TypeScript API client;
-3. необходимость transactional outbox package;
-4. инструмент автоматической проверки Go dependency boundaries;
-5. инструмент frontend import-boundary enforcement;
-6. точную организацию production deployment manifests.
-
-Эти решения не меняют нормативное имя корневого frontend-каталога: `frontend/`.
+1. сохраняются независимые корневые каталоги `backend/` и `frontend/`;
+2. frontend не перемещён внутрь backend и наоборот;
+3. module/package ownership соответствует Architecture и Domain Model;
+4. dependency direction не нарушена;
+5. build contexts остаются `./backend` и `./frontend`;
+6. CI working directories и path filters обновлены;
+7. root/component Makefile обновлены;
+8. документация и README синхронизированы;
+9. generated paths используют правильный application root;
+10. backend и frontend tests запускаются независимо;
+11. architecture checks запрещают cross-root source imports;
+12. новые API endpoint-ы отражены в `05-api-design.md`.
