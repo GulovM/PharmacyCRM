@@ -1,140 +1,69 @@
 # PharmacyCRM — Дополнение к Database Design: возвратные аллокации
 
-**Статус:** Accepted amendment  
-**Версия:** 0.2  
+**Статус:** Incorporated  
+**Версия:** 1.0  
 **Дата:** 2026-07-17  
-**Связанный документ:** `docs/06-database-design.md`  
+**Интегрировано в:** `docs/06-database-design.md`, версия 1.0  
 **Связанный ADR:** `docs/adr/0012-sale-returns-and-restocking.md`
 
-## 1. Назначение
+## 1. Статус документа
 
-Этот документ нормативно заменяет текущий блок таблиц `sale_returns` и `sale_return_items` в `docs/06-database-design.md` и добавляет `sale_return_item_allocations`.
+Схема возвратных аллокаций из этого amendment полностью включена в `docs/06-database-design.md` версии 1.0.
 
-Причина изменения: лимит возврата должен контролироваться не только по строке чека, но и по конкретным исходным FEFO-аллокациям. Это позволяет доказуемо определить, из какого поставочного лота был возвращён товар и сколько единиц каждой исходной аллокации уже использовано предыдущими возвратами.
+Настоящий файл больше не является отдельным нормативным дополнением и не должен применяться совместно с основным Database Design. Он сохраняется как историческая запись о причине и составе изменения.
 
-До интеграции этого amendment в следующую полную редакцию `06-database-design.md` оба документа применяются совместно. При противоречии по модели возвратов этот amendment имеет приоритет.
+При любых расхождениях источником истины является актуальный `docs/06-database-design.md`.
 
-После включения схемы возвратных аллокаций в основной Database Design документ переводится в статус `Incorporated`, но не удаляется: он остаётся историей принятого решения.
+## 2. Причина принятого изменения
 
-## 2. DDL
+Изначальная модель связывала возврат только со строкой продажи. Этого недостаточно для конкурентно безопасной проверки количества, поскольку одна строка продажи может быть распределена по нескольким поставочным лотам через FEFO.
 
-```sql
-CREATE TABLE sale_returns (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    sale_id uuid NOT NULL REFERENCES sales(id) ON DELETE RESTRICT,
+Была введена таблица `sale_return_item_allocations`, связывающая возвращаемое количество с конкретной исходной `sale_item_allocation`. Это позволяет:
 
-    -- Заполняется только когда возврат создаёт физические складские движения.
-    -- Для RESTOCK это RETURN_TO_STOCK. Для WRITE_OFF/QUARANTINE может быть
-    -- отдельная операция соответствующего типа после расширения inventory_operations.
-    operation_id uuid UNIQUE REFERENCES inventory_operations(id) ON DELETE RESTRICT,
+- доказуемо определить исходный лот возвращаемого товара;
+- сериализовать параллельные возвраты одной продажи;
+- контролировать лимит возврата по каждой исходной аллокации;
+- отличать финансовый возврат от физического действия с товаром;
+- корректно выполнять `RESTOCK`, `WRITE_OFF`, `QUARANTINE` и `NO_PHYSICAL_RETURN`;
+- сохранять неизменяемую историю возврата.
 
-    status varchar(30) NOT NULL DEFAULT 'COMPLETED' CHECK (
-        status IN ('DRAFT', 'COMPLETED', 'REVERSED')
-    ),
-    refund_amount_dirams bigint NOT NULL CHECK (refund_amount_dirams >= 0),
-    returned_by_user_id uuid NOT NULL,
-    reason text NOT NULL CHECK (btrim(reason) <> ''),
-    returned_at timestamptz NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now()
-);
+## 3. Интегрированные элементы
 
-CREATE TABLE sale_return_items (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    sale_return_id uuid NOT NULL REFERENCES sale_returns(id) ON DELETE RESTRICT,
-    sale_item_id uuid NOT NULL REFERENCES sale_items(id) ON DELETE RESTRICT,
+В основной Database Design включены:
 
-    returned_quantity_base_units bigint NOT NULL CHECK (
-        returned_quantity_base_units > 0
-    ),
-    refund_amount_dirams bigint NOT NULL CHECK (refund_amount_dirams >= 0),
-    return_action varchar(50) NOT NULL CHECK (
-        return_action IN (
-            'RESTOCK',
-            'WRITE_OFF',
-            'QUARANTINE',
-            'NO_PHYSICAL_RETURN'
-        )
-    ),
-    item_reason text,
-    created_at timestamptz NOT NULL DEFAULT now(),
+1. `sale_returns`;
+2. `sale_return_items`;
+3. `sale_return_item_allocations`;
+4. индекс поиска по исходной `sale_item_allocation_id`;
+5. связь с целевым `stock_lot` для физического возврата;
+6. транзакционные инварианты количества и суммы;
+7. детерминированный порядок блокировок;
+8. атомарность возврата, движений, остатков, idempotency и audit;
+9. concurrency test requirements;
+10. запрет изменения завершённых возвратов.
 
-    CONSTRAINT uq_sale_return_item UNIQUE (sale_return_id, sale_item_id),
-    CONSTRAINT chk_sale_return_item_reason CHECK (
-        item_reason IS NULL OR btrim(item_reason) <> ''
-    )
-);
+## 4. Исторические инварианты решения
 
-CREATE TABLE sale_return_item_allocations (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    sale_return_item_id uuid NOT NULL
-        REFERENCES sale_return_items(id) ON DELETE RESTRICT,
-    sale_item_allocation_id uuid NOT NULL
-        REFERENCES sale_item_allocations(id) ON DELETE RESTRICT,
-    returned_quantity_base_units bigint NOT NULL CHECK (
-        returned_quantity_base_units > 0
-    ),
-    created_at timestamptz NOT NULL DEFAULT now(),
+Решение сохраняет следующие обязательные свойства:
 
-    CONSTRAINT uq_sale_return_item_allocation UNIQUE (
-        sale_return_item_id,
-        sale_item_allocation_id
-    )
-);
+1. Возвратная строка принадлежит исходной продаже.
+2. Возвратная аллокация ссылается на аллокацию той же строки продажи.
+3. Сумма возвратных аллокаций равна количеству строки возврата.
+4. Нельзя вернуть больше количества исходной аллокации или строки продажи.
+5. Проверка выполняется после блокировки исходной продажи и аллокаций.
+6. Только `RESTOCK` увеличивает продаваемый остаток.
+7. Просроченный или непригодный товар не возвращается в активный продаваемый лот.
+8. Финансовый и физический аспекты возврата фиксируются в одной бизнес-операции, но моделируются раздельно.
+9. Возврат и исходная продажа не переписываются задним числом.
+10. Production-проведение возврата зависит от утверждённой юридической политики.
 
-CREATE INDEX idx_sale_return_item_allocations_lookup
-ON sale_return_item_allocations (sale_item_allocation_id);
+## 5. Правило сопровождения
 
-CREATE INDEX idx_sale_return_items_sale_item
-ON sale_return_items (sale_item_id);
-```
+Изменения модели возвратов теперь выполняются только через:
 
-## 3. Обязательные транзакционные инварианты
+- обновление `docs/06-database-design.md`;
+- синхронизацию `docs/02-srs.md` и `docs/05-api-design.md`;
+- новый ADR, если меняются архитектурно значимые инварианты;
+- migration и concurrency tests в том же change set.
 
-Следующие правила невозможно полностью выразить простыми `CHECK` constraints. Они обеспечиваются application layer в общей транзакции и проверяются интеграционными тестами.
-
-1. `sale_return_items.sale_item_id` должен принадлежать продаже, указанной в `sale_returns.sale_id`.
-2. Каждая `sale_return_item_allocation` должна ссылаться на аллокацию того же `sale_item_id`, что и родительская строка возврата.
-3. Сумма `sale_return_item_allocations.returned_quantity_base_units` по строке возврата должна равняться `sale_return_items.returned_quantity_base_units`.
-4. Суммарно по всем завершённым и не сторнированным возвратам нельзя вернуть больше, чем `sale_item_allocations.quantity_base_units` для каждой исходной аллокации.
-5. Суммарно по всем завершённым и не сторнированным возвратам нельзя вернуть больше, чем `sale_items.quantity_base_units` для строки чека.
-6. Проверка лимитов выполняется после блокировки исходной продажи и исходных аллокаций.
-7. Только `RESTOCK` создаёт положительные движения в продаваемый остаток.
-8. `WRITE_OFF`, `QUARANTINE` и `NO_PHYSICAL_RETURN` не увеличивают доступный к продаже остаток.
-9. Просроченный, повреждённый или утративший допустимые условия хранения товар нельзя вернуть в активный исходный лот.
-10. Если исходный лот непригоден для повторного приёма, должен быть создан отдельный возвратный или карантинный лот после явного расширения модели; скрытое изменение атрибутов исходного лота запрещено.
-11. Сумма возврата рассчитывается backend на основе неизменяемых данных исходной продажи и утверждённых правил округления.
-12. `sale_returns.refund_amount_dirams` должна равняться сумме `sale_return_items.refund_amount_dirams`.
-13. Статус исходной продажи меняется на `PARTIALLY_REFUNDED` или `REFUNDED` в той же транзакции.
-14. Возврат, его аллокации, финансовые изменения, складская операция, движения и изменение остатка фиксируются атомарно.
-
-## 4. Порядок блокировок
-
-Для конкурентных возвратов применяется следующий порядок:
-
-1. блокировка `sales` по `sale_id`;
-2. чтение и блокировка затрагиваемых `sale_items` в порядке `id`;
-3. чтение и блокировка исходных `sale_item_allocations` в порядке `id`;
-4. при `RESTOCK` блокировка затрагиваемых `pharmacy_products` в детерминированном порядке;
-5. блокировка целевых `stock_lots` в порядке `id`;
-6. повторная проверка уже возвращённых количеств;
-7. вставка возвратных документов, аллокаций и движений;
-8. обновление лотов и статуса продажи;
-9. commit.
-
-Все транзакции, которые блокируют те же сущности, обязаны придерживаться совместимого глобального порядка. Конкретный порядок должен оставаться синхронизированным с ADR-0011.
-
-## 5. Неизменяемость
-
-После перехода возврата в `COMPLETED` его строки и возвратные аллокации считаются историческими данными и не редактируются. Исправления оформляются отдельной компенсирующей операцией. Физическое удаление завершённых возвратов запрещено.
-
-## 6. Требования к интеграции
-
-При следующей полной редакции `docs/06-database-design.md` необходимо:
-
-1. встроить `sale_return_item_allocations` в концептуальную модель и основной DDL;
-2. синхронизировать статусы возврата и продажи с SRS и ADR-0012;
-3. добавить индексы для конкурентной проверки уже возвращённого количества;
-4. добавить таблицы identity, назначений аптекарей, аудита и идемпотентности;
-5. проверить все внешние ключи и module ownership;
-6. добавить migration и concurrency test requirements;
-7. после интеграции изменить статус этого документа на `Incorporated`.
+Этот файл повторно не переводится в `Accepted amendment`; новое самостоятельное изменение оформляется отдельным пронумерованным amendment или новой редакцией основного документа.
