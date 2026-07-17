@@ -1,7 +1,7 @@
 # PharmacyCRM — Documentation Index
 
 **Статус документа:** Active  
-**Версия:** 1.2  
+**Версия:** 1.3  
 **Дата:** 2026-07-17
 
 ## 1. Назначение
@@ -37,6 +37,7 @@
 | 06 | `06-database-design.md` | целевая PostgreSQL-модель, DDL, инварианты, индексы и migration strategy | Draft |
 | 06-01 | `06-01-database-design-return-allocations.md` | историческое дополнение по возвратным аллокациям, включённое в основной документ | Incorporated |
 | 07 | `07-domain-model.md` | bounded contexts, агрегаты, сущности, value objects, состояния, события и транзакционные границы | Draft |
+| 08 | `08-project-structure.md` | целевая структура monorepo, backend/frontend packages, migrations, tests и dependency rules | Draft |
 
 ## 4. Планируемые документы
 
@@ -44,7 +45,6 @@
 
 | № | Планируемый документ | Назначение |
 |---:|---|---|
-| 08 | `08-project-structure.md` | окончательная файловая структура backend, frontend и инфраструктуры |
 | 09 | `09-security-design.md` | модель угроз, authentication, authorization, sessions, secrets и audit |
 | 10 | `10-sequence-diagrams.md` | последовательности критических бизнес-сценариев |
 | 11 | `11-development-roadmap.md` | этапы реализации, зависимости и Definition of Done |
@@ -86,7 +86,7 @@ ADR после принятия не переписывается так, буд
 
 Изменение считается документированным только если:
 
-1. затронутые SRS, архитектура, API, Domain Model и data design не противоречат друг другу;
+1. затронутые SRS, архитектура, API, Domain Model, Project Structure и data design не противоречат друг другу;
 2. все ссылки используют актуальные пути;
 3. новый верхнеуровневый файл имеет номер;
 4. статус и версия документа обновлены;
@@ -95,20 +95,21 @@ ADR после принятия не переписывается так, буд
 7. HTTP feature обновляет `05-api-design.md` в том же change set;
 8. изменение схемы синхронизирует Database Design и миграции;
 9. изменение aggregate boundary или критического доменного инварианта синхронизирует `07-domain-model.md` и при необходимости оформляется ADR;
-10. архитектурно значимое решение оформлено ADR;
-11. примеры кода не противоречат принятым ADR и текущему стеку.
+10. изменение module/package ownership синхронизирует `08-project-structure.md`;
+11. архитектурно значимое решение оформлено ADR;
+12. примеры кода не противоречат принятым ADR и текущему стеку.
 
 ## 8. Известные задачи синхронизации
 
 Перед началом массовой реализации необходимо:
 
-1. синхронизировать `04-01-backend-architecture.md` с ADR-0015 и ADR-0016: Zap, error responder, request/response redaction и массив middleware;
+1. синхронизировать `04-01-backend-architecture.md` с ADR-0015, ADR-0016 и детальной структурой из `08-project-structure.md`;
 2. определить нормативные правила возврата лекарств после юридической проверки;
 3. создать security, deployment, testing и observability документы до production-ready реализации;
 4. при создании первых migrations сверить их с `06-database-design.md` версии 1.1 и добавить migration/concurrency tests;
-5. при проектировании package layout отразить aggregate/repository boundaries из `07-domain-model.md`.
+5. внедрить автоматические architecture checks для package/import boundaries из `08-project-structure.md`.
 
-Задачи создания `05-api-design.md`, интеграции возвратного amendment, добавления identity/assignments/sessions/idempotency/audit в Database Design и создания `07-domain-model.md` закрыты.
+Задачи создания `05-api-design.md`, интеграции возвратного amendment, добавления identity/assignments/sessions/idempotency/audit в Database Design, создания `07-domain-model.md` и фиксации целевой структуры проекта закрыты.
 
 ## 9. Правило сопровождения
 
@@ -119,6 +120,7 @@ ADR после принятия не переписывается так, буд
 - статусы документов;
 - ссылки на ADR;
 - согласованность aggregate и transaction boundaries;
+- согласованность module ownership и package layout;
 - отсутствие ненумерованных Markdown-файлов верхнего уровня;
 - отсутствие незадокументированных API endpoint-ов.
 
