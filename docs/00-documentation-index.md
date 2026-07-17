@@ -1,7 +1,7 @@
 # PharmacyCRM — Documentation Index
 
 **Статус документа:** Active  
-**Версия:** 1.3  
+**Версия:** 1.4  
 **Дата:** 2026-07-17
 
 ## 1. Назначение
@@ -37,7 +37,7 @@
 | 06 | `06-database-design.md` | целевая PostgreSQL-модель, DDL, инварианты, индексы и migration strategy | Draft |
 | 06-01 | `06-01-database-design-return-allocations.md` | историческое дополнение по возвратным аллокациям, включённое в основной документ | Incorporated |
 | 07 | `07-domain-model.md` | bounded contexts, агрегаты, сущности, value objects, состояния, события и транзакционные границы | Draft |
-| 08 | `08-project-structure.md` | целевая структура monorepo, backend/frontend packages, migrations, tests и dependency rules | Draft |
+| 08 | `08-project-structure.md` | два независимых корневых приложения `backend/` и `frontend/`, package layout, migrations, tests и dependency rules | Draft |
 
 ## 4. Планируемые документы
 
@@ -96,20 +96,21 @@ ADR после принятия не переписывается так, буд
 8. изменение схемы синхронизирует Database Design и миграции;
 9. изменение aggregate boundary или критического доменного инварианта синхронизирует `07-domain-model.md` и при необходимости оформляется ADR;
 10. изменение module/package ownership синхронизирует `08-project-structure.md`;
-11. архитектурно значимое решение оформлено ADR;
-12. примеры кода не противоречат принятым ADR и текущему стеку.
+11. изменение корневого layout сохраняет независимые sibling roots `backend/` и `frontend/` и синхронизирует CI, Docker, Makefile и deployment paths;
+12. архитектурно значимое решение оформлено ADR;
+13. примеры кода не противоречат принятым ADR и текущему стеку.
 
 ## 8. Известные задачи синхронизации
 
 Перед началом массовой реализации необходимо:
 
-1. синхронизировать `04-01-backend-architecture.md` с ADR-0015, ADR-0016 и детальной структурой из `08-project-structure.md`;
+1. синхронизировать `04-01-backend-architecture.md` с ADR-0015, ADR-0016 и детальной backend-структурой из `08-project-structure.md`;
 2. определить нормативные правила возврата лекарств после юридической проверки;
 3. создать security, deployment, testing и observability документы до production-ready реализации;
 4. при создании первых migrations сверить их с `06-database-design.md` версии 1.1 и добавить migration/concurrency tests;
-5. внедрить автоматические architecture checks для package/import boundaries из `08-project-structure.md`.
+5. внедрить автоматические architecture checks для package/import boundaries и запрета cross-root source imports между `backend/` и `frontend/`.
 
-Задачи создания `05-api-design.md`, интеграции возвратного amendment, добавления identity/assignments/sessions/idempotency/audit в Database Design, создания `07-domain-model.md` и фиксации целевой структуры проекта закрыты.
+Задачи создания `05-api-design.md`, интеграции возвратного amendment, добавления identity/assignments/sessions/idempotency/audit в Database Design, создания `07-domain-model.md` и фиксации двух независимых application roots закрыты.
 
 ## 9. Правило сопровождения
 
@@ -121,6 +122,7 @@ ADR после принятия не переписывается так, буд
 - ссылки на ADR;
 - согласованность aggregate и transaction boundaries;
 - согласованность module ownership и package layout;
+- независимость `backend/` и `frontend/`;
 - отсутствие ненумерованных Markdown-файлов верхнего уровня;
 - отсутствие незадокументированных API endpoint-ов.
 
