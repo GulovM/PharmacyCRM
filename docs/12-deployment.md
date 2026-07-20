@@ -1,7 +1,7 @@
 # PharmacyCRM — Deployment
 
 **Статус документа:** Draft  
-**Версия:** 0.1  
+**Версия:** 0.2  
 **Дата:** 2026-07-20  
 **Связанные документы:** `03-system-context.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `06-database-design.md`, `08-project-structure.md`, `09-security-design.md`, `10-sequence-diagrams.md`, `11-development-roadmap.md`
 
@@ -9,44 +9,38 @@
 
 Документ определяет целевую модель сборки, конфигурации, развёртывания, миграций, эксплуатации, резервного копирования и восстановления PharmacyCRM.
 
-Deployment Design является нормативным для:
+Deployment Design является нормативным для local, CI, staging и production окружений, Docker images, Compose artifacts, PostgreSQL migrations, runtime configuration, secrets, backup/restore, release, rollback и forward-fix процедур.
 
-- локального окружения разработки;
-- CI и integration environments;
-- staging;
-- production;
-- Docker images и Compose artifacts;
-- PostgreSQL migrations;
-- secrets и runtime configuration;
-- backup/restore;
-- release, rollback и forward-fix процедур.
+Изменение topology, ports, volumes, runtime dependencies, migration order, compatibility window, readiness semantics, secret delivery, backup policy, rollout strategy или release procedure должно обновлять этот документ в том же change set.
 
-Изменение topology, runtime dependencies, ports, volumes, migration order, readiness semantics, secret delivery, backup policy или release procedure должно обновлять этот документ в том же change set.
-
-Документ не определяет бизнес-инварианты и HTTP-контракты. Они остаются в соответствующих SRS, API, Database, Domain, Security и Sequence документах.
+Документ не определяет бизнес-инварианты и HTTP-контракты. Они остаются в SRS, API Design, Database Design, Domain Model, Security Design и Sequence Diagrams.
 
 ## 2. Нормативные слова
 
 - **Должен / обязан / запрещено** — обязательное требование.
-- **Следует** — рекомендуемое требование; отклонение требует ADR или зафиксированного operational risk.
+- **Следует** — рекомендуемое требование; отклонение требует ADR или зарегистрированного operational risk.
 - **Может** — допустимый вариант.
 
-## 3. Цели deployment-модели
+Operational exception должен иметь владельца, обоснование, оценку риска, компенсирующие меры и дату пересмотра. Бессрочные исключения запрещены.
 
-Deployment PharmacyCRM должен обеспечивать:
+## 3. Deployment invariants
 
-1. воспроизводимую сборку backend и frontend из immutable commit;
-2. запуск одного и того же проверенного artifact в staging и production;
-3. отсутствие production secrets в repository и container image;
-4. контролируемое применение migrations;
-5. сохранность PostgreSQL data и application logs;
-6. безопасный startup и graceful shutdown;
-7. корректные health/readiness сигналы;
-8. возможность восстановить production data в пределах утверждённых RPO/RTO;
-9. наблюдаемость версии, конфигурации и состояния deployment;
-10. безопасный rollback application version без опасного отката схемы;
-11. отсутствие публичного доступа к PostgreSQL и operational endpoints;
-12. документированный release и incident workflow.
+Ни один deployment не должен нарушать следующие инварианты:
+
+1. staging и production используют тот же immutable image digest;
+2. production secrets отсутствуют в Git, image layers, frontend bundle и logs;
+3. API не применяет production migrations автоматически при startup;
+4. PostgreSQL не публикуется в public network;
+5. application version запускается только с совместимой schema version;
+6. worker version запускается только с совместимым job/outbox protocol;
+7. application rollback не предполагает автоматический destructive schema rollback;
+8. business traffic не направляется на instance до успешной readiness;
+9. deployment не считается успешным без post-deploy verification;
+10. backup не считается пригодным без успешного restore drill;
+11. timeout, cancellation или restart не должны оставлять частично проведённую business operation;
+12. singleton operation не может одновременно исполняться несколькими владельцами без fencing;
+13. production correction не выполняется прямым SQL как штатный workflow;
+14. любой production artifact связан с commit, build metadata, image digest и release record.
 
 ## 4. Границы приложений и deploy artifacts
 
@@ -65,61 +59,66 @@ Backend и frontend:
 
 - собираются отдельными pipelines;
 - имеют отдельные Dockerfile;
-- имеют отдельные runtime/build-time configuration boundaries;
 - не используют общий dependency workspace;
+- имеют раздельные runtime/build-time configuration boundaries;
 - интегрируются только через HTTP API;
 - не разделяют runtime secrets.
 
-Каталог `deploy/` содержит deployment-specific artifacts:
+Целевая структура deployment artifacts:
 
 ```text
 deploy/
 ├── compose/
 │   ├── compose.local.yml
+│   ├── compose.ci.yml
 │   ├── compose.staging.yml
 │   └── compose.production.yml
 ├── env/
 │   ├── local.example.env
+│   ├── ci.example.env
 │   ├── staging.example.env
 │   └── production.example.env
 ├── scripts/
+│   ├── preflight.sh
 │   ├── deploy.sh
 │   ├── migrate.sh
 │   ├── backup.sh
 │   ├── restore-verify.sh
+│   ├── reconcile.sh
 │   └── smoke-test.sh
 └── runbooks/
     ├── release.md
     ├── rollback.md
+    ├── forward-fix.md
     ├── database-recovery.md
+    ├── worker-recovery.md
+    ├── initial-data-cutover.md
     └── secret-rotation.md
 ```
 
-Example env-файлы содержат только имена параметров и безопасные примеры. Реальные secrets запрещено коммитить.
+Example env-файлы содержат только имена параметров и безопасные placeholders. Реальные secrets запрещено коммитить.
 
 ## 5. Окружения
 
-Минимально различаются:
-
-| Окружение | Назначение | Данные | Внешняя доступность |
+| Окружение | Назначение | Данные | Доступность |
 |---|---|---|---|
 | local | разработка | synthetic/local | localhost |
 | CI | автоматические тесты | ephemeral | отсутствует |
 | staging | pre-production verification | synthetic или обезличенные | ограниченная |
-| production | рабочая система | production | публичный frontend/API через ingress |
+| production | рабочая система | production | frontend/API через ingress |
 
 Правила:
 
-1. staging должен быть архитектурно близок production;
-2. production data не копируются в local/CI;
-3. использование production backup в staging допустимо только после обезличивания и отдельного разрешения;
-4. environment-specific поведение задаётся конфигурацией, а не ветками кода;
-5. небезопасные development defaults не должны автоматически переноситься в production;
-6. application startup обязан валидировать environment mode и критические параметры.
+1. staging архитектурно близок production;
+2. environment-specific поведение задаётся configuration, а не ветками кода;
+3. production data не копируются в local/CI;
+4. production backup в staging допускается только после обезличивания и отдельного approval;
+5. development defaults не активируются автоматически в production;
+6. startup валидирует environment mode и критические параметры;
+7. CI использует disposable database и не зависит от developer state;
+8. staging проверяет тот же migration и rollout flow, что production.
 
 ## 6. Целевая runtime topology
-
-Минимальная production topology:
 
 ```text
 Internet
@@ -127,59 +126,64 @@ Internet
 Reverse Proxy / TLS Ingress
    |----------------------|
    |                      |
-Frontend static service   Backend API
-                          |-- Worker
-                          |-- Migration job (one-shot)
-                          |
-                       PostgreSQL
-                          |
-                    Backup storage
+Frontend static service   Backend API replicas
+                           |
+                           |---- Worker replicas
+                           |---- Migration job (one-shot)
+                           |---- Reconciliation job (controlled)
+                           |
+                        PostgreSQL
+                           |
+                    Backup/WAL storage
+                           |
+                  Restore verification env
 ```
 
 Компоненты:
 
-- reverse proxy / ingress завершает TLS и применяет базовые network controls;
-- frontend отдаёт статические assets;
-- backend API обслуживает HTTP requests;
-- worker выполняет outbox, alerts, projections и import jobs;
-- migration executable запускается отдельно и не является частью обычного API startup;
-- PostgreSQL доступен только внутренним компонентам и контролируемым административным каналам;
-- backup storage отделён от runtime host.
+- ingress завершает TLS, ограничивает request size/rate и нормализует proxy headers;
+- frontend отдаёт immutable static assets;
+- API обслуживает HTTP traffic;
+- worker обрабатывает outbox, imports, alerts и projections;
+- migration executable запускается отдельно;
+- reconciliation job запускается по schedule/runbook и не изменяет business truth без отдельной команды;
+- PostgreSQL доступен только внутренним компонентам и контролируемому administrative channel;
+- backup storage отделён от primary runtime credentials и host.
 
-API и worker могут использовать один backend image с разными commands.
+API, worker и migrate могут использовать один backend image с разными commands, но имеют отдельные service identities и permissions.
 
 ## 7. Local Docker Compose
 
-Локальное окружение должно поднимать как минимум:
+Local Compose поднимает минимум:
 
 - PostgreSQL;
 - backend API;
 - backend worker;
 - frontend;
-- одноразовую migration command либо явную migration target.
+- migration command;
+- при необходимости локальные telemetry components.
 
 ### 7.1 Порты
-
-Нормативные local host mappings:
 
 | Component | Container port | Host port |
 |---|---:|---:|
 | PostgreSQL | 5432 | 5433 |
-| Backend API | configuration-defined | 8080 по умолчанию |
-| Frontend | configuration-defined | 5173 development / 8081 built preview |
+| Backend API | configurable | 8080 default |
+| Frontend dev | configurable | 5173 default |
+| Frontend preview | configurable | 8081 default |
 
-PostgreSQL host port `5433` предназначен только для local development. В staging и production PostgreSQL не публикуется в публичный host interface.
-
-Предпочтительный local binding:
+PostgreSQL local binding:
 
 ```yaml
 ports:
   - "127.0.0.1:5433:5432"
 ```
 
+Port `5433` используется только для local development. Staging/production PostgreSQL не публикуется на public host interface.
+
 ### 7.2 Volumes
 
-Local Compose использует named volumes:
+Минимальные named volumes:
 
 ```text
 pharmacycrm_postgres_data
@@ -187,702 +191,782 @@ pharmacycrm_backend_logs
 pharmacycrm_import_quarantine
 ```
 
-Обязательные правила:
+Правила:
 
-- PostgreSQL data не хранится внутри writable layer контейнера;
-- application logs сохраняются через volume или централизованный log driver;
-- import quarantine не смешивается с frontend public files;
-- удаление volumes выполняется только отдельной destructive command с подтверждением;
-- `docker compose down` без `-v` не удаляет данные.
+- PostgreSQL data не хранится в writable container layer;
+- import quarantine отделён от frontend public files;
+- удаление volumes выполняется отдельной destructive command с подтверждением;
+- `docker compose down` без `-v` не удаляет data;
+- local cleanup command выводит точный список удаляемых volumes;
+- log volume имеет rotation/size policy.
 
-### 7.3 Health dependencies
+### 7.3 Startup dependencies
 
-`depends_on` не является доказательством готовности PostgreSQL. Backend readiness/startup использует реальную connection check и migration compatibility check.
+`depends_on` не является readiness guarantee. API и worker выполняют реальные dependency checks и schema compatibility validation.
 
 Compose healthchecks не заменяют application `/healthz` и `/readyz`.
 
-## 8. Docker images
+## 8. Docker images и supply chain
 
 ### 8.1 Backend image
 
-Backend Dockerfile должен:
+Backend Dockerfile обязан:
 
 - использовать multi-stage build;
-- собирать binaries `api`, `worker`, `migrate` или эквивалентный набор;
-- фиксировать Go toolchain/image version;
-- не включать source tree и build credentials в final image;
+- собирать `api`, `worker`, `migrate` или эквивалент;
+- фиксировать Go toolchain/base image version;
+- выполнять dependency verification;
+- не включать source, compiler и build credentials в final image;
 - запускаться non-root user;
-- иметь минимальный runtime base image;
-- содержать CA certificates и timezone data только при необходимости;
-- поддерживать graceful termination по `SIGTERM`;
-- не записывать в filesystem, кроме явно разрешённых mounted paths;
-- не содержать `.env` и secrets.
+- использовать минимальный runtime image;
+- поддерживать `SIGTERM` и graceful shutdown;
+- писать только в allowlisted mounted paths;
+- не содержать `.env`, secrets и private keys.
 
-Build metadata должны включать:
+Build metadata:
 
 - commit SHA;
-- build timestamp;
 - version/tag;
-- dirty state для local build, если применимо.
-
-Backend должен предоставлять build metadata через безопасный operational endpoint или structured startup log.
+- build timestamp;
+- image digest;
+- dirty state для local build;
+- schema compatibility range;
+- worker protocol version.
 
 ### 8.2 Frontend image
 
-Frontend Dockerfile должен:
+Frontend build обязан:
 
-- выполнять dependency install по lockfile;
-- собирать production bundle в отдельном build stage;
-- отдавать assets через минимальный static server;
-- использовать immutable hashed asset names;
-- задавать корректные cache headers;
-- не встраивать backend secrets;
-- не включать source maps публично без осознанного решения;
-- не использовать runtime environment variables как секретный канал.
+- устанавливать dependencies строго по lockfile;
+- использовать production build stage;
+- отдавать hashed immutable assets;
+- задавать cache headers;
+- не содержать backend secrets;
+- не считать runtime/build variables секретными;
+- не публиковать source maps без отдельного решения;
+- иметь fallback routing только для frontend routes, не для API paths.
 
-Frontend build-time variables считаются публичными, так как попадают в браузерный bundle.
+### 8.3 Provenance
 
-### 8.3 Image provenance
-
-Production deployment использует image по immutable digest или подписанному tag.
+Production использует image по digest или подписанному immutable tag.
 
 Запрещено:
 
-- использовать `latest`;
-- пересобирать image после approval;
-- использовать разные artifacts для staging verification и production без нового release decision;
-- хранить registry credentials в image layer.
+- `latest`;
+- rebuild после approval;
+- разные artifacts для staging и production;
+- mutable tag без проверки digest;
+- registry credentials в image layer;
+- release artifact без SBOM и vulnerability scan evidence.
 
 ## 9. Runtime configuration
 
-Backend загружает конфигурацию через `github.com/kelseyhightower/envconfig` согласно архитектурным требованиям.
+Backend использует `github.com/kelseyhightower/envconfig`.
 
-Конфигурация делится на группы:
+Configuration groups:
 
-- application identity и environment;
+- application/environment;
 - HTTP server;
 - PostgreSQL;
 - authentication/session;
-- security headers и trusted proxies;
+- security headers/trusted proxies;
 - logging;
-- tracing/metrics;
-- worker settings;
-- import limits;
-- backup/operational integration settings.
+- metrics/tracing;
+- worker/job protocol;
+- import limits/storage;
+- backup/operations.
 
 ### 9.1 Startup validation
 
-Backend обязан завершить startup с ошибкой при:
+Startup завершается ошибкой при:
 
 - отсутствии обязательного secret;
 - placeholder/default production credential;
-- невалидном DSN;
-- небезопасном cookie/TLS режиме для production;
-- пустом JWT issuer/audience;
-- неизвестном JWT algorithm;
-- некорректных TTL;
-- wildcard CORS вместе с credentials;
-- пустом trusted proxy allowlist при включённом доверии proxy headers;
-- неподдерживаемой migration/schema version;
-- невалидных log paths;
-- отрицательных или нулевых critical timeouts/limits.
+- invalid DSN;
+- unsafe cookie/TLS mode;
+- invalid JWT issuer/audience/algorithm;
+- invalid TTL;
+- wildcard CORS с credentials;
+- пустом trusted proxy allowlist при доверии forwarded headers;
+- несовместимой schema version;
+- несовместимом worker/outbox protocol;
+- invalid log path;
+- invalid timeouts, limits или pool settings;
+- connection budget, превышающем утверждённый DB capacity;
+- включённом debug/pprof без network restriction.
 
-Ошибки startup не должны выводить secret values.
+Startup errors не раскрывают secret values.
 
 ### 9.2 Configuration ownership
 
-Каждый parameter должен иметь:
+Каждый parameter имеет:
 
 - имя;
 - тип;
-- default только когда он безопасен;
-- обязательность по environment;
-- описание;
-- владельца;
-- validation rule.
+- safe default либо обязательность;
+- environment scope;
+- validation rule;
+- owner;
+- restart/reload semantics;
+- security classification.
 
-Production configuration matrix хранится как документация без secret values.
+Production configuration matrix хранится без secret values и versioned вместе с release process.
 
-## 10. Secrets
+## 10. Secrets и key rotation
 
-Secrets включают:
-
-- PostgreSQL credentials;
-- JWT signing keys;
-- refresh/reset token peppers, если используются;
-- encryption keys;
-- external provider credentials;
-- backup encryption credentials;
-- registry/deployment credentials.
+Secrets включают DB credentials, JWT signing keys, peppers, encryption keys, provider credentials, backup encryption keys и deployment credentials.
 
 Правила:
 
-1. secrets не хранятся в Git;
-2. secrets не встраиваются в images;
-3. secrets доставляются через secret manager, protected environment или mounted secret files;
-4. `.env` допустим только для local development и должен быть gitignored;
-5. production secrets имеют владельца и rotation procedure;
-6. secret rotation не требует пересборки source artifact;
-7. startup/logging запрещено выводить secret values;
-8. доступ к secrets соответствует least privilege;
-9. backup encryption keys не хранятся только рядом с backup;
-10. компрометация secret запускает incident runbook и отзыв зависимых credentials.
+1. secrets отсутствуют в Git, images, frontend bundle и logs;
+2. delivery выполняется через secret manager, protected environment или mounted secret files;
+3. `.env` разрешён только local и gitignored;
+4. каждый production secret имеет owner, rotation period и emergency revoke procedure;
+5. rotation не требует source rebuild;
+6. service получает только необходимые secrets;
+7. backup encryption keys не хранятся только рядом с backup;
+8. secret compromise запускает incident runbook;
+9. retired secret удаляется только после подтверждения отсутствия consumers;
+10. secret access auditируется платформой, где это возможно.
 
-JWT key rotation должна поддерживать overlap старого verification key и нового signing key в пределах максимального TTL выданных tokens.
+JWT rotation поддерживает overlap старого verification key и нового signing key не менее максимального TTL уже выданных tokens плюс допустимый clock skew.
+
+Key identifier `kid` уникален. Удаление старого verification key допускается только после окончания overlap и проверки telemetry.
 
 ## 11. PostgreSQL deployment
 
-### 11.1 Network
+### 11.1 Network и TLS
 
 Production PostgreSQL:
 
-- не публикуется в интернет;
-- принимает соединения только от API, worker, migration job, backup process и контролируемого admin channel;
-- использует TLS, если соединение пересекает host/network boundary;
-- не использует superuser credentials в runtime приложении.
+- не публикуется в internet;
+- принимает соединения только от allowlisted service identities;
+- использует TLS при пересечении host/network boundary;
+- не использует superuser credentials в runtime;
+- ограничивает administrative access через VPN/bastion/private channel;
+- имеет connection logging и alerting на unusual sources.
 
 ### 11.2 Роли
 
-Минимально создаются:
+Минимальные roles:
 
-- owner/bootstrap role;
-- migration role;
-- runtime role;
-- backup role;
-- optional read-only diagnostics role.
+- owner/bootstrap;
+- migration;
+- runtime API;
+- runtime worker;
+- backup;
+- optional read-only diagnostics.
 
-Runtime role не должен иметь права:
+API и worker roles могут различаться. Runtime roles не имеют права создавать schema, управлять roles, выполнять unrestricted DDL или изменять immutable history вне разрешённого protocol.
 
-- создавать или удалять schema;
-- управлять roles;
-- выполнять unrestricted DDL;
-- изменять immutable audit/movement history вне разрешённых commands;
-- bypass-ить row/security constraints через superuser privileges.
+### 11.3 Pool budget
 
-### 11.3 Pool и timeouts
+Для каждой replica задаются max/min connections, acquire timeout, lifetime, idle timeout и health interval.
 
-Backend pool configuration задаёт:
+Обязательный connection budget:
 
-- максимальное число соединений;
-- минимальное число idle connections при необходимости;
-- connection lifetime и idle timeout;
-- acquisition timeout;
-- statement/transaction timeout policy;
-- health check interval.
+```text
+API replicas × API max pool
++ worker replicas × worker max pool
++ migration reserve
++ backup reserve
++ operational reserve
+<= PostgreSQL max_connections - safety margin
+```
 
-Сумма pool limits всех API/worker replicas должна оставлять запас для migrations, backup и emergency access.
+Изменение replica count или pool size требует пересчёта budget.
 
-## 12. Database migrations
+### 11.4 Database timeouts
 
-### 12.1 Общая модель
+Production задаёт:
+
+- connection timeout;
+- statement timeout;
+- lock timeout для migrations/operations;
+- idle-in-transaction timeout;
+- transaction timeout policy;
+- application cancellation propagation.
+
+Timeout не должен приводить к частично committed business operation.
+
+## 12. Application–schema–worker compatibility
+
+Каждый backend release объявляет:
+
+- минимальную schema version;
+- максимальную подтверждённую schema version либо compatibility policy;
+- worker protocol version;
+- outbox event versions, которые умеет читать;
+- API contract version.
+
+Readiness должна быть false, если schema несовместима.
+
+Во время rolling deployment новая и старая application versions могут одновременно работать только если:
+
+- schema обратно совместима для обеих;
+- outbox/job payload читается обеими worker versions либо workers обновляются контролируемо;
+- feature не создаёт payload, который старый consumer не понимает;
+- session/token validation совместима;
+- frontend API contract совместим.
+
+Несовместимый worker rollout выполняется через drain старых workers, protocol gate или blue-green switch. Одновременная обработка несовместимыми consumers запрещена.
+
+## 13. Database migrations
+
+### 13.1 Общая модель
 
 Migrations выполняются отдельной one-shot command до переключения traffic на несовместимую application version.
 
-API startup не должен незаметно применять production migrations.
-
 Migration process:
 
-1. проверяет target environment;
-2. получает migration lock;
-3. фиксирует текущую schema version;
+1. проверяет environment и release identity;
+2. получает migration advisory/distributed lock;
+3. фиксирует current schema version;
 4. выполняет preflight checks;
-5. применяет migrations по порядку;
-6. проверяет итоговую version;
-7. записывает deployment evidence;
-8. освобождает lock.
+5. проверяет backup/restore point requirement;
+6. применяет migrations по порядку;
+7. выполняет verification queries;
+8. фиксирует resulting schema version и evidence;
+9. освобождает lock.
 
-Одновременно migrations запускает только один процесс.
+Одновременно migration запускает только один владелец.
 
-### 12.2 Compatibility strategy
+### 13.2 Expand → migrate → contract
 
-Предпочтительна expand/migrate/contract стратегия:
+1. **Expand** — добавить совместимую schema.
+2. **Migrate** — развернуть compatible code и выполнить bounded backfill.
+3. **Verify** — проверить completeness и consumers.
+4. **Contract** — удалить legacy schema отдельным release.
 
-1. **Expand** — добавить обратно совместимую schema;
-2. **Migrate** — развернуть код, выполнить backfill/dual-read при необходимости;
-3. **Contract** — удалить старые поля только после подтверждения отсутствия старых consumers.
+Запрещено:
 
-Запрещено в одном опасном шаге:
+- удалять используемый column до compatibility window;
+- unsafe rename без dual-read/write strategy;
+- длительный table rewrite без lock assessment;
+- добавлять `NOT NULL` к большой таблице одним опасным шагом;
+- unbounded backfill в одной transaction;
+- mixing schema migration и business data correction без отдельного plan;
+- считать application rollback эквивалентом schema rollback.
 
-- удалять используемый столбец до deployment совместимого кода;
-- переименовывать столбец без compatibility window;
-- делать длительный table rewrite без оценки lock impact;
-- добавлять `NOT NULL` к большой таблице без безопасного плана;
-- выполнять неограниченный backfill в одной транзакции;
-- предполагать, что rollback application автоматически откатит schema.
+### 13.3 Migration review card
 
-### 12.3 Migration review
+Каждая migration документирует:
 
-Каждая production migration документирует:
-
-- ожидаемый lock level;
-- ожидаемую длительность;
-- table rewrite risk;
+- affected tables;
+- expected lock level/duration;
+- rewrite risk;
+- disk/WAL growth;
 - compatibility window;
-- backfill strategy;
+- backfill batch/rate;
 - verification query;
-- rollback или forward-fix plan;
+- rollback или forward-fix;
 - backup requirement;
-- monitoring во время выполнения.
+- monitoring/abort thresholds;
+- tested dataset size.
 
-### 12.4 Failed migration
+### 13.4 Failed migration
 
-При failure:
+При failure traffic не переключается на несовместимую version. Schema state проверяется до retry.
 
-- traffic не переключается на несовместимую version;
-- migration lock освобождается только после безопасного завершения process;
-- состояние schema проверяется вручную/автоматизированно;
-- частично применённая non-transactional migration требует runbook;
-- повтор разрешён только после проверки idempotency migration steps;
-- destructive manual SQL без change/incident record запрещён.
+Partially applied non-transactional migration требует dedicated runbook. Повтор разрешён только после доказанной idempotency steps.
 
-## 13. Release pipeline
+## 14. Singleton operations и fencing
 
-Production pipeline разделяется на stages:
+Migrations, destructive maintenance, initial data cutover и некоторые reconciliation jobs являются singleton operations.
+
+Они обязаны использовать:
+
+- advisory/distributed lock;
+- уникальный execution ID;
+- lease timeout;
+- fencing token или эквивалентную защиту от stale owner;
+- heartbeat;
+- persisted execution status;
+- bounded retry.
+
+Lock без fencing недостаточен, если старый process после pause способен продолжить работу после появления нового owner.
+
+## 15. Release pipeline
+
+Production pipeline:
 
 1. source verification;
 2. backend tests/build;
 3. frontend tests/build;
 4. migration verification;
 5. integration/concurrency/security tests;
-6. image scanning и SBOM;
+6. SBOM, vulnerability и secret scan;
 7. image signing/publishing;
-8. staging deployment;
-9. staging smoke/contract checks;
+8. staging deployment теми же digests;
+9. staging migration/restore/smoke checks;
 10. approval;
 11. production preflight;
 12. migration job;
-13. application rollout;
-14. post-deploy verification;
-15. release evidence сохранение.
+13. controlled application/worker rollout;
+14. frontend rollout;
+15. post-deploy verification;
+16. observation window;
+17. release evidence сохранение.
 
-Production deployment использует тот же image digest, который прошёл staging verification.
+Deployment tooling не должно пересобирать artifact.
 
-## 14. Deployment procedure
+## 16. Deployment procedure
 
-Нормативная последовательность:
+### 16.1 Preflight
 
-### 14.1 Preflight
+Проверяются:
 
-- release commit/tag immutable;
-- CI green;
-- image digests известны;
-- migration plan проверен;
-- backup freshness соответствует policy;
-- rollback/forward-fix owner доступен;
-- secrets/config validated;
-- capacity достаточна;
-- active incident отсутствует либо deployment одобрен incident commander;
-- maintenance window объявлен, если требуется.
+- immutable commit/tag и image digests;
+- CI/security scan status;
+- compatibility matrix;
+- migration plan;
+- backup freshness и restore evidence;
+- rollback/forward-fix owner;
+- secrets/config validation;
+- DB connection/capacity budget;
+- disk/WAL capacity;
+- alert routing;
+- отсутствие blocking incident;
+- maintenance window, если требуется.
 
-### 14.2 Apply schema
+### 16.2 Apply schema
 
 - запустить migration job;
-- дождаться успешного завершения;
+- проверить execution ID и lock ownership;
+- дождаться success;
 - проверить schema version и verification queries;
-- не продолжать rollout при неоднозначном результате.
+- не продолжать при ambiguous result.
 
-### 14.3 Rollout
+### 16.3 Rollout order
 
-- развернуть backend API;
-- дождаться readiness;
-- развернуть worker с совместимой version;
-- развернуть frontend;
-- переключать traffic только на ready instances;
-- старые instances завершать graceful shutdown.
+Нормативный порядок определяется compatibility plan. Базовый вариант:
 
-При нескольких replicas rollout должен предотвращать одновременную работу несовместимых worker versions над одним протоколом.
+1. deploy compatible API replicas;
+2. дождаться readiness и version distribution;
+3. drain/upgrade workers согласно protocol plan;
+4. deploy frontend;
+5. переключить traffic только на ready instances;
+6. graceful terminate старые instances.
 
-### 14.4 Post-deploy verification
+Для несовместимого worker protocol применяется отдельный switch plan, а не обычный rolling update.
 
-Минимально проверяются:
+### 16.4 Post-deploy verification
+
+Минимально:
 
 - `/healthz` и `/readyz`;
-- version/build metadata;
-- login/refresh/logout smoke flow;
+- build metadata/image digest;
+- schema/worker protocol version;
+- login/refresh/logout smoke;
 - authorized pharmacy-scoped read;
-- один безопасный idempotency smoke scenario;
-- DB connectivity и pool saturation;
-- worker heartbeat/outbox lag;
+- safe idempotency replay;
+- DB pool saturation;
+- worker heartbeat, leases и outbox lag;
 - error rate и latency;
-- migration version;
 - audit/security event creation;
-- frontend asset/API compatibility.
+- frontend/API compatibility;
+- отсутствие mixed incompatible versions;
+- inventory invariants/reconciliation sample.
 
-Успешный HTTP startup без post-deploy verification не считается успешным deployment.
+### 16.5 Observation window
 
-## 15. Health, readiness и startup
+После rollout release остаётся под усиленным наблюдением до закрытия defined window.
 
-### 15.1 `/healthz`
+Отслеживаются 5xx, latency, DB locks, pool saturation, worker retries, outbox lag, audit failures, authorization denials anomalies и inventory inconsistencies.
 
-Показывает, что process запущен и event loop/server способен ответить.
+## 17. Health, readiness и startup
 
-Не должен:
+### `/healthz`
 
-- выполнять тяжёлые DB queries;
-- раскрывать configuration/secrets;
-- считаться доказательством готовности принимать business traffic.
+Показывает, что process жив и способен ответить. Не выполняет тяжёлые dependency checks и не раскрывает config.
 
-### 15.2 `/readyz`
+### `/readyz`
 
-Readiness возвращает success только если:
+Success только если:
 
 - startup validation завершена;
+- process не draining;
 - PostgreSQL доступен;
-- schema version совместима;
-- обязательные dependencies готовы;
-- process не находится в shutdown/drain state.
+- schema compatible;
+- required dependencies готовы;
+- worker protocol compatible;
+- critical internal initialization завершена.
 
-Worker readiness дополнительно учитывает возможность получить lease и совместимость worker protocol.
+Dependency outage переводит readiness в false, но не обязан переводить liveness в false.
 
-### 15.3 Liveness failure
+Operational endpoint body не раскрывает DSN, host topology, secrets или internal stack traces.
 
-Liveness не должен перезапускать process из-за кратковременной недоступности PostgreSQL. Dependency outage отражается readiness, metrics и alerts.
+## 18. Graceful shutdown и drain
 
-## 16. Graceful shutdown
+API при `SIGTERM`:
 
-При `SIGTERM` API должен:
+1. выставляет readiness=false;
+2. прекращает новый traffic;
+3. drain-ит active requests;
+4. позволяет transactions завершиться в bounded timeout;
+5. отменяет remaining operations;
+6. закрывает HTTP server и DB pool;
+7. flush-ит telemetry/logs;
+8. завершает process.
 
-1. перестать принимать новый traffic через readiness=false;
-2. начать drain active requests;
-3. позволить текущим транзакциям завершиться в ограниченный timeout;
-4. отменить оставшиеся operations через context cancellation;
-5. закрыть HTTP server;
-6. закрыть DB pool;
-7. flush-ить logger/telemetry в пределах timeout;
-8. завершиться с корректным exit code.
+Worker:
 
-Worker должен:
+- прекращает claim новых jobs;
+- завершает current job либо safely releases lease;
+- не marks processed до подтверждённого side effect;
+- сохраняет retryability после crash;
+- не продолжает работу после потери fencing ownership.
 
-- перестать claim-ить новые jobs;
-- завершить или безопасно освободить current lease;
-- не помечать event processed до успешного side effect;
-- позволять повторную обработку после crash.
+Shutdown timeout меньше orchestration termination grace period.
 
-Shutdown timeout должен быть меньше orchestration termination grace period.
+## 19. Scaling и workers
 
-## 17. Scaling и singleton operations
+API масштабируется горизонтально при server-side sessions и отсутствии in-memory business truth.
 
-API может масштабироваться горизонтально при stateless access-token handling и server-side session storage в PostgreSQL.
-
-Worker допускает несколько replicas только если jobs используют:
+Worker replicas разрешены только при:
 
 - lease/claim protocol;
-- `FOR UPDATE SKIP LOCKED` или утверждённый эквивалент;
+- `FOR UPDATE SKIP LOCKED` или утверждённом эквиваленте;
 - processing timeout;
 - idempotent consumer;
-- bounded retry и dead-letter handling.
+- bounded retry;
+- dead-letter state;
+- observable backlog;
+- protocol compatibility.
 
-Singleton по смыслу operations — migrations, некоторые reconciliation jobs и destructive maintenance — используют distributed/advisory lock.
+Autoscaling worker по backlog не должен создавать DB connection storm. Scaling limits связаны с DB connection budget.
 
-In-memory mutex не является межрепликовочной блокировкой.
+## 20. Logs и persistent storage
 
-## 18. Логи и persistent storage
+Backend пишет Zap structured logs в terminal и file согласно требованиям проекта.
 
-Backend использует Zap structured logging в terminal и file согласно требованиям проекта.
+Local file logs используют named volume/host path. В staging/production предпочтительна централизованная log platform.
 
-### 18.1 Local
+Если file logging остаётся:
 
-Local file logs монтируются в named volume или host directory, явно предназначенный для logs.
+- persistent mount;
+- max size/age/count;
+- disk monitoring;
+- safe behavior при full disk;
+- no secrets/full bodies;
+- log rotation не теряет ownership/permissions.
 
-### 18.2 Staging/production
+File log failure не должен отключать transactional audit. Application logs не заменяют audit events.
 
-Предпочтительно отправлять stdout/stderr в централизованную log platform. Если file logging остаётся обязательным:
+## 21. Import quarantine storage
 
-- путь монтируется на persistent volume;
-- применяется rotation;
-- есть max size/age/count;
-- disk usage мониторится;
-- log volume failure не должен незаметно остановить audit DB writes;
-- secrets и full bodies не логируются.
+Импортируемые файлы:
 
-Application logs не являются заменой immutable audit events.
+- хранятся вне frontend public root;
+- получают server-generated ID;
+- не исполняются;
+- имеют restrictive permissions;
+- ограничены size/retention;
+- имеют checksum и audit metadata;
+- удаляются controlled cleanup job;
+- не переиспользуют original filename как path.
 
-## 19. Import storage
+Worker читает input streaming как data. При object storage credentials имеют scoped permissions и rotation policy.
 
-Импортируемые файлы хранятся в quarantine storage:
-
-- вне frontend public root;
-- под server-generated identifier;
-- без исполнения;
-- с ограниченными permissions;
-- с size/retention limits;
-- с audit metadata;
-- с очисткой по retention policy.
-
-Worker читает файл как data stream. Original filename используется только как ограниченное metadata value.
-
-При внешнем object storage credentials имеют минимальный scope и отдельную rotation policy.
-
-## 20. Backup
-
-### 20.1 Объекты backup
+## 22. Backup policy
 
 Backup покрывает:
 
 - PostgreSQL data;
 - schema/migration metadata;
-- необходимые import objects согласно retention policy;
-- deployment/configuration metadata без раскрытия secrets;
-- список image digests и release version.
+- required import objects;
+- release/image digest metadata;
+- configuration metadata без secret values.
 
-Application logs не считаются заменой DB backup.
+До production утверждаются RPO, RTO, frequency, retention, encryption, off-site copy, access roles, integrity verification и drill schedule.
 
-### 20.2 Политика
-
-До production утверждаются:
-
-- RPO;
-- RTO;
-- frequency;
-- retention;
-- encryption;
-- off-host/off-site copy;
-- access roles;
-- integrity verification;
-- restore drill frequency.
-
-Минимально backup должен:
+Backup обязан:
 
 - создаваться автоматически;
 - шифроваться;
-- иметь checksum/integrity verification;
-- храниться отдельно от primary host;
-- иметь мониторинг freshness/failure;
-- быть защищён от удаления runtime application credentials.
+- иметь checksum;
+- храниться вне primary host;
+- мониторить freshness/failure;
+- быть защищён от удаления runtime credentials;
+- поддерживать point-in-time recovery, если это требуется RPO;
+- иметь immutable/retention-locked copy для защиты от ransomware или ошибочного удаления.
 
-### 20.3 Backup consistency
+Простое копирование активного PostgreSQL data directory запрещено.
 
-Для PostgreSQL используется механизм, обеспечивающий transactionally consistent snapshot или WAL-based recovery. Простое копирование активного data directory запрещено.
+## 23. Restore и disaster recovery
 
-## 21. Restore и disaster recovery
-
-Restore считается доказанным только после восстановления в изолированное окружение и выполнения verification.
+Restore считается доказанным только после восстановления в изолированное окружение.
 
 Restore drill:
 
-1. выбирает backup согласно policy;
-2. разворачивает чистый PostgreSQL;
-3. восстанавливает data;
-4. проверяет migration/schema version;
-5. запускает integrity/reconciliation queries;
-6. проверяет возможность startup совместимой application version;
-7. выполняет smoke flows;
-8. измеряет фактический RPO/RTO;
-9. фиксирует evidence и найденные проблемы;
-10. уничтожает/защищает восстановленную копию согласно data policy.
+1. выбирает backup/PITR target;
+2. восстанавливает DB и required objects;
+3. применяет required recovery steps;
+4. проверяет schema version;
+5. запускает application compatibility check;
+6. выполняет integrity queries;
+7. выполняет inventory reconciliation;
+8. проверяет audit readability;
+9. фиксирует actual RPO/RTO;
+10. удаляет isolated environment безопасно.
 
-Минимальные проверки:
+Недостаточно проверить только успешный exit code restore command.
 
-- users/roles/assignments существуют;
-- posted documents и movements согласованы;
-- lot balances reconciled с movements;
-- audit events читаются;
-- idempotency records не создают повторный effect;
-- latest migrations отмечены корректно;
-- outbox state не приводит к неконтролируемому повтору.
+### 23.1 Recovery verification
 
-Backup без успешного restore drill не считается надёжным.
+Минимально проверяются:
 
-## 22. Rollback и forward-fix
+- row counts и ключевые constraints;
+- отсутствие отрицательных остатков;
+- согласованность lot balances и immutable movements;
+- idempotency/audit tables;
+- session invalidation decision после disaster;
+- outbox backlog/duplicate safety;
+- application startup/readiness;
+- выборочный end-to-end read flow.
 
-### 22.1 Application rollback
+### 23.2 Disaster modes
 
-Application rollback допустим только если предыдущая version совместима с текущей schema и worker protocol.
+Runbooks должны покрывать:
 
-Перед rollback проверяются:
+- потерю API/worker host;
+- PostgreSQL corruption/unavailability;
+- accidental data deletion;
+- compromised credentials;
+- backup storage outage;
+- failed migration;
+- outbox backlog;
+- quarantine storage loss;
+- region/site outage, если topology это предполагает.
 
-- migration compatibility;
-- новые enum/status values;
-- outbox payload compatibility;
-- frontend/backend API compatibility;
-- session/token compatibility;
-- background jobs, начатые новой version.
+## 24. Initial data cutover
 
-### 22.2 Schema rollback
+Первичное открытие pharmacy для работы требует отдельного controlled process:
 
-Автоматический destructive down migration в production по умолчанию запрещён.
+1. freeze source data;
+2. import catalog/assortment/initial lots через documented commands;
+3. validate rejected rows;
+4. reconcile quantities и monetary snapshots;
+5. obtain responsible sign-off;
+6. create baseline audit/cutover record;
+7. enable business commands;
+8. monitor first operational window.
 
-Предпочтителен forward-fix. Down migration допускается только если:
+Запрещено включать продажи до завершения reconciliation и sign-off.
 
-- доказана безопасность;
-- отсутствует потеря новых данных;
-- lock impact оценён;
-- backup актуален;
-- runbook протестирован.
+Повтор initial import с тем же dataset должен быть idempotent либо выполняться в новом isolated pharmacy environment после clean reset.
 
-### 22.3 Rollback trigger
+## 25. Rollback и forward-fix
 
-Немедленное прекращение rollout требуется при:
+### 25.1 Application rollback
 
-- migration ambiguity/failure;
+Разрешён только если previous image совместим с active schema и worker protocol.
+
+Rollback использует previously verified digest. Rebuild старой version запрещён.
+
+### 25.2 Schema rollback
+
+Destructive down migration по умолчанию запрещён. Предпочтителен forward-fix.
+
+Down допускается только при доказанной безопасности, отсутствии потери новых данных, оценённом lock impact, свежем backup и протестированном runbook.
+
+### 25.3 Rollback triggers
+
+Rollout немедленно останавливается при:
+
+- migration ambiguity;
 - authorization bypass;
 - duplicate irreversible effect;
 - отрицательном stock;
-- невозможности transactional audit;
-- резком росте 5xx/latency;
-- worker, создающем повторные effects;
-- несовместимости frontend/backend;
-- утечке secret или credentials.
+- audit failure;
+- incompatible worker behavior;
+- резком росте error/latency;
+- frontend/backend incompatibility;
+- secret leakage;
+- unexplained inventory divergence.
 
-Если rollback небезопасен, traffic ограничивается, опасные commands отключаются operational control и выполняется forward-fix/incident procedure. Feature flag не должен обходить domain/security invariants.
+Если rollback небезопасен, dangerous commands отключаются operationally, traffic ограничивается и запускается forward-fix/incident procedure.
 
-## 23. Security hardening deployment
+## 26. Deployment security hardening
 
-Production containers должны по возможности использовать:
+Production containers используют:
 
-- non-root user;
+- non-root;
 - read-only root filesystem;
-- dropped Linux capabilities;
+- dropped capabilities;
 - `no-new-privileges`;
 - explicit writable mounts;
 - CPU/memory/pid limits;
 - seccomp/AppArmor defaults;
-- pinned image digests;
-- restricted network access;
-- separate service identities;
+- pinned digests;
+- network restrictions;
+- separate identities;
 - vulnerability scanning;
 - SBOM;
 - signed artifacts.
 
-Reverse proxy обязан:
+Ingress обязан:
 
 - завершать TLS;
-- перенаправлять HTTP на HTTPS;
-- задавать approved security headers;
+- redirect HTTP→HTTPS;
+- задавать security headers;
 - ограничивать request/body size;
-- применять timeouts;
-- удалять/перезаписывать недоверенные forwarded headers;
-- передавать client IP только через trusted proxy chain;
-- не публиковать operational endpoints без network restriction.
+- применять timeouts/rate limits;
+- overwrite untrusted forwarded headers;
+- доверять client IP только trusted proxy chain;
+- ограничивать operational endpoints;
+- не проксировать arbitrary paths к internal services.
 
-## 24. Time synchronization
+## 27. Time synchronization
 
-Server, PostgreSQL и infrastructure hosts должны использовать синхронизированное время.
+Hosts и PostgreSQL используют синхронизированное время. Clock drift мониторится.
 
-Clock drift мониторится, поскольку влияет на:
+UTC используется для persisted datetime. Local timezone применяется только в presentation/business-date rules, определённых доменом.
 
-- JWT/session expiry;
-- audit ordering;
-- idempotency retention;
-- lot expiration;
-- backup/WAL recovery;
-- logs и incident investigation.
+## 28. Capacity и resource limits
 
-Application использует UTC для persisted datetime. Локальная timezone применяется только при presentation/business-date rules, явно определённых доменом.
+До pilot определяются:
 
-## 25. Capacity и resource limits
-
-До pilot задаются baseline limits:
-
-- API replicas;
-- worker replicas;
-- DB max connections;
-- pool sizes;
-- request body size;
-- upload size/rows;
-- transaction timeout;
-- worker batch size;
-- outbox retry limits;
-- log volume retention;
+- API/worker replica limits;
+- DB max connections и pool budget;
+- request/upload limits;
+- transaction/statement/lock timeouts;
+- worker batch/lease/retry limits;
+- outbox backlog thresholds;
 - disk free-space thresholds;
-- backup duration/storage.
+- log retention;
+- backup duration/storage;
+- WAL growth thresholds;
+- import memory limits.
 
-Resource limit не должен превращать временную нагрузку в частичную business operation. Timeout/cancellation обязаны приводить к rollback либо безопасному idempotent retry.
+Capacity plan должен учитывать degraded mode и restore/backfill operations, а не только normal traffic.
 
-## 26. Deployment observability
+## 29. Deployment observability
 
-Каждый deployment создаёт события/метрики:
+Каждый deployment фиксирует:
 
 - release started/completed/failed;
 - commit/tag/image digest;
-- migration started/completed/failed;
-- schema version;
-- API/worker version distribution;
+- schema version before/after;
+- worker protocol version;
+- migration execution ID;
+- version distribution;
 - readiness failures;
 - restart count;
-- deployment duration;
+- rollout duration;
 - rollback/forward-fix status;
-- post-deploy smoke result.
+- smoke result;
+- observation window result.
 
-Должна быть возможность ответить:
+Оператор должен определить:
 
-- какая версия сейчас обслуживает traffic;
-- какая schema version активна;
-- какой image digest запущен;
-- когда и кем выполнен release;
+- какая version обслуживает traffic;
+- какие worker versions active;
+- какая schema version active;
 - какие migrations применены;
-- прошли ли smoke checks;
-- есть ли смешанные несовместимые versions.
+- есть ли incompatible mixed versions;
+- прошёл ли smoke/reconciliation;
+- кто и когда выполнил release.
 
-## 27. Operational access
+## 30. Operational access
 
 Production shell/DB access:
 
-- ограничен;
-- использует персональные identities;
+- персональный;
+- least privilege;
+- MFA, где доступно;
 - журналируется;
-- требует MFA там, где доступно;
-- не использует shared root credentials;
-- применяется только по runbook/change/incident record.
+- ограничен по времени;
+- связан с change/incident record;
+- не использует shared root credentials.
 
-Routine business correction через прямой SQL запрещена. Коррекция выполняется предметными application commands с audit.
+Routine business correction через SQL запрещена.
 
-Emergency SQL требует peer review, backup/restore point, scoped script, verification и post-incident documentation.
+Emergency SQL требует peer review, restore point, scoped script, dry-run/verification, execution log и post-incident documentation.
 
-## 28. Release checklist
+## 31. Release checklist
 
 Release допускается, если:
 
-1. CI и security scans прошли;
-2. release artifact immutable;
-3. image digests зафиксированы;
-4. schema compatibility подтверждена;
+1. CI/security scans green;
+2. artifact immutable и signed;
+3. digests зафиксированы;
+4. compatibility matrix подтверждена;
 5. migration preflight выполнен;
-6. backup свежий;
-7. rollback/forward-fix plan определён;
+6. backup freshness и restore evidence допустимы;
+7. rollback/forward-fix owner назначен;
 8. secrets/config validation пройдена;
-9. capacity и disk space достаточны;
-10. monitoring и alert routing работают;
-11. staging smoke tests прошли;
-12. owner deployment и incident contact назначены;
+9. DB capacity/disk/WAL достаточны;
+10. monitoring/alert routing работают;
+11. staging rollout теми же digests успешен;
+12. post-deploy checks и observation window определены;
 13. release notes содержат API/schema/operational changes;
-14. post-deploy checks подготовлены.
+14. active P0/P1 operational blockers отсутствуют.
 
-## 29. Definition of Done для deployment change
+## 32. Definition of Done для deployment change
 
 Deployment change завершён только если:
 
-1. topology/configuration impact описан;
-2. local, CI, staging и production semantics не противоречат друг другу;
+1. topology/config impact описан;
+2. local/CI/staging/production semantics согласованы;
 3. secrets не попали в repository/image/logs;
-4. images воспроизводимы и immutable;
-5. migration order и compatibility определены;
-6. startup/readiness/graceful shutdown протестированы;
-7. volumes и retention определены;
-8. backup/restore impact оценён;
-9. rollback/forward-fix описан;
-10. security hardening сохранён;
-11. observability и alerting обновлены;
-12. runbook и документация обновлены;
-13. change прошёл staging verification;
-14. нет открытого P0/P1 operational blocker.
+4. images immutable и reproducible;
+5. application-schema-worker compatibility определена;
+6. migration order, lock impact и verification описаны;
+7. startup/readiness/shutdown протестированы;
+8. singleton operations имеют lock и fencing;
+9. volumes/retention определены;
+10. backup/restore и reconciliation impact проверены;
+11. rollback/forward-fix описан;
+12. security hardening сохранён;
+13. observability/alerting обновлены;
+14. runbooks обновлены;
+15. staging verification пройдена;
+16. нет P0/P1 operational blocker.
 
-## 30. Открытые решения
+## 33. Обязательные deployment tests
 
-До production необходимо утвердить ADR или эксплуатационную policy для:
+Минимально автоматизируются или регулярно rehearsed:
 
-1. production hosting topology и orchestration platform;
-2. reverse proxy/ingress implementation;
+- clean local startup;
+- production-like startup validation failure cases;
+- schema compatibility rejection;
+- migration lock contention;
+- failed migration recovery;
+- rolling API deployment;
+- worker drain и lease recovery;
+- stale worker fencing;
+- graceful shutdown during transaction/job;
+- secret rotation overlap;
+- backup freshness alert;
+- isolated restore drill;
+- inventory reconciliation after restore;
+- rollback to previous digest;
+- network denial к PostgreSQL с public interface;
+- disk pressure/log rotation behavior;
+- post-deploy smoke failure stops release.
+
+## 34. Открытые решения
+
+До production необходимо утвердить:
+
+1. hosting topology и orchestration platform;
+2. ingress implementation;
 3. secret manager;
-4. container registry и artifact signing;
+4. registry и artifact signing;
 5. RPO/RTO;
-6. backup technology, schedule и retention;
-7. log/metrics/tracing platform;
-8. exact deployment strategy: rolling, blue-green или иной вариант;
+6. backup/PITR technology, schedule и retention;
+7. observability platform;
+8. rollout strategy: rolling, blue-green или canary;
 9. maintenance window policy;
 10. production scaling baseline;
 11. import object storage;
-12. ownership releases, DBA operations и incident commander role;
-13. staging data anonymization procedure;
+12. release/DBA/incident ownership;
+13. staging anonymization;
 14. certificate issuance/rotation;
-15. production network segmentation.
+15. network segmentation;
+16. application-schema compatibility declaration format;
+17. worker protocol versioning strategy;
+18. fencing implementation для singleton jobs;
+19. immutable backup retention policy;
+20. initial data cutover owner и sign-off form.
