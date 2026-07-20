@@ -1,7 +1,7 @@
 # PharmacyCRM — Documentation Index
 
 **Статус документа:** Active  
-**Версия:** 1.9  
+**Версия:** 2.0  
 **Дата:** 2026-07-20
 
 ## 1. Назначение
@@ -42,6 +42,7 @@
 | 10 | `10-sequence-diagrams.md` | последовательности критических сценариев, transaction boundaries, locks, idempotency, audit и failure paths | Draft |
 | 11 | `11-development-roadmap.md` | risk-first этапы реализации, зависимости, quality gates и Definition of Done | Draft |
 | 12 | `12-deployment.md` | окружения, Docker, volumes, migrations, release, backup, recovery и production operations | Draft |
+| 13 | `13-testing-strategy.md` | уровни тестирования, PostgreSQL integration, concurrency, security, contract, migration, recovery и release gates | Draft |
 
 ## 4. Планируемые документы
 
@@ -49,7 +50,6 @@
 
 | № | Планируемый документ | Назначение |
 |---:|---|---|
-| 13 | `13-testing-strategy.md` | уровни тестирования и обязательные concurrency/contract/security tests |
 | 14 | `14-observability.md` | Zap, log schema, ротация, tracing, metrics и alerting |
 
 Номер зарезервирован даже до создания файла, чтобы новые документы не нарушали принятую последовательность.
@@ -86,7 +86,7 @@ ADR после принятия не переписывается так, буд
 
 Изменение считается документированным только если:
 
-1. затронутые SRS, Architecture, API, Domain Model, Project Structure, Security Design, Sequence Diagrams, Development Roadmap, Deployment и Database Design не противоречат друг другу;
+1. затронутые SRS, Architecture, API, Domain Model, Project Structure, Security Design, Sequence Diagrams, Development Roadmap, Deployment, Testing Strategy и Database Design не противоречат друг другу;
 2. все ссылки используют актуальные пути;
 3. новый верхнеуровневый файл имеет номер;
 4. статус и версия документа обновлены;
@@ -102,24 +102,26 @@ ADR после принятия не переписывается так, буд
 14. изменение transaction boundary, lock order, idempotency protocol, transactional audit или post-commit flow синхронизирует `10-sequence-diagrams.md`;
 15. изменение MVP scope, зависимостей этапов, release gate, Definition of Ready/Done или приоритета P0/P1 синхронизирует `11-development-roadmap.md`;
 16. изменение topology, ports, volumes, runtime configuration, migration order, readiness, release, rollback, backup или restore синхронизирует `12-deployment.md`;
-17. архитектурно значимое решение оформлено ADR;
-18. примеры кода и диаграммы не противоречат принятым ADR и текущему стеку.
+17. изменение acceptance criteria, authorization matrix, persistence behavior, concurrency protocol, contract, migration, security, frontend workflow, performance baseline или recovery procedure синхронизирует `13-testing-strategy.md` и соответствующие automated suites;
+18. архитектурно значимое решение оформлено ADR;
+19. примеры кода и диаграммы не противоречат принятым ADR и текущему стеку.
 
 ## 8. Известные задачи синхронизации
 
 Перед началом массовой реализации необходимо:
 
 1. определить нормативные правила возврата лекарств после юридической проверки;
-2. создать testing и observability документы до production-ready реализации;
+2. создать observability документ до production-ready реализации;
 3. принять security ADR, перечисленные в `09-security-design.md`, до завершения соответствующих механизмов;
 4. разрешить открытые вопросы lock order, transactional outbox и retry policy из `10-sequence-diagrams.md`;
 5. закрыть Gate E0 из `11-development-roadmap.md` до массовой реализации зависимых механизмов;
 6. утвердить deployment ADR/policies, перечисленные в `12-deployment.md`, до production rollout;
-7. при создании первых migrations сверить их с `06-database-design.md` версии 1.1 и добавить migration/concurrency tests;
-8. внедрить автоматические architecture checks для package/import boundaries и запрета cross-root source imports;
-9. утвердить frontend package manager, API client generation flow и ownership browser E2E tests.
+7. утвердить testing tooling и CI/release policies, перечисленные в `13-testing-strategy.md`;
+8. при создании первых migrations сверить их с `06-database-design.md` версии 1.1 и добавить migration/concurrency tests;
+9. внедрить автоматические architecture checks для package/import boundaries и запрета cross-root source imports;
+10. утвердить frontend package manager, API client generation flow и ownership browser E2E tests.
 
-Задачи создания `05-api-design.md`, интеграции возвратного amendment, добавления identity/assignments/sessions/idempotency/audit в Database Design, создания `07-domain-model.md`, фиксации независимых application roots, синхронизации backend architecture с Project Structure, создания Security Design, фиксации критических sequence diagrams, создания Development Roadmap и Deployment Design закрыты.
+Задачи создания `05-api-design.md`, интеграции возвратного amendment, добавления identity/assignments/sessions/idempotency/audit в Database Design, создания `07-domain-model.md`, фиксации независимых application roots, синхронизации backend architecture с Project Structure, создания Security Design, фиксации критических sequence diagrams, создания Development Roadmap, Deployment Design и Testing Strategy закрыты.
 
 ## 9. Правило сопровождения
 
@@ -133,6 +135,7 @@ ADR после принятия не переписывается так, буд
 - согласованность lock order, idempotency, audit и post-commit flow;
 - согласованность этапов, gates, Definition of Ready/Done и release blockers;
 - согласованность deployment topology, ports, volumes, configuration, migrations, release и recovery;
+- согласованность test levels, authorization matrix, concurrency, migration, contract, security и release evidence;
 - согласованность backend module ownership и package layout;
 - согласованность authentication, authorization, sessions, secrets и audit controls;
 - независимость `backend/` и `frontend/`;
