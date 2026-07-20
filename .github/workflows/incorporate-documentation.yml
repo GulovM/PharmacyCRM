@@ -66,10 +66,7 @@ jobs:
               start = f"<!-- {key}:start -->"
               end = f"<!-- {key}:end -->"
               block = f"\n{start}\n{body.strip()}\n{end}\n"
-              pattern = re.compile(
-                  rf"\n?{re.escape(start)}.*?{re.escape(end)}\n?",
-                  re.S,
-              )
+              pattern = re.compile(rf"\n?{re.escape(start)}.*?{re.escape(end)}\n?", re.S)
               if pattern.search(text):
                   text = pattern.sub(block, text, count=1)
               elif before and before in text:
@@ -80,10 +77,7 @@ jobs:
 
           def replace_section(path, start_heading, next_heading, replacement):
               text = read(path)
-              pattern = re.compile(
-                  rf"^{re.escape(start_heading)}\n.*?(?=^{re.escape(next_heading)}\n)",
-                  re.M | re.S,
-              )
+              pattern = re.compile(rf"^{re.escape(start_heading)}\n.*?(?=^{re.escape(next_heading)}\n)", re.M | re.S)
               if not pattern.search(text):
                   raise RuntimeError(f"Section not found in {path}: {start_heading}")
               text = pattern.sub(replacement.rstrip() + "\n\n", text, count=1)
@@ -196,14 +190,7 @@ jobs:
           """
 
           amendment = DOCS / "00-01-cross-document-consistency.md"
-          subprocess.run(
-              [
-                  "curl", "-fsSL",
-                  "https://raw.githubusercontent.com/GulovM/PharmacyCRM/29a224dc81fa9eb4424976732be4d2d071cc5903/docs/00-01-cross-document-consistency.md",
-                  "-o", str(amendment),
-              ],
-              check=True,
-          )
+          subprocess.run(["curl", "-fsSL", "https://raw.githubusercontent.com/GulovM/PharmacyCRM/29a224dc81fa9eb4424976732be4d2d071cc5903/docs/00-01-cross-document-consistency.md", "-o", str(amendment)], check=True)
           text = read(amendment)
           text = re.sub(r"\*\*Статус документа:\*\* Accepted amendment", "**Статус документа:** Incorporated", text, count=1)
           text = re.sub(r"\*\*Версия:\*\* 1\.0", "**Версия:** 1.1", text, count=1)
@@ -218,9 +205,7 @@ jobs:
           Gate E0 закрыт решениями, зафиксированными в Security Design, Database Design, Development Roadmap, Deployment, Testing Strategy и Observability.
           """
           text = text.replace("## 1. Назначение и нормативный приоритет", incorporation.strip() + "\n\n## 1. Назначение и нормативный приоритет", 1)
-          text = re.sub(
-              r"## 17\. Обязательная матрица инкорпорации\n.*?(?=## 18\.)",
-              """## 17. Матрица инкорпорации
+          text = re.sub(r"## 17\. Обязательная матрица инкорпорации\n.*?(?=## 18\.)", """## 17. Матрица инкорпорации
 
           | Документ | Статус |
           |---|---|
@@ -237,52 +222,28 @@ jobs:
           | `13-testing-strategy.md` | Incorporated |
           | `14-observability.md` | Incorporated |
 
-          """,
-              text,
-              flags=re.S,
-          )
-          text = re.sub(
-              r"## 18\. Не закрытые этим review решения\n.*?(?=## 19\.)",
-              "## 18. Закрытие Gate E0\n\n" + gate_e0_table.strip() + "\n\n",
-              text,
-              flags=re.S,
-          )
+          """, text, flags=re.S)
+          text = re.sub(r"## 18\. Не закрытые этим review решения\n.*?(?=## 19\.)", "## 18. Закрытие Gate E0\n\n" + gate_e0_table.strip() + "\n\n", text, flags=re.S)
           write(amendment, text)
           set_meta(amendment, version="1.1", status="Incorporated")
 
           index = DOCS / "00-documentation-index.md"
           text = read(index)
           if "`00-01-cross-document-consistency.md`" not in text:
-              text = text.replace(
-                  "| 00 | `00-documentation-index.md` | карта документации и правила её сопровождения | Active |",
-                  "| 00 | `00-documentation-index.md` | карта документации и правила её сопровождения | Active |\n"
-                  "| 00-01 | `00-01-cross-document-consistency.md` | исторический cross-document review, полностью включённый в исходные документы | Incorporated |",
-                  1,
-              )
-          text = text.replace(
-              "- финального cross-document review;\n- устранения противоречий и открытых вопросов;",
-              "- сопровождения уже инкорпорированного cross-document review;\n- предотвращения новых противоречий в одном change set;",
-          )
-          text = re.sub(
-              r"## 8\. Известные задачи синхронизации\n.*?(?=## 9\.)",
-              """## 8. Текущий статус синхронизации
+              text = text.replace("| 00 | `00-documentation-index.md` | карта документации и правила её сопровождения | Active |", "| 00 | `00-documentation-index.md` | карта документации и правила её сопровождения | Active |\n| 00-01 | `00-01-cross-document-consistency.md` | исторический cross-document review, полностью включённый в исходные документы | Incorporated |", 1)
+          text = text.replace("- финального cross-document review;\n- устранения противоречий и открытых вопросов;", "- сопровождения уже инкорпорированного cross-document review;\n- предотвращения новых противоречий в одном change set;")
+          text = re.sub(r"## 8\. Известные задачи синхронизации\n.*?(?=## 9\.)", """## 8. Текущий статус синхронизации
 
           Cross-document consistency amendment полностью инкорпорирован. Gate E0 закрыт: security, reliability, delivery, retention, recovery, legal-return и frontend/tooling baselines утверждены в исходных документах.
 
           До начала зависимого этапа остаются только implementation evidence соответствующего gate: migrations, tests, restore drills, security review и CI artifacts. Они не являются альтернативными архитектурными решениями.
 
-          """,
-              text,
-              flags=re.S,
-          )
+          """, text, flags=re.S)
           write(index, text)
           set_meta(index, version="2.2", status="Active")
 
           p = DOCS / "04-architecture.md"
-          upsert_block(
-              p,
-              "consistency-incorporated",
-              f"""## Инкорпорированные архитектурные правила
+          upsert_block(p, "consistency-incorporated", f"""## Инкорпорированные архитектурные правила
 
           ### Единый module ownership
 
@@ -307,16 +268,11 @@ jobs:
           ### Event catalog
 
           {event_catalog}
-          """,
-              before="## ",
-          )
+          """, before="## ")
           set_meta(p, version="1.2", status="Draft")
 
           p = DOCS / "04-01-backend-architecture.md"
-          upsert_block(
-              p,
-              "consistency-incorporated",
-              f"""## Инкорпорированные backend boundaries
+          upsert_block(p, "consistency-incorporated", f"""## Инкорпорированные backend boundaries
 
           Backend package/module ownership полностью совпадает с общей Architecture и Database Design.
 
@@ -329,15 +285,11 @@ jobs:
           {mutation_protocol}
 
           Outbox worker размещается в reliability/infrastructure boundary, claim-ит batch после короткой транзакции, выполняет side effect вне business transaction и завершает row только guarded update по актуальному lease token.
-          """,
-          )
+          """)
           set_meta(p, version="1.2", status="Draft")
 
           p = DOCS / "05-api-design.md"
-          upsert_block(
-              p,
-              "consistency-incorporated",
-              """## Инкорпорированные API contracts
+          upsert_block(p, "consistency-incorporated", """## Инкорпорированные API contracts
 
           ### Authentication transport
 
@@ -377,8 +329,7 @@ jobs:
           ### Machine-readable contract
 
           OpenAPI 3.1 хранится в `backend/api/openapi.yaml`. Frontend generated client создаётся pinned `openapi-typescript` + `openapi-fetch`; CI проверяет, что generated output соответствует contract.
-          """,
-          )
+          """)
           set_meta(p, version="1.2", status="Draft")
 
           p = DOCS / "06-database-design.md"
@@ -393,8 +344,7 @@ jobs:
               deduplication_key varchar(255) NOT NULL UNIQUE CHECK (btrim(deduplication_key) <> ''),
               payload jsonb NOT NULL,
               headers jsonb NOT NULL DEFAULT '{}'::jsonb,
-              status varchar(30) NOT NULL DEFAULT 'PENDING'
-                  CHECK (status IN ('PENDING', 'PROCESSING', 'PROCESSED', 'DEAD_LETTER')),
+              status varchar(30) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'PROCESSING', 'PROCESSED', 'DEAD_LETTER')),
               attempt_count smallint NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
               max_attempts smallint NOT NULL DEFAULT 8 CHECK (max_attempts BETWEEN 1 AND 20),
               available_at timestamptz NOT NULL DEFAULT now(),
@@ -408,60 +358,24 @@ jobs:
               created_at timestamptz NOT NULL DEFAULT now(),
               processed_at timestamptz,
               dead_lettered_at timestamptz,
-              CONSTRAINT chk_outbox_payload_object
-                  CHECK (jsonb_typeof(payload) = 'object'),
-              CONSTRAINT chk_outbox_payload_size
-                  CHECK (octet_length(payload::text) <= 262144),
-              CONSTRAINT chk_outbox_lease CHECK (
-                  (status = 'PROCESSING'
-                      AND lease_token IS NOT NULL
-                      AND leased_by IS NOT NULL
-                      AND lease_expires_at IS NOT NULL)
-                  OR (status <> 'PROCESSING'
-                      AND lease_token IS NULL
-                      AND leased_by IS NULL
-                      AND lease_expires_at IS NULL)
-              ),
-              CONSTRAINT chk_outbox_terminal CHECK (
-                  (status = 'PROCESSED'
-                      AND processed_at IS NOT NULL
-                      AND dead_lettered_at IS NULL)
-                  OR (status = 'DEAD_LETTER'
-                      AND dead_lettered_at IS NOT NULL
-                      AND processed_at IS NULL)
-                  OR (status IN ('PENDING', 'PROCESSING')
-                      AND processed_at IS NULL
-                      AND dead_lettered_at IS NULL)
-              )
+              CONSTRAINT chk_outbox_payload_object CHECK (jsonb_typeof(payload) = 'object'),
+              CONSTRAINT chk_outbox_payload_size CHECK (octet_length(payload::text) <= 262144),
+              CONSTRAINT chk_outbox_lease CHECK ((status = 'PROCESSING' AND lease_token IS NOT NULL AND leased_by IS NOT NULL AND lease_expires_at IS NOT NULL) OR (status <> 'PROCESSING' AND lease_token IS NULL AND leased_by IS NULL AND lease_expires_at IS NULL)),
+              CONSTRAINT chk_outbox_terminal CHECK ((status = 'PROCESSED' AND processed_at IS NOT NULL AND dead_lettered_at IS NULL) OR (status = 'DEAD_LETTER' AND dead_lettered_at IS NOT NULL AND processed_at IS NULL) OR (status IN ('PENDING', 'PROCESSING') AND processed_at IS NULL AND dead_lettered_at IS NULL))
           );
 
-          CREATE INDEX idx_outbox_claim
-          ON outbox_events (available_at, created_at, id)
-          WHERE status = 'PENDING';
-
-          CREATE INDEX idx_outbox_processing_lease
-          ON outbox_events (lease_expires_at, id)
-          WHERE status = 'PROCESSING';
-
-          CREATE INDEX idx_outbox_partition
-          ON outbox_events (partition_key, occurred_at, id);
-
-          CREATE INDEX idx_outbox_aggregate
-          ON outbox_events (aggregate_type, aggregate_id, occurred_at, id);
+          CREATE INDEX idx_outbox_claim ON outbox_events (available_at, created_at, id) WHERE status = 'PENDING';
+          CREATE INDEX idx_outbox_processing_lease ON outbox_events (lease_expires_at, id) WHERE status = 'PROCESSING';
+          CREATE INDEX idx_outbox_partition ON outbox_events (partition_key, occurred_at, id);
+          CREATE INDEX idx_outbox_aggregate ON outbox_events (aggregate_type, aggregate_id, occurred_at, id);
           """
-          pattern = re.compile(
-              r"CREATE TABLE outbox_events \(.*?(?=\n-- =====================================================================\n-- Audit)",
-              re.S,
-          )
+          pattern = re.compile(r"CREATE TABLE outbox_events \(.*?(?=\n-- =====================================================================\n-- Audit)", re.S)
           if not pattern.search(text):
               raise RuntimeError("outbox_events DDL block not found")
           text = pattern.sub(outbox_ddl.rstrip() + "\n", text, count=1)
           text = text.replace("Поле `auth_version` не существует. ", "")
           write(p, text)
-          upsert_block(
-              p,
-              "gate-e0-approved",
-              f"""## Утверждённые Gate E0 database/reliability policies
+          upsert_block(p, "gate-e0-approved", f"""## Утверждённые Gate E0 database/reliability policies
 
           {gate_e0_table}
 
@@ -474,13 +388,9 @@ jobs:
           ### Retention jobs
 
           Cleanup выполняется небольшими batch с observability и без блокировки горячих таблиц. Исторические sales, inventory movements и audit не удаляются runtime cleanup до истечения утверждённого срока и legal hold.
-          """,
-              before="## 11. Открытые решения до production",
-          )
+          """, before="## 11. Открытые решения до production")
           text = read(p)
-          text = re.sub(
-              r"## 11\. Открытые решения до production\n.*\Z",
-              """## 11. Remaining non-E0 decisions
+          text = re.sub(r"## 11\. Открытые решения до production\n.*\Z", """## 11. Remaining non-E0 decisions
 
           1. Catalog import atomic/partial publication semantics.
           2. ETag/resource-version transport policy.
@@ -490,18 +400,12 @@ jobs:
           6. Jurisdiction-specific retention extension and legal hold procedure.
 
           Эти вопросы не разрешают альтернативный module ownership, transaction order, outbox protocol, token transport или frontend tooling path.
-          """,
-              text,
-              flags=re.S,
-          )
+          """, text, flags=re.S)
           write(p, text)
           set_meta(p, version="2.1", status="Draft")
 
           p = DOCS / "07-domain-model.md"
-          upsert_block(
-              p,
-              "consistency-incorporated",
-              f"""## Инкорпорированные domain boundaries
+          upsert_block(p, "consistency-incorporated", f"""## Инкорпорированные domain boundaries
 
           `PharmacyAssignment` принадлежит Pharmacy context и имеет lifecycle `ACTIVE → ENDED`, выраженный `ended_at`, `ended_by_user_id`, `end_reason`. Identity context владеет user/role/session state, но не assignment history.
 
@@ -520,15 +424,11 @@ jobs:
           {mutation_protocol}
 
           {lock_order}
-          """,
-          )
+          """)
           set_meta(p, version="1.2", status="Draft")
 
           p = DOCS / "08-project-structure.md"
-          upsert_block(
-              p,
-              "consistency-incorporated",
-              """## Инкорпорированные ownership/tooling rules
+          upsert_block(p, "consistency-incorporated", """## Инкорпорированные ownership/tooling rules
 
           Backend modules: `identity`, `pharmacy`, `catalog`, `assortment`, `inventory`, `sales`, `returns`, `reliability`, `audit`, `alerts`, `search`, `replenishment`. Не создаются отдельные top-level modules `import`, `receipt`, `adjustments`.
 
@@ -552,15 +452,11 @@ jobs:
           ```
 
           Machine-readable API contract: `backend/api/openapi.yaml`. Команда `pnpm api:generate` детерминированна; CI отклоняет ручные изменения generated output и npm/yarn lockfiles.
-          """,
-          )
+          """)
           set_meta(p, version="1.2", status="Draft")
 
           p = DOCS / "09-security-design.md"
-          upsert_block(
-              p,
-              "gate-e0-approved",
-              f"""## Утверждённый Gate E0 security baseline
+          upsert_block(p, "gate-e0-approved", f"""## Утверждённый Gate E0 security baseline
 
           {gate_e0_table}
 
@@ -583,15 +479,11 @@ jobs:
           ### ADMIN MFA/recovery
 
           Production ADMIN session требует TOTP MFA. Recovery codes хэшируются, одноразовые и показываются один раз. Operator-assisted reset требует two-person approval/audit; security questions запрещены.
-          """,
-          )
+          """)
           set_meta(p, version="1.2", status="Draft")
 
           p = DOCS / "10-sequence-diagrams.md"
-          upsert_block(
-              p,
-              "consistency-incorporated",
-              f"""## Канонические contracts для всех sequence diagrams
+          upsert_block(p, "consistency-incorporated", f"""## Канонические contracts для всех sequence diagrams
 
           Любая диаграмма, описывающая critical mutation, следует этому порядку:
 
@@ -610,8 +502,7 @@ jobs:
           {event_catalog}
 
           Assignment end изменяет `ended_at`, `ended_by_user_id`, `end_reason`; диаграммы не предполагают отдельный status/version field. Outbox write находится до idempotency completion/commit; worker lease/fencing выполняется post-commit.
-          """,
-          )
+          """)
           set_meta(p, version="1.2", status="Draft")
 
           p = DOCS / "11-development-roadmap.md"
@@ -647,10 +538,7 @@ jobs:
           set_meta(p, version="1.0", status="Draft")
 
           p = DOCS / "12-deployment.md"
-          upsert_block(
-              p,
-              "gate-e0-approved",
-              """## Утверждённый production/deployment baseline
+          upsert_block(p, "gate-e0-approved", """## Утверждённый production/deployment baseline
 
           ### Topology и trust
 
@@ -671,15 +559,11 @@ jobs:
           ### Retention execution
 
           Cleanup jobs удаляют expired sessions/idempotency/outbox/import/log artifacts по утверждённым срокам, учитывают legal hold, работают небольшими batch и экспортируют metrics. Audit/inventory/sales history не удаляется обычным runtime cleanup до истечения minimum 5-year policy или более длинного обязательного срока.
-          """,
-          )
+          """)
           set_meta(p, version="1.0", status="Draft")
 
           p = DOCS / "13-testing-strategy.md"
-          upsert_block(
-              p,
-              "consistency-regression",
-              """## Обязательная consistency/Gate E0 regression matrix
+          upsert_block(p, "consistency-regression", """## Обязательная consistency/Gate E0 regression matrix
 
           Automated suites должны доказать:
 
@@ -701,15 +585,11 @@ jobs:
           16. backup restore достигает RPO/RTO target на rehearsal dataset;
           17. customer-returned medicine не переходит в sellable stock;
           18. literal/column version-counter authorization mechanism отсутствует в schema, docs fixtures и migrations.
-          """,
-          )
+          """)
           set_meta(p, version="1.0", status="Draft")
 
           p = DOCS / "14-observability.md"
-          upsert_block(
-              p,
-              "consistency-incorporated",
-              """## Инкорпорированные observability contracts
+          upsert_block(p, "consistency-incorporated", """## Инкорпорированные observability contracts
 
           ### Event namespaces
 
@@ -733,72 +613,27 @@ jobs:
           ### Retention
 
           Application logs: 30 days hot + 180 days archive; traces 7 days; security metrics follow monitoring capacity policy; audit remains in authoritative storage minimum 5 years or longer under legal hold. Cleanup outcome и dropped/redacted fields наблюдаемы.
-          """,
-          )
+          """)
           set_meta(p, version="1.0", status="Draft")
 
-          for name in [
-              "04-architecture.md",
-              "04-01-backend-architecture.md",
-              "05-api-design.md",
-              "06-database-design.md",
-              "07-domain-model.md",
-              "08-project-structure.md",
-              "09-security-design.md",
-              "10-sequence-diagrams.md",
-              "11-development-roadmap.md",
-              "12-deployment.md",
-              "13-testing-strategy.md",
-              "14-observability.md",
-              "00-01-cross-document-consistency.md",
-          ]:
+          for name in ["04-architecture.md", "04-01-backend-architecture.md", "05-api-design.md", "06-database-design.md", "07-domain-model.md", "08-project-structure.md", "09-security-design.md", "10-sequence-diagrams.md", "11-development-roadmap.md", "12-deployment.md", "13-testing-strategy.md", "14-observability.md", "00-01-cross-document-consistency.md"]:
               normalize_active_docs(DOCS / name)
 
-          all_text = "\n".join(read(DOCS / n) for n in [
-              "04-architecture.md",
-              "04-01-backend-architecture.md",
-              "05-api-design.md",
-              "06-database-design.md",
-              "07-domain-model.md",
-              "08-project-structure.md",
-              "09-security-design.md",
-              "10-sequence-diagrams.md",
-              "11-development-roadmap.md",
-              "12-deployment.md",
-              "13-testing-strategy.md",
-              "14-observability.md",
-          ])
-          forbidden = [
-              "auth_version",
-              "SalePosted",
-              "ReturnPosted",
-              "sales.sale.posted",
-              "/api/v1/sales/{sale_id}/returns",
-              "READY_FOR_REVIEW",
-          ]
-          for token in forbidden:
+          all_text = "\n".join(read(DOCS / n) for n in ["04-architecture.md", "04-01-backend-architecture.md", "05-api-design.md", "06-database-design.md", "07-domain-model.md", "08-project-structure.md", "09-security-design.md", "10-sequence-diagrams.md", "11-development-roadmap.md", "12-deployment.md", "13-testing-strategy.md", "14-observability.md"])
+          for token in ["auth_version", "SalePosted", "ReturnPosted", "sales.sale.posted", "/api/v1/sales/{sale_id}/returns", "READY_FOR_REVIEW"]:
               if token in all_text:
                   raise RuntimeError(f"Forbidden stale token remains: {token}")
-
-          required = [
-              "outbox_events",
-              "pharmacy_assignments",
-              "PARTIALLY_REFUNDED",
-              "NO_PHYSICAL_RETURN",
-              "openapi-typescript",
-              "RPO ≤ 15 минут",
-              "Argon2id",
-          ]
-          for token in required:
+          for token in ["outbox_events", "pharmacy_assignments", "PARTIALLY_REFUNDED", "NO_PHYSICAL_RETURN", "openapi-typescript", "RPO ≤ 15 минут", "Argon2id"]:
               if token not in all_text:
                   raise RuntimeError(f"Required incorporated token missing: {token}")
           PY
 
           rm -f .github/workflows/incorporate-documentation.yml
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git diff --cached --check
           git commit -m "Incorporate consistency amendment and close Gate E0"
           git push origin HEAD:main
+
+# Trigger after workflow registration.
