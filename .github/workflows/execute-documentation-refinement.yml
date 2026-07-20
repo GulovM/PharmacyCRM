@@ -1,0 +1,35 @@
+name: Execute documentation refinement
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  refine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Execute corrected refinement script
+        shell: bash
+        run: |
+          sed -i "s/'## 7.3 version-counter авторизации'/'### 7.3 version-counter авторизации'/" .github/workflows/refine-documentation-incorporation.yml
+
+          awk '
+            /run: \|/ { capture=1; next }
+            capture {
+              if ($0 ~ /^          /) {
+                sub(/^          /, "")
+                print
+              }
+            }
+          ' .github/workflows/refine-documentation-incorporation.yml > /tmp/refine.sh
+
+          sed -i 's#rm -f .github/workflows/refine-documentation-incorporation.yml#rm -f .github/workflows/refine-documentation-incorporation.yml .github/workflows/execute-documentation-refinement.yml#' /tmp/refine.sh
+          bash /tmp/refine.sh
