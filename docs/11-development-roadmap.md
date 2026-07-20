@@ -1,728 +1,932 @@
 # PharmacyCRM — Development Roadmap
 
 **Статус документа:** Draft  
-**Версия:** 0.1  
+**Версия:** 0.2  
 **Дата:** 2026-07-20  
 **Связанные документы:** `01-product-vision.md`, `02-srs.md`, `03-system-context.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `05-api-design.md`, `06-database-design.md`, `07-domain-model.md`, `08-project-structure.md`, `09-security-design.md`, `10-sequence-diagrams.md`
 
 ## 1. Назначение и нормативная роль
 
-Документ определяет порядок реализации PharmacyCRM: этапы, зависимости, обязательные архитектурные и security gates, критерии завершения, правила допуска функций к следующему этапу и условия готовности MVP к production.
+Документ определяет исполнимый порядок реализации PharmacyCRM: критический путь, параллельные workstreams, зависимости, обязательные архитектурные и security gates, критерии входа и выхода, release blockers и условия допуска MVP к pilot и production.
 
-Roadmap не является календарным обещанием и не задаёт произвольные сроки. Он фиксирует порядок снижения рисков: сначала создаются инфраструктурные и архитектурные механизмы, от которых зависит корректность последующих функций, затем реализуются бизнес-сценарии, после чего выполняются hardening, эксплуатационная подготовка и production readiness.
+Roadmap не является календарным обещанием. Сроки, команда и фактическая скорость могут меняться, но изменение порядка, позволяющее реализовать зависимую функцию до доказанной готовности её correctness- и security-примитивов, требует явного пересмотра риска.
 
-Изменение продуктового scope синхронизируется с Product Vision и SRS. Изменение API, схемы данных, aggregate boundary, security control, transaction protocol или package ownership обновляет соответствующие нормативные документы в том же change set.
+Roadmap не заменяет:
 
-## 2. Принципы планирования
+- Product Vision и SRS — продуктовый scope и внешние требования;
+- API Design — HTTP-контракты;
+- Database Design — схему, constraints и migration strategy;
+- Domain Model — агрегаты, инварианты и transaction boundaries;
+- Project Structure — package ownership и физические границы;
+- Security Design — security controls;
+- Sequence Diagrams — порядок проверок, блокировок, commit, rollback и post-commit flow.
 
-### 2.1 Вертикальные срезы
+Изменение scope, этапа, gate, зависимости или release blocker обновляет этот документ в том же change set.
 
-Функции реализуются вертикальными срезами: migration, domain, application, repository, HTTP contract, authorization, audit, tests, frontend и документация должны сходиться в одном завершённом change set.
+## 2. Нормативные понятия
 
-Запрещено считать функцию готовой только потому, что:
+- **Stage / этап** — логическая группа capability, объединённая общим риском и gate.
+- **Entry criteria** — условия, без которых этап нельзя считать начатым.
+- **Exit gate** — проверяемые доказательства завершения этапа.
+- **Critical path** — последовательность capability, без которой невозможен безопасный pilot.
+- **Workstream** — непрерывное направление, выполняемое параллельно этапам.
+- **Vertical slice** — завершённый пользовательский или операционный сценарий от migration и domain до API, frontend, audit, tests и документации.
+- **Release blocker** — дефект или незакрытое условие, запрещающее выпуск.
+- **Evidence** — воспроизводимый тест, отчёт CI, migration rehearsal, restore drill, benchmark, security review или иной проверяемый артефакт.
 
-- создана таблица без use case;
-- создан handler без транзакционных инвариантов;
-- frontend отображает mock-данные;
-- happy path работает без authorization, idempotency, audit и негативных тестов;
-- код написан, но `05-api-design.md` не обновлён.
+Gate не закрывается устным утверждением или наличием кода без evidence.
 
-### 2.2 Risk-first порядок
+## 3. Принципы реализации
 
-Сначала реализуются механизмы, ошибка в которых способна скомпрометировать весь продукт:
+### 3.1 Vertical slice вместо горизонтальных слоёв
 
-1. конфигурация, startup validation и безопасный runtime;
-2. migrations и базовые ограничения БД;
-3. Unit of Work и transaction retry;
+Функция реализуется как единый change set или короткая серия совместимых change sets:
+
+1. нормативный contract;
+2. migration и constraints;
+3. domain/application rules;
+4. repository и Unit of Work;
+5. authorization и audit;
+6. HTTP endpoint;
+7. frontend workflow, если применимо;
+8. unit, integration, concurrency, contract, security и browser tests;
+9. logs, metrics и traces;
+10. документация.
+
+Не считаются завершёнными:
+
+- таблица без рабочего use case;
+- handler без application policy и transaction boundary;
+- mock-only frontend;
+- happy path без negative/race tests;
+- mutation без idempotency и audit, когда они обязательны;
+- endpoint, отсутствующий в `05-api-design.md`;
+- feature, которую невозможно безопасно наблюдать и диагностировать.
+
+### 3.2 Risk-first
+
+Сначала доказываются механизмы, ошибка в которых может повредить весь продукт:
+
+1. воспроизводимый runtime и CI;
+2. migrations и constraints;
+3. Unit of Work, retry и lock order;
 4. identity, sessions и authorization;
-5. idempotency и transactional audit;
-6. immutable inventory movements и lock order;
-7. только после этого — поступления, продажи, возвраты и корректировки.
+5. idempotency, transactional audit и outbox;
+6. immutable inventory truth;
+7. только затем — продажи, возвраты и корректировки.
 
-### 2.3 Без скрытого временного дизайна
+### 3.3 Security, testing и observability не являются финальными этапами
 
-Временное упрощение допустимо только если:
+Security review, тестирование, logging, metrics, tracing, deployment compatibility и documentation выполняются в каждом vertical slice. Поздний hardening только проверяет систему целиком и не компенсирует небезопасный дизайн ранних этапов.
 
-- оно явно отмечено;
-- не нарушает бизнес-инварианты;
-- имеет владельца и задачу удаления;
-- не создаёт второй несовместимый путь реализации;
-- не ослабляет security control без зарегистрированного security exception.
+### 3.4 Без скрытого временного дизайна
 
-### 2.4 Один источник истины
+Временное решение допустимо только если оно:
 
-- API-контракт — `05-api-design.md`;
-- схема и ограничения — `06-database-design.md` и migrations;
-- агрегаты и транзакции — `07-domain-model.md`;
-- package ownership — `08-project-structure.md`;
-- security controls — `09-security-design.md`;
-- порядок критических вызовов и locks — `10-sequence-diagrams.md`.
+- явно помечено;
+- имеет владельца и срок пересмотра;
+- не нарушает domain, security и data-integrity invariants;
+- не создаёт альтернативный несовместимый implementation path;
+- имеет automated guard от случайного production use, если не production-ready;
+- зарегистрировано как risk или security exception.
 
-Roadmap не дублирует детали этих документов, а определяет, когда они должны быть реализованы и проверены.
+### 3.5 Small-batch delivery
 
-## 3. Модель этапов и gates
+Change set должен быть достаточно мал, чтобы reviewer мог проверить:
 
-Каждый этап имеет:
+- transaction boundary;
+- authorization;
+- lock order;
+- idempotency;
+- audit;
+- API contract;
+- migration safety;
+- tests.
 
-- входные условия;
-- обязательный scope;
-- выходные артефакты;
-- quality gate;
-- запрещённые переходы.
+Большие изменения, скрывающие несколько независимых рисков, должны разбиваться.
 
-Переход к следующему этапу разрешён только после закрытия обязательных критериев текущего этапа. Незакрытые элементы могут переноситься только как явно зарегистрированный риск, если они не затрагивают correctness, security или data integrity.
+## 4. Модель выполнения roadmap
 
-## 4. Этап 0 — закрытие архитектурных решений
+Roadmap состоит из:
 
-### 4.1 Цель
+- критического пути `E0 → E1 → E2 → E3 → E4 → E5 → E6 → E7 → E8 → E9 → E10 → E11 → E12`;
+- параллельных workstreams `W1–W7`, выполняемых с первого этапа;
+- release gates `RG1–RG4`;
+- pilot gates `PG1–PG3`.
 
-Устранить открытые решения, которые способны вызвать несовместимые реализации в нескольких модулях.
+Этап может начаться частично, если его независимый scope не опирается на незакрытую зависимость. Его exit gate закрывается только полностью.
 
-### 4.2 Обязательные решения
+Например, frontend shell может развиваться на E1, но frontend продажи не могут считаться завершёнными до стабильного API, transaction semantics и backend contract E7.
 
-До массовой реализации должны быть приняты ADR или нормативные уточнения для:
+## 5. E0 — закрытие решений и baseline governance
 
-1. алгоритма password hashing и параметров rehash;
+### Цель
+
+Исключить параллельную реализацию несовместимых архитектурных решений.
+
+### Entry criteria
+
+- Product Vision, SRS и документы 03–10 доступны и не имеют неизвестного владельца;
+- открытые противоречия перечислены;
+- определён владелец архитектурных решений.
+
+### Обязательный scope
+
+Принять ADR или явно отложить с обоснованием:
+
+1. password hashing и rehash policy;
 2. access/refresh token model, JWT key rotation и session invalidation;
-3. MFA для `ADMIN` и recovery flow;
-4. окончательного lock order;
+3. MFA и recovery для `ADMIN`;
+4. окончательный lock order;
 5. transaction retry policy;
 6. transactional outbox и delivery semantics;
-7. политики возврата лекарств, включая `RETURN_TO_STOCK`;
-8. retention audit, security logs, sessions, imports и backup;
+7. юридическую policy возврата лекарств;
+8. retention audit, logs, sessions, imports и backups;
 9. frontend package manager и API client generation;
-10. deployment topology и trusted proxy model.
+10. deployment topology и trusted proxy model;
+11. RPO/RTO;
+12. release artifact и migration deployment model.
 
-### 4.3 Gate E0
+### Exit gate E0
 
-Этап завершён, когда:
+- каждое решение имеет status, owner и ссылку;
+- deferred decision не блокирует E1–E3;
+- документы 01–10 не содержат известных взаимоисключающих правил;
+- создан risk register;
+- определено, кто может принять остаточный риск.
 
-- у каждого открытого решения есть принятый ADR или явная deferred-позиция;
-- deferred-решение не блокирует корректную реализацию ближайшего этапа;
-- документы 01–10 не содержат взаимоисключающих правил;
-- список рисков имеет владельцев.
+### Запрещённый переход
 
-## 5. Этап 1 — engineering foundation
+Нельзя реализовывать production auth, Unit of Work, outbox или critical inventory mutation до утверждения соответствующего решения.
 
-### 5.1 Цель
+## 6. E1 — engineering foundation
 
-Создать воспроизводимую, безопасную и тестируемую основу двух независимых приложений `backend/` и `frontend/`.
+### Цель
 
-### 5.2 Backend foundation
+Создать воспроизводимую основу независимых приложений `backend/` и `frontend/`.
 
-Обязательный scope:
+### Backend scope
 
 - Go module и package layout согласно `08-project-structure.md`;
 - composition root;
-- `gin.New()` без default middleware;
-- явный `http.Server` с timeouts;
-- конфигурация через `envconfig`;
-- startup validation конфигурации;
-- Zap logger в terminal и file;
-- request ID, recovery, access logging и tracing middleware;
+- `gin.New()` и явная middleware composition;
+- явный `http.Server` с timeouts и graceful shutdown;
+- `envconfig` и startup validation;
+- Zap logging в terminal и file;
+- request ID, recovery, access log и tracing middleware;
 - централизованный HTTP response/error mapper;
-- graceful shutdown;
-- health и readiness endpoints;
 - PostgreSQL pool configuration;
-- migration runner или отдельная migration command;
-- test fixtures и test database lifecycle;
-- clock, ID generator и crypto ports.
+- health/readiness;
+- migration command;
+- clock, ID, crypto и transaction ports;
+- test database lifecycle.
 
-### 5.3 Frontend foundation
+### Frontend scope
 
-Обязательный scope:
-
-- независимое приложение в `frontend/`;
+- независимый `frontend/`;
 - утверждённый package manager и lockfile;
 - TypeScript strict mode;
 - routing, error boundary и application shell;
-- generated или строго типизированный API client;
+- типизированный/generated API client strategy;
 - единая обработка error envelope;
-- безопасная in-memory auth state;
-- базовые accessibility и browser test fixtures.
+- memory-only auth state contract;
+- browser test harness;
+- baseline accessibility checks.
 
-### 5.4 Repository и CI foundation
+### CI scope
 
-- форматирование и lint;
-- `go test ./...`;
-- `go vet ./...`;
-- frontend typecheck, lint и tests;
-- migration up/down verification;
+- formatting и lint;
+- `go test ./...` и `go vet ./...`;
+- frontend typecheck/lint/tests;
+- migration smoke test;
 - secret scanning;
 - dependency vulnerability scanning;
-- architecture checks для запрещённых imports;
-- проверка Markdown links и Mermaid syntax;
-- build контейнеров без production secrets.
+- architecture import checks;
+- Markdown link и Mermaid validation;
+- reproducible container build без production secrets.
 
-### 5.5 Gate E1
+### Exit gate E1
 
-- новый разработчик запускает окружение документированной командой;
-- приложение падает при небезопасной или неполной конфигурации;
-- health/readiness различают process alive и dependency ready;
-- graceful shutdown не обрывает активную транзакцию без контролируемого timeout;
-- CI воспроизводимо проходит на чистом checkout;
-- секреты отсутствуют в репозитории и build artifacts.
+- clean checkout запускается документированной командой;
+- неправильная конфигурация вызывает fail-fast startup;
+- health и readiness имеют различную семантику;
+- graceful shutdown ограничен timeout и протестирован;
+- CI проходит воспроизводимо;
+- backend и frontend не имеют source-level cross-root imports;
+- artifact не содержит секретов и локальных credentials.
 
-## 6. Этап 2 — database kernel и reliability primitives
+## 7. E2 — database kernel и reliability primitives
 
-### 6.1 Цель
+### Цель
 
-Реализовать механизмы, на которых будут строиться все критические бизнес-транзакции.
+Доказать транзакционные примитивы до появления критических бизнес-операций.
 
-### 6.2 Обязательный scope
+### Entry criteria
 
-- базовые identity, pharmacy, catalog, assortment, inventory, sales, returns, idempotency, audit и outbox migrations;
-- ULID/UUID policy согласно Database Design;
-- foreign keys, unique constraints и check constraints;
-- immutable movement/audit permissions;
-- repository base abstractions без generic CRUD над агрегатами;
-- Unit of Work на `pgx` без утечки `pgx.Tx` в application;
-- transaction retry classifier;
-- idempotency claim/complete/replay protocol;
+- E1 закрыт;
+- lock order, retry и outbox решения утверждены;
+- Database Design синхронизирован с Domain Model.
+
+### Scope
+
+- базовые migrations identity, pharmacy, catalog, assortment, inventory, sales, returns, idempotency, audit и outbox;
+- ID policy;
+- foreign keys, unique и check constraints;
+- runtime/migration DB roles;
+- append-only protection audit и movements;
+- Unit of Work без утечки `pgx.Tx` в application/domain;
+- retry classifier и bounded retry;
+- idempotency claim/complete/replay/conflict protocol;
 - transactional audit writer;
-- outbox writer и worker lease protocol;
+- outbox writer, lease, retry и dead-letter policy;
 - deterministic lock helpers;
-- migration/concurrency test harness.
+- migration, failure-injection и concurrency harness.
 
-### 6.3 Обязательные tests
+### Обязательные evidence
 
-- migration с нуля;
-- последовательное применение всех migrations;
-- проверка constraints;
+- migration from zero;
+- upgrade с предыдущей schema version;
 - rollback transaction function;
 - panic внутри UoW;
+- commit failure;
 - serialization/deadlock retry;
-- idempotency same payload replay;
-- idempotency different payload conflict;
-- audit failure вызывает rollback;
-- два worker-а не обрабатывают одну lease одновременно;
-- повтор outbox delivery не создаёт второй эффект.
+- same-key same-payload replay;
+- same-key different-payload conflict;
+- audit insert failure → rollback;
+- two-worker lease race;
+- duplicate outbox delivery без duplicate business effect;
+- runtime DB role не может изменять immutable rows штатным путём.
 
-### 6.4 Gate E2
+### Exit gate E2
 
-Нельзя начинать проведение продаж, пока не доказано, что:
-
-- UoW корректно commit/rollback-ит;
-- idempotency защищает от повторного эффекта;
-- audit является fail-closed для обязательных операций;
-- immutable records нельзя штатно изменить или удалить;
+- UoW гарантирует commit/rollback semantics;
 - retry повторяет всю transaction function;
-- lock order опубликован и проверяется concurrency tests.
+- idempotency выдерживает disconnect-after-commit;
+- обязательный audit fail-closed;
+- lock order опубликован и доказан race tests;
+- outbox допускает at-least-once delivery без повторного эффекта;
+- migration verification queries определены.
 
-## 7. Этап 3 — identity, authentication и authorization
+### Запрещённый переход
 
-### 7.1 Цель
+Нельзя проводить receipts, sales, returns, write-offs или adjustments до закрытия E2.
 
-Создать доверенный actor context и немедленно управляемый доступ к защищённым операциям.
+## 8. E3 — identity, authentication и authorization
 
-### 7.2 Scope
+### Цель
 
-- создание пользователя `ADMIN`-ом;
-- роли и role assignments;
+Создать доверенный actor context и управляемое прекращение доступа.
+
+### Scope
+
+- создание пользователя администратором;
 - user states `ACTIVE`, `BLOCKED`, `ARCHIVED`;
+- role assignments;
+- pharmacy assignments;
 - password hashing и transparent rehash;
-- login;
-- access token validation;
+- login и generic failure response;
+- signed access tokens;
 - server-side refresh sessions;
 - refresh rotation и reuse detection;
 - logout current/all sessions;
-- блокировка пользователя с отзывом sessions;
-- password change/reset с отзывом sessions;
-- pharmacy assignments;
-- отзыв assignment;
-- policy layer для RBAC + resource scope;
-- stale-sensitive revalidation внутри transactions;
-- MFA для `ADMIN` согласно принятому ADR;
+- password change/reset;
+- block/archive с отзывом sessions;
+- assignment revoke;
+- RBAC + resource scope policy layer;
+- stale-sensitive revalidation внутри transaction;
+- MFA/recovery для remote `ADMIN`;
 - audit и security events.
 
-### 7.3 Frontend
+### Frontend slice
 
-- login screen;
-- memory-only access token;
+- login;
 - refresh cookie flow;
-- logout и очистка sensitive state;
-- route guards только как UX, не как security boundary;
-- защита от stale responses после logout или смены actor generation;
-- session expiry handling.
+- access token только в памяти;
+- logout и purge sensitive state;
+- actor generation для защиты от stale responses;
+- session expiry handling;
+- route guards только как UX.
 
-### 7.4 Gate E3
+### Exit gate E3
 
-- cryptographically valid token заблокированного пользователя не даёт доступ;
-- отзыв assignment останавливает новые pharmacy-scoped mutations;
-- два параллельных refresh одного generation не завершаются успешно;
-- reuse отзывает session family;
-- role/profile mass assignment невозможен;
-- неизвестный пользователь и неверный пароль не различаются внешне;
-- security-critical flows покрыты integration и browser tests.
+- валидный JWT blocked user не даёт доступ;
+- role/assignment revoke прекращает новые scoped mutations согласно SLA;
+- два refresh одного generation не завершаются успешно;
+- reuse отзывает family;
+- unknown user и wrong password не различимы внешне;
+- mass assignment роли невозможен;
+- self-lockout и privilege escalation контролируются policy;
+- security-critical flow покрыт integration, race и browser tests.
 
-## 8. Этап 4 — pharmacy и global catalog
+## 9. E4 — pharmacy и global catalog
 
-### 8.1 Pharmacy management
+### Цель
 
-- создание, изменение разрешённых публичных полей, блокировка и архивирование аптеки;
-- проверка state аптеки во всех scoped operations;
-- адрес, координаты, телефон и график работы;
-- запрет физического удаления операционно значимой аптеки.
+Создать управляемые аптеки и модерируемый глобальный каталог.
 
-### 8.2 Global catalog
+### Scope
+
+Pharmacy:
+
+- create/update разрешённых полей;
+- block/archive;
+- geo, address, contacts, working hours;
+- state check во всех scoped operations;
+- отсутствие physical delete для значимой истории.
+
+Catalog:
 
 - `Product` и `ProductPresentation`;
-- штрихкоды и нормализованные значения;
-- создание и модерация глобальных карточек;
+- barcode и нормализованные значения;
+- moderation lifecycle;
 - staging import job;
 - quarantine storage;
-- streaming parser с лимитами;
+- streaming parser с limits;
 - validation findings;
-- approve/reject/merge moderation flow;
-- защита от formula injection в exports.
+- approve/reject/merge;
+- safe export и formula-injection protection.
 
-### 8.3 Gate E4
+### Exit gate E4
 
-- `PHARMACIST` не меняет global catalog напрямую;
+- `PHARMACIST` не редактирует global catalog напрямую;
 - import не публикует данные без moderation;
-- malformed row не приводит к скрытой частичной публикации;
-- дубликаты и уникальность защищены application + constraints;
-- public API не раскрывает staging и internal metadata.
+- malformed row не создаёт скрытый partial publish;
+- duplicate rules защищены application и constraints;
+- staging/internal metadata не попадает в public API;
+- import worker restart безопасен.
 
-## 9. Этап 5 — assortment и pricing
+## 10. E5 — assortment и pricing
 
-### 9.1 Scope
+### Цель
+
+Создать pharmacy-local продаваемую позицию и authoritative pricing rules.
+
+### Scope
 
 - `PharmacyProduct`;
-- включение/выключение позиции в ассортименте;
+- enable/disable assortment;
 - package и optional inner-unit price;
-- base units per package snapshot policy;
-- минимальный остаток;
-- правила продажи внутренними единицами;
-- optimistic concurrency для изменяемых настроек;
-- audit изменения цен и правил.
+- base-units-per-package policy;
+- minimum stock threshold;
+- inner-unit sale permission;
+- optimistic concurrency;
+- price/rule history и audit.
 
-### 9.2 Gate E5
+### Exit gate E5
 
-- цена не принимается как итоговая сумма продажи от frontend;
-- изменение текущей цены не переписывает исторические документы;
-- неизвестная или чужая pharmacy product скрывается как `NOT_FOUND`/`FORBIDDEN` согласно API policy;
-- concurrent update не приводит к silent lost update;
-- изменение цены покрыто audit и authorization tests.
+- frontend price не является authoritative total;
+- изменение цены не переписывает historical snapshots;
+- чужая pharmacy product недоступна;
+- concurrent update не создаёт silent lost update;
+- disabled product нельзя использовать в новой sale;
+- audit содержит actor, old/new safe values и reason, где требуется.
 
-## 10. Этап 6 — inventory intake и stock truth
+## 11. E6 — receipts и inventory truth
 
-### 10.1 Scope
+### Цель
+
+Создать первый полный inventory vertical slice и доказать stock truth.
+
+### Entry criteria
+
+- E2, E3, E4 и E5 закрыты;
+- receipt sequence согласована с `10-sequence-diagrams.md`.
+
+### Scope
 
 - draft/posted receipt lifecycle;
 - receipt lines и snapshots;
-- создание `StockLot`;
-- batch number и expiration date;
-- initial stock только через movement;
+- `StockLot`;
+- batch и expiration;
+- initial quantity только через movement;
 - immutable `InventoryMovement`;
-- stock balance update;
+- lot balance update;
 - idempotent posting;
-- reversal вместо изменения posted receipt;
-- inventory history read model.
+- reversal/compensation вместо изменения posted document;
+- inventory history read model;
+- pharmacist frontend workflow.
 
-### 10.2 Gate E6
+### Exit gate E6
 
-- lot quantity не становится отрицательной;
-- posted receipt нельзя редактировать или удалить;
-- receipt, lots, movements, audit и idempotency result атомарны;
-- повтор после network disconnect возвращает исходный result;
-- reversal создаёт компенсирующую историю;
-- concurrency tests подтверждают lock order.
+- quantity не становится отрицательной;
+- posted receipt нельзя update/delete;
+- receipt, lots, movements, audit, outbox и idempotency result атомарны;
+- network retry возвращает исходный result;
+- reversal расширяет историю, а не переписывает её;
+- concurrency tests подтверждают lock order;
+- reconciliation query восстанавливает balance из movements;
+- frontend завершает полный receipt workflow без ручного SQL.
 
-## 11. Этап 7 — sales и FEFO
+## 12. E7 — sales и FEFO
 
-### 11.1 Scope
+### Цель
 
-- создание и проведение продажи;
-- package/inner-unit quantities;
+Реализовать главный revenue и stock-decrement сценарий без нарушения остатков.
+
+### Scope
+
+- create/post sale;
+- package и inner-unit quantities;
 - server-side totals;
 - current assortment rules;
 - FEFO allocation;
-- exclusion expired/quarantined/depleted lots;
-- sale snapshots;
-- immutable sale allocations;
-- inventory decrement и movements;
-- idempotency, audit и outbox;
-- receipt/print-friendly read model без фискализации.
+- исключение expired/quarantined/depleted lots;
+- price и packaging snapshots;
+- immutable allocations;
+- decrement и SALE movements;
+- idempotency, audit, outbox;
+- receipt/print-friendly read model;
+- pharmacist frontend sale workflow.
 
-### 11.2 Gate E7
+### Exit gate E7
 
 - frontend не выбирает authoritative lot allocation;
-- две продажи не могут списать один остаток дважды;
-- после lock выполняется повторная проверка eligibility и quantity;
-- money и quantity overflow обрабатываются;
-- sale graph, lot balances, movements, audit и idempotency commit атомарно;
-- public availability обновляется через надёжный post-commit protocol.
+- две продажи не списывают один stock дважды;
+- eligibility и quantity перечитываются после lock;
+- money/quantity overflow безопасно отклоняется;
+- sale graph, balances, movements, audit, outbox и idempotency атомарны;
+- public projection обновляется надёжным post-commit protocol;
+- disconnect-after-commit не создаёт вторую sale;
+- end-to-end sale проходит от UI до immutable history.
 
-## 12. Этап 8 — returns, write-offs и adjustments
+### Release gate RG1 — internal inventory alpha
 
-### 12.1 Returns
+После E7 разрешён ограниченный internal alpha только если:
 
-Реализация начинается только после утверждения юридической policy.
+- receipts и sales reconciled;
+- нет P0;
+- backup/restore development rehearsal успешен;
+- audit и logs позволяют расследовать операцию;
+- данные не считаются production legal record.
 
-Scope:
+## 13. E8 — returns, write-offs, adjustments и reversals
 
-- возврат по исходной sale item/allocation;
-- контроль cumulative returned quantity;
+### Entry criteria
+
+- юридическая returns policy утверждена;
+- E7 закрыт;
+- elevated permissions определены.
+
+### Returns scope
+
+- return по original sale item/allocation;
+- cumulative returned quantity;
 - disposition;
-- `RETURN_TO_STOCK` только при разрешённой policy;
+- `RETURN_TO_STOCK` только по утверждённой policy;
 - non-restocking return;
-- компенсирующие movements;
-- idempotency и audit.
+- compensating movements;
+- idempotency, audit и concurrency control.
 
-### 12.2 Write-offs и adjustments
+### Write-off/adjustment scope
 
-- отдельные предметные документы;
-- обязательный reason;
-- allowlisted reason codes;
-- повышенное разрешение для рискованных корректировок;
+- отдельные domain commands и documents;
+- обязательный reason и allowlisted reason codes;
+- elevated permission для risky adjustments;
 - запрет generic `PATCH stock`;
-- reversal/compensation flow;
+- reversal/compensation;
 - anomaly metrics.
 
-### 12.3 Gate E8
+### Exit gate E8
 
-- return не переписывает sale;
-- cumulative returns не превышают исходное количество;
-- две конкурирующие returns не превышают allocation;
-- adjustment всегда оставляет документ, movement и audit;
-- reason нельзя обойти пустым или произвольным техническим значением;
-- административная роль не получает скрытый обход immutable history.
+- return не изменяет original sale;
+- cumulative returns не превышают allocation;
+- concurrent returns не превышают sold quantity;
+- adjustment всегда создаёт document, movement и audit;
+- reason validation нельзя обойти;
+- ADMIN не получает hidden bypass immutable history;
+- reconciliation остаётся точной после compensation flows.
 
-## 13. Этап 9 — public search, alerts и replenishment
+## 14. E9 — public search, alerts и replenishment
 
-### 13.1 Public search
+### Public search scope
 
 - public projection;
-- published catalog only;
-- active pharmacies only;
-- availability без точного внутреннего остатка;
+- published catalog и active pharmacies;
+- aggregated availability без internal quantity;
 - freshness timestamp;
 - safe geo sorting;
-- pagination, rate limiting, caching и ETag;
-- graceful degradation внешнего map provider.
+- pagination, rate limiting, caching, ETag;
+- graceful degradation map provider.
 
-### 13.2 Alerts
+### Alerts scope
 
 - low stock;
 - near expiry;
 - expired lot;
 - deduplication;
-- lifecycle acknowledgement/resolution;
-- идемпотентный worker.
+- acknowledge/resolve lifecycle;
+- idempotent worker.
 
-### 13.3 Replenishment
+### Replenishment scope
 
-- вычисляемая рекомендация;
-- отсутствие автоматического заказа поставщику;
-- объяснимые входные данные;
-- read model без изменения stock truth.
+- explainable recommendation;
+- no automatic supplier order;
+- read-model inputs;
+- отсутствие mutation stock truth.
 
-### 13.4 Gate E9
+### Exit gate E9
 
 - public projection не является command source;
-- internal quantities и purchase prices не раскрываются;
+- purchase prices и exact stock не раскрываются;
 - projection lag измеряется;
-- повтор worker event не создаёт дубликаты;
-- alert/replenishment failure не откатывает уже committed sale;
-- stale availability явно маркируется или исключается согласно policy.
+- duplicate event не создаёт duplicate alert;
+- projection/alert failure не откатывает committed sale;
+- stale availability маркируется или исключается по policy;
+- public API выдерживает abuse limits.
 
-## 14. Этап 10 — frontend operational workflows
+## 15. E10 — complete operational frontend
 
-Frontend развивается параллельно backend vertical slices, но этот этап закрывает целостный пользовательский workflow.
+Frontend развивается с E1 и каждым vertical slice. E10 закрывает целостность пользовательских journeys, а не начинает frontend-разработку.
 
-Обязательные сценарии:
+### Scope
 
-- admin: users, pharmacies, assignments, catalog moderation и audit;
-- pharmacist: assortment, receipt, lots, sale, return, write-off, adjustment, alerts;
-- public: search, filters, map/list и freshness;
-- robust loading/error/empty states;
-- keyboard navigation и базовая accessibility;
-- confirmation для необратимых действий;
-- prevention accidental duplicate submit;
-- session expiry и authorization changes;
-- client-side sensitive state purge;
-- browser E2E по ролям и ownership boundaries.
+- ADMIN: users, pharmacies, assignments, catalog moderation, sessions, audit;
+- PHARMACIST: assortment, receipt, lots, sale, return, write-off, adjustment, alerts;
+- PUBLIC/CLIENT: search, filters, map/list, freshness;
+- loading/error/empty/offline-degraded states;
+- keyboard navigation и accessibility;
+- confirmation risky operations;
+- duplicate-submit prevention;
+- session expiry и authorization change handling;
+- purge sensitive state;
+- role и ownership browser E2E.
 
-Gate E10:
+### Exit gate E10
 
-- frontend не содержит ручных расхождений с API contract;
-- все critical commands используют `Idempotency-Key`;
-- поздний response не восстанавливает очищенные credentials/state;
-- UI не показывает действие как успешно завершённое до подтверждённого server response;
-- ошибки локализуются по стабильному `error.code`.
+- API client не расходится с API Design;
+- critical commands используют `Idempotency-Key`;
+- stale response не восстанавливает очищенное состояние;
+- UI не показывает success до server confirmation;
+- stable `error.code` локализуется frontend;
+- every critical workflow имеет browser E2E;
+- frontend build не содержит secrets;
+- direct URL navigation не обходит backend authorization.
 
-## 15. Этап 11 — security, reliability и performance hardening
+### Release gate RG2 — pilot candidate
 
-### 15.1 Security hardening
+После E10 можно собирать pilot candidate при отсутствии P0 и наличии pilot deployment, testing и observability baseline.
 
-- threat model review;
-- MFA enforcement для remote ADMIN;
-- CORS, CSRF, CSP, HSTS и trusted proxies;
+## 16. E11 — system hardening
+
+E11 не добавляет обязательный MVP business scope. Он проверяет систему как единое целое.
+
+### Security hardening
+
+- threat-model review;
+- MFA enforcement remote ADMIN;
+- CORS, CSRF, CSP, HSTS, trusted proxies;
 - rate limits и abuse controls;
-- session/recovery adversarial tests;
-- secret/key rotation drill;
+- recovery/session adversarial tests;
+- secret и key rotation drill;
 - dependency/SBOM review;
-- privilege review PostgreSQL roles;
-- backup access review;
-- audit completeness review.
+- PostgreSQL privilege review;
+- audit completeness review;
+- backup access review.
 
-### 15.2 Reliability hardening
+### Reliability hardening
 
-- concurrency suite под нагрузкой;
-- worker crash/restart tests;
+- concurrency suite under load;
+- worker crash/restart;
 - outbox backlog recovery;
-- database connection exhaustion;
-- graceful shutdown during requests/jobs;
-- migration rollback/recovery rehearsal;
-- retry storm prevention;
-- clock skew and expiration boundaries.
+- DB connection exhaustion;
+- graceful shutdown during request/job;
+- migration recovery rehearsal;
+- retry-storm prevention;
+- clock skew и expiry boundaries;
+- disk-full/read-only dependency scenarios, где воспроизводимо.
 
-### 15.3 Performance baseline
+### Performance baseline
 
-Измеряются, но не оптимизируются вслепую:
+Измеряются:
 
-- login/password hashing capacity;
-- sale transaction latency;
+- password hashing capacity;
+- sale transaction p50/p95/p99;
 - FEFO query plan;
 - public search p50/p95/p99;
-- import throughput и memory usage;
-- outbox lag;
-- connection pool saturation;
-- critical table/index growth.
+- import throughput/memory;
+- outbox/projection lag;
+- pool saturation;
+- table/index growth;
+- frontend bundle и core workflow timings.
 
-### 15.4 Gate E11
+### Exit gate E11
 
-- отсутствуют открытые Critical/High security findings без утверждённого exception;
-- нагрузка не нарушает correctness;
+- нет Critical/High security findings без approved exception;
+- load не нарушает correctness;
 - retry не создаёт duplicate effect;
-- slow query plans исследованы;
-- RPO/RTO проверены restore drill;
-- security и reliability runbooks исполнимы.
+- slow queries имеют решение или accepted limit;
+- RPO/RTO подтверждены restore drill;
+- runbooks воспроизводимы другим инженером;
+- SLO baseline зафиксирован для production.
 
-## 16. Этап 12 — production readiness и pilot
+## 17. E12 — production readiness и pilot
 
-### 16.1 Production readiness
+### Production-readiness scope
 
-Обязательны:
-
-- `12-deployment.md`, `13-testing-strategy.md`, `14-observability.md` в актуальном состоянии;
-- production configuration matrix;
+- актуальные `12-deployment.md`, `13-testing-strategy.md`, `14-observability.md`;
+- environment/configuration matrix;
 - TLS и secret management;
-- backup/restore;
-- monitoring и alert routing;
-- incident response contacts;
-- migration deployment procedure;
+- backup/restore automation;
+- monitoring, alerts и routing;
+- incident contacts и escalation;
+- migration deploy procedure;
 - rollback/forward-fix policy;
-- audit retention;
-- privacy/data handling review;
-- юридическое подтверждение returns scope;
+- audit/data retention;
+- privacy/data-handling review;
 - inventory reconciliation procedure;
 - operator training;
-- release checklist.
+- release checklist;
+- disaster-recovery rehearsal;
+- support and ownership model.
 
-### 16.2 Pilot
+### Pilot preparation
 
-Pilot проводится на ограниченной аптеке и ограниченном числе сотрудников.
+- ограниченная pharmacy и user set;
+- verified initial catalog;
+- initial stock import через auditable operation;
+- reconciliation до go-live;
+- roles/assignments review;
+- backup до cutover;
+- support, rollback и incident flow rehearsed;
+- pilot success/failure criteria утверждены.
 
-Перед pilot:
+### Pilot metrics
 
-- загружен и проверен начальный каталог;
-- initial stock импортирован и reconciled;
-- роли и assignments проверены;
-- backup выполнен;
-- поддержка знает rollback и incident flow.
-
-Во время pilot измеряются:
-
-- расхождения остатков;
+- unexplained stock variance;
 - rejected/failed sales;
-- latency;
-- frequency adjustments;
+- adjustment frequency;
+- latency/error rate;
 - user errors;
-- alerts usefulness;
+- alert usefulness;
 - projection freshness;
-- security anomalies.
+- security anomalies;
+- support load;
+- restore/recovery incidents.
 
-### 16.3 Gate E12
+### Pilot gate PG1 — start
 
-MVP допускается к production только если:
+Pilot начинается только если:
 
-- все P0/P1 correctness и security defects закрыты;
-- inventory reconciliation не выявляет необъяснимых расхождений;
+- нет P0;
+- P1 имеют owner и не затрагивают correctness/security/data integrity;
 - restore drill успешен;
 - critical alerts доставляются;
-- rollback/forward-fix procedure проверена;
-- audit позволяет восстановить actor, action, target и result критической операции;
-- product owner принимает MVP scope;
-- ответственный за эксплуатацию принимает operational readiness.
+- reconciliation baseline равен ожидаемому;
+- release artifact immutable и проверен.
 
-## 17. Cross-cutting workstreams
+### Pilot gate PG2 — continue
 
-Следующие направления выполняются на каждом этапе, а не откладываются на конец.
+Pilot приостанавливается при:
 
-### 17.1 Documentation
+- необъяснимом stock divergence;
+- authorization bypass;
+- duplicate irreversible effect;
+- невозможности audit reconstruction;
+- backup/restore failure;
+- повторяемом critical workflow failure.
 
-Каждый HTTP feature обновляет `05-api-design.md` с URL, authorization, request, response, errors и side effects.
+### Pilot gate PG3 — production approval
 
-Изменение схемы, модели, структуры, security или последовательности синхронизирует соответствующий документ.
+Production разрешён только если:
 
-### 17.2 Testing
+- все P0/P1 correctness и security defects закрыты;
+- pilot завершён по утверждённым критериям;
+- inventory reconciliation не имеет необъяснимых расхождений;
+- restore и incident drills успешны;
+- audit восстанавливает actor, action, target, result и correlation;
+- Product Owner принимает scope;
+- Engineering/Security принимают технический риск;
+- Operations принимает эксплуатационную готовность.
 
-Для каждого use case обязательны:
+### Release gate RG3 — production release
 
-- domain unit tests;
-- application tests;
-- repository integration tests;
-- authorization negative tests;
-- idempotency tests для critical commands;
-- concurrency tests при shared mutable state;
-- API contract tests;
-- frontend/browser tests для пользовательского workflow.
+- tag/commit immutable;
+- deploy используется тот же artifact, что прошёл CI;
+- migration compatibility проверена;
+- release notes и rollback/forward-fix plan готовы;
+- backup и restore point подтверждены;
+- monitoring active до открытия traffic.
 
-### 17.3 Observability
+### Release gate RG4 — post-release verification
 
-Новая critical operation до merge определяет:
+После deployment проверяются:
 
-- structured log events;
-- audit event;
-- metrics;
-- trace boundaries;
-- alert condition, если failure требует реакции.
+- migration version;
+- readiness;
+- login/refresh;
+- role/assignment enforcement;
+- receipt/sale smoke paths в безопасном режиме;
+- outbox processing;
+- error/latency/DB metrics;
+- audit creation;
+- backup schedule.
 
-### 17.4 Security
+## 18. Параллельные workstreams
+
+### W1 — Documentation and architecture governance
+
+На каждом change set:
+
+- HTTP feature обновляет API Design;
+- schema меняет Database Design и migration docs;
+- aggregate/transaction меняет Domain Model и Sequence Diagrams;
+- auth/security меняет Security Design;
+- package ownership меняет Project Structure;
+- stage/gate/scope меняет Roadmap;
+- архитектурное решение оформляется ADR.
+
+### W2 — Testing
+
+Каждый use case получает применимые уровни:
+
+- domain unit;
+- application;
+- repository integration;
+- authorization negative;
+- idempotency;
+- concurrency;
+- API contract;
+- migration;
+- frontend/browser;
+- failure injection.
+
+Тесты добавляются вместе с feature, а не отдельной «фазой покрытия».
+
+### W3 — Security
 
 Security review обязателен при изменении:
 
-- auth/session;
+- auth/session/recovery;
 - role/assignment;
 - public/private boundary;
 - upload/export;
-- admin operations;
+- ADMIN operation;
 - audit;
-- secret/crypto;
-- infrastructure privileges.
+- crypto/secrets;
+- infrastructure privilege;
+- dependency execution path.
 
-### 17.5 Data migration
+### W4 — Observability
 
-Каждое изменение schema оценивает:
+Каждая critical operation до merge определяет:
 
-- backward compatibility;
-- lock duration;
-- table rewrite;
-- rollback или forward-fix;
+- structured logs;
+- audit event;
+- metrics;
+- trace boundary;
+- dashboard impact;
+- alert condition и owner, если failure требует реакции.
+
+### W5 — Deployment and migrations
+
+Каждое schema/runtime изменение оценивает:
+
+- backward/forward compatibility;
+- lock duration и table rewrite;
 - data backfill;
+- expand/migrate/contract sequence;
+- rollback или forward-fix;
 - verification query;
-- deployment order backend/frontend/migration.
+- backend/frontend/migration deployment order.
 
-## 18. Приоритет дефектов
+### W6 — Data quality and reconciliation
 
-### P0 — release blocker
+С E6 непрерывно поддерживаются:
 
-- потеря или незаметная порча inventory/financial history;
-- отрицательный остаток;
-- обход authorization или чужой pharmacy scope;
-- утечка credentials/secrets;
-- повторный необратимый эффект;
-- возможность изменения immutable records;
-- невозможность restore;
-- audit отсутствует для критической успешной операции.
+- balance-from-movements reconciliation;
+- orphan/duplicate detection;
+- invalid state transition checks;
+- projection-vs-source drift checks;
+- pilot discrepancy workflow.
 
-### P1 — обязательный до production
+### W7 — Product validation and usability
 
-- существенная race condition без подтверждённой потери данных;
-- неверный public availability;
-- недостаточный incident signal;
-- broken logout/session revocation SLA;
-- критический workflow недоступен без workaround;
-- недетерминированная migration/deployment процедура.
+Начиная с первых frontend slices:
 
-### P2 — допустим в pilot при владельце
-
-- UX defect с безопасным workaround;
-- некритичная performance degradation;
-- неполная аналитика;
-- cosmetic inconsistency.
-
-P0 и P1 нельзя переносить в production backlog без formal risk acceptance. P0 не допускает исключений.
+- workflow review с реальным pharmacist/admin;
+- terminology validation;
+- error-message clarity;
+- package/inner-unit usability;
+- accessibility;
+- pilot feedback без обхода quality gates.
 
 ## 19. Definition of Ready для feature
 
-Feature готова к реализации, когда:
+Feature допускается к реализации, когда:
 
-1. известны actor и business goal;
-2. определены роли и resource scope;
-3. API contract описан или подготовлен change;
-4. aggregate owner и transaction boundary определены;
-5. schema impact понятен;
-6. idempotency requirement определён;
-7. audit requirement определён;
-8. failure, retry и race scenarios перечислены;
-9. frontend contract понятен;
-10. acceptance criteria проверяемы;
-11. открытые юридические/security вопросы не блокируют реализацию.
+1. actor и business goal определены;
+2. role/resource/pharmacy scope определены;
+3. API contract описан или входит в change set;
+4. aggregate owner и transaction boundary известны;
+5. schema/migration impact понятен;
+6. idempotency scope и fingerprint определены;
+7. audit semantics определены;
+8. lock order и race scenarios перечислены;
+9. retry/partial-failure behaviour определено;
+10. frontend workflow и states понятны;
+11. observability requirements определены;
+12. acceptance criteria проверяемы;
+13. legal/security blockers отсутствуют или формально решены;
+14. зависимый stage gate закрыт.
 
 ## 20. Definition of Done для feature
 
 Feature завершена только если:
 
-1. внешнее поведение соответствует SRS и API Design;
-2. business invariants находятся в Domain/Application, а не только в handler;
-3. authorization проверяет актуальный actor и resource scope;
+1. соответствует SRS и API Design;
+2. business invariants находятся в Domain/Application;
+3. authorization revalidates актуальный actor и resource scope;
 4. critical mutation имеет idempotency;
-5. transaction boundary и lock order соответствуют Sequence Diagrams;
-6. обязательный audit атомарен с business effect;
-7. errors сравниваются через `errors.Is()`/`errors.As()` и централизованно отображаются;
-8. migration и constraints добавлены и протестированы;
-9. unit, integration, concurrency, contract и security tests проходят;
+5. transaction boundary и lock order согласованы;
+6. обязательный audit атомарен с effect;
+7. ошибки идентифицируются через `errors.Is()`/`errors.As()` и централизованно отображаются;
+8. migrations/constraints добавлены и протестированы;
+9. unit/integration/concurrency/contract/security/browser tests проходят по применимости;
 10. frontend не дублирует server authority;
-11. structured logs и metrics не содержат secrets;
-12. документация обновлена в том же change set;
-13. CI проходит на clean checkout;
-14. нет открытых P0/P1 defects в scope feature;
-15. rollback, retry и partial failure behaviour определены.
+11. logs/metrics/traces не содержат secrets;
+12. runbook/alert добавлены, если failure операционно значим;
+13. документация обновлена в том же change set;
+14. CI проходит на clean checkout;
+15. нет P0/P1 в scope;
+16. rollback/retry/partial failure проверены;
+17. migration и previous-version compatibility проверены;
+18. feature доступна только после готовности зависимостей.
 
-## 21. Release strategy
+## 21. Классификация дефектов
 
-Рекомендуется trunk-based или short-lived branch development с небольшими вертикальными change sets.
+### P0 — немедленный release blocker
 
-Правила release:
+- потеря или незаметная порча inventory/history;
+- отрицательный остаток;
+- authorization/scope bypass;
+- credential/secret disclosure;
+- duplicate irreversible effect;
+- изменение immutable records;
+- невозможность restore;
+- отсутствие обязательного audit;
+- remote code execution или критическая supply-chain compromise.
 
-- production release создаётся из immutable commit/tag;
-- container image подписывается или имеет проверяемый digest;
-- migration и application compatibility проверены заранее;
-- release не строится заново после approval;
-- deployment использует тот же artifact, который прошёл CI;
-- feature flags не обходят authorization и domain invariants;
-- rollback не откатывает schema небезопасным способом;
-- при необратимой migration используется forward-fix plan.
+P0 не допускает exception и останавливает pilot/production.
 
-## 22. Метрики прогресса
+### P1 — обязательный до production
 
-Прогресс не измеряется числом созданных файлов или endpoint-ов. Используются:
+- существенная race condition;
+- неверный public availability с бизнес-риском;
+- broken session revocation SLA;
+- отсутствующий critical incident signal;
+- critical workflow требует небезопасный workaround;
+- недетерминированная migration/deployment;
+- High security finding без compensating control.
 
-- завершённые vertical slices;
-- покрытые acceptance criteria;
-- количество закрытых gates;
-- число открытых P0/P1;
+### P2 — допустим только при owner и safe workaround
+
+- UX defect без риска данных;
+- некритичная performance degradation;
+- неполная аналитика;
+- cosmetic inconsistency.
+
+## 22. Release strategy
+
+- trunk-based или short-lived branches;
+- small vertical change sets;
+- immutable tag/commit;
+- signed image или проверяемый digest;
+- один artifact проходит CI и deployment;
+- release не rebuild-ится после approval;
+- feature flags не обходят authorization/domain rules;
+- schema rollback не выполняется, если способен повредить данные;
+- irreversible migration требует forward-fix plan;
+- production migration отделена от обычного application startup;
+- deploy не продолжает traffic rollout при failed verification.
+
+## 23. Метрики прогресса
+
+Прогресс измеряется не количеством файлов или endpoint-ов, а:
+
+- завершёнными vertical slices;
+- закрытыми stage/release gates;
+- acceptance criteria coverage;
+- количеством P0/P1;
 - migration reliability;
-- concurrency/security coverage;
-- lead time от Ready до Done;
+- concurrency/security evidence;
+- lead time Ready → Done;
 - escaped defects;
-- inventory reconciliation accuracy;
+- reconciliation accuracy;
 - outbox/projection lag;
-- production/pilot incident rate.
+- pilot incident rate;
+- restore success rate;
+- долей critical operations с полным observability contract.
 
-Coverage percentage не используется как самостоятельное доказательство качества.
+Code coverage percentage не является самостоятельным доказательством качества.
 
-## 23. Зависимости этапов
+## 24. Критический путь и допустимый параллелизм
 
 ```text
 E0 Decisions
     ↓
-E1 Engineering Foundation
+E1 Foundation
     ↓
-E2 Database & Reliability Kernel
+E2 Transaction & Reliability Kernel
     ↓
 E3 Identity & Authorization
     ↓
@@ -738,24 +942,43 @@ E8 Returns / Write-offs / Adjustments
     ↓
 E9 Search / Alerts / Replenishment
     ↓
-E10 Complete Frontend Workflows
+E10 Complete Operational Frontend
     ↓
-E11 Hardening
+E11 System Hardening
     ↓
-E12 Production Readiness & Pilot
+E12 Pilot & Production Readiness
 ```
 
-Параллельная работа допустима внутри этапа и над frontend vertical slice, если зависимые contracts уже стабильны. Нельзя параллельно реализовывать несовместимые версии UoW, auth, idempotency, audit или lock order.
+Параллельно со всеми этапами выполняются W1–W7.
 
-## 24. Открытые вопросы
+Допустим параллелизм:
+
+- frontend shell и test harness во время E1;
+- UI vertical slice после стабилизации конкретного API contract;
+- deployment/observability baseline начиная с E1;
+- public search projection infrastructure после outbox E2;
+- alerts/replenishment read models после inventory truth E6.
+
+Запрещён параллелизм несовместимых реализаций:
+
+- двух UoW;
+- двух auth/session models;
+- двух idempotency protocols;
+- разных lock orders для пересекающихся resources;
+- прямой event publish и outbox для одного critical event;
+- ручного frontend contract и generated contract без одного источника истины.
+
+## 25. Открытые вопросы
 
 1. Юридическая политика возврата лекарств.
-2. Итоговый набор security ADR из `09-security-design.md`.
-3. Transactional outbox и retry ADR.
-4. Deployment topology и окружения.
+2. Итоговый набор security ADR.
+3. Transactional outbox, retry и lock-order ADR.
+4. Deployment topology и environments.
 5. RPO/RTO и backup retention.
 6. Frontend package manager и API generation tool.
-7. Допустимый SLA public projection.
-8. Нужен ли dual approval для особо рискованных ADMIN operations.
-9. Pilot pharmacy и критерии выхода из pilot.
-10. Ownership production operations и incident commander role.
+7. SLA public projection.
+8. Dual approval для особо рискованных ADMIN operations.
+9. Pilot pharmacy и количественные exit criteria.
+10. Ownership production operations и incident commander.
+11. SLO для critical API и worker pipelines.
+12. Initial-stock import/cutover procedure.
