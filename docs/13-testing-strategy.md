@@ -1,188 +1,225 @@
 # PharmacyCRM — Testing Strategy
 
 **Статус документа:** Draft  
-**Версия:** 0.1  
+**Версия:** 0.2  
 **Дата:** 2026-07-20  
 **Связанные документы:** `02-srs.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `05-api-design.md`, `06-database-design.md`, `07-domain-model.md`, `08-project-structure.md`, `09-security-design.md`, `10-sequence-diagrams.md`, `11-development-roadmap.md`, `12-deployment.md`
 
 ## 1. Назначение и нормативная роль
 
-Документ определяет обязательную стратегию тестирования PharmacyCRM: уровни тестов, границы ответственности, тестовые окружения, правила работы с PostgreSQL, проверки контрактов, безопасности, конкурентности, миграций, frontend workflows, deployment и recovery.
+Документ определяет обязательную стратегию тестирования PharmacyCRM: test levels, test oracles, environments, PostgreSQL semantics, API compatibility, security, concurrency, migrations, workers, frontend workflows, deployment, backup и recovery.
 
-Testing Strategy является нормативной для backend, frontend, QA, security review, CI и release gates. Изменение transaction boundary, lock order, API contract, schema, authorization, idempotency, audit, worker protocol, deployment topology или recovery procedure должно синхронизировать соответствующие тесты и этот документ в том же change set.
+Testing Strategy нормативна для backend, frontend, QA, security review, CI и release gates. Изменение transaction boundary, lock order, API contract, schema, authorization, idempotency, audit, worker protocol, deployment topology или recovery procedure обязано синхронизировать тесты и этот документ в том же change set.
 
-Тесты не заменяют корректный дизайн. Однако feature не считается завершённой, пока её критические инварианты не подтверждены воспроизводимыми автоматическими проверками и, где требуется, rehearsal/runbook evidence.
+Feature не считается завершённой, пока её критические инварианты не подтверждены воспроизводимым evidence: автоматическим тестом, migration rehearsal, restore drill, security review или иным заранее определённым проверяемым артефактом.
 
-## 2. Цели тестирования
+## 2. Нормативные слова
+
+- **Должен / обязан / запрещено** — обязательное требование.
+- **Следует** — рекомендуемое требование; отклонение требует зафиксированного риска.
+- **Может** — допустимый вариант.
+
+## 3. Цели тестирования
 
 Тестирование должно доказывать, что система:
 
-1. сохраняет доменные инварианты при обычных и ошибочных сценариях;
+1. сохраняет доменные инварианты на success, failure, retry и race paths;
 2. не допускает обход authentication, authorization и pharmacy scope;
-3. не создаёт повторный необратимый эффект при retry/replay;
+3. не создаёт повторный необратимый эффект;
 4. корректно работает при конкурентных транзакциях;
-5. commit-ит или rollback-ит критические изменения атомарно;
+5. атомарно commit-ит или rollback-ит критические изменения;
 6. сохраняет immutable inventory и audit history;
-7. совместима с заявленной schema и worker protocol version;
-8. корректно переживает crash, restart, network failure и partial failure;
+7. совместима с заявленными API, schema и worker protocol versions;
+8. корректно переживает crash, restart, timeout, disconnect и partial failure;
 9. не раскрывает secrets, credentials и внутренние данные;
-10. предоставляет frontend стабильный HTTP-контракт;
-11. может быть развернута, восстановлена и проверена воспроизводимо;
+10. предоставляет frontend стабильный контракт;
+11. воспроизводимо deploy-ится и восстанавливается;
 12. остаётся наблюдаемой при отказах.
 
-## 3. Основные принципы
+## 4. Ключевые testing invariants
 
-### 3.1 Risk-based testing
+Следующие утверждения должны иметь автоматические test oracles:
 
-Глубина тестирования определяется не размером функции, а риском её ошибки.
+1. `stock_lot.quantity_base_units >= 0` после любой завершённой операции.
+2. Сумма подтверждённых inventory movements согласуется с materialized lot balance согласно утверждённой reconciliation formula.
+3. Одна idempotency identity создаёт не более одного business effect.
+4. Completed idempotency result никогда не существует без соответствующего committed effect.
+5. Обязательный audit event существует для каждой успешной critical mutation.
+6. Rollback не оставляет business rows, movements, audit, outbox или completed idempotency record.
+7. Sale allocations не превышают доступное количество lot.
+8. Cumulative returns не превышают исходные sale allocations.
+9. Revoked session, role или assignment не разрешает новую protected mutation.
+10. Outbox consumer может обрабатывать событие повторно без повторного business effect.
+11. Immutable records нельзя штатно UPDATE/DELETE runtime role-ю.
+12. Restore сохраняет inventory reconciliation и audit traceability.
 
-Наиболее строгая проверка обязательна для:
+Нельзя ограничиваться проверкой HTTP status. Критический integration test обязан проверять итоговое состояние всех затронутых таблиц и reconciliation oracle.
+
+## 5. Основные принципы
+
+### 5.1 Risk-based testing
+
+Глубина тестирования определяется риском, а не размером diff.
+
+Максимальная строгость обязательна для:
 
 - identity и sessions;
 - authorization и assignments;
 - Unit of Work;
 - idempotency;
 - transactional audit;
-- immutable inventory movements;
-- FEFO и stock allocation;
-- returns/write-offs/adjustments;
+- inventory movements;
+- FEFO allocation;
+- returns, write-offs и adjustments;
 - migrations;
 - outbox/workers;
 - backup/restore;
 - production configuration и secrets.
 
-### 3.2 Проверка поведения, а не реализации
+### 5.2 Поведение, а не private implementation
 
-Тест должен проверять внешний контракт или бизнес-инвариант. Он не должен быть хрупко привязан к внутренним private-функциям, SQL formatting или случайному порядку вызовов, если этот порядок не является нормативным.
+Тест проверяет внешний contract, state transition или invariant. Он не должен зависеть от private-функций, SQL formatting и случайного порядка вызовов.
 
-Исключение: lock order, transaction sequence, audit-before-commit и другие архитектурно значимые протоколы могут проверяться явно.
+Явно проверяются только нормативные протоколы: lock order, audit-before-commit, idempotency claim order, outbox atomicity и transaction retry boundary.
 
-### 3.3 Реальный PostgreSQL для persistence semantics
+### 5.3 Реальный PostgreSQL
 
-SQLite, in-memory map и mock SQL не являются доказательством корректности PostgreSQL-specific поведения.
+SQLite, in-memory map и SQL mock не доказывают PostgreSQL-specific semantics.
 
-Реальный PostgreSQL обязателен для проверки:
+Реальный PostgreSQL обязателен для:
 
 - constraints;
-- transaction isolation;
-- row locks;
-- `FOR UPDATE` / `SKIP LOCKED`;
+- isolation и visibility;
+- row/advisory locks;
+- `FOR UPDATE` и `SKIP LOCKED`;
 - deadlocks и serialization failures;
-- advisory locks;
-- migration behavior;
+- migrations;
 - query plans;
 - roles/permissions;
-- immutable table restrictions;
+- immutable restrictions;
 - backup/restore.
 
-### 3.4 Детерминированность
+Тестовая major version PostgreSQL должна совпадать с production baseline.
 
-Тесты не должны зависеть от случайных `sleep`, локальной timezone, порядка выполнения пакетов или реального wall clock.
+### 5.4 Детерминированность
+
+Тесты не должны зависеть от arbitrary `sleep`, wall clock, local timezone, package order или внешней сети.
 
 Используются:
 
-- fake/controlled clock;
-- deterministic ID generator, где это полезно;
-- explicit synchronization barriers для concurrency tests;
-- fixed seeds для property/fuzz tests, если failure нужно воспроизвести;
-- bounded polling с диагностикой вместо произвольного sleep.
+- controlled clock;
+- deterministic IDs, где требуется;
+- explicit barriers/channels;
+- fixed random seeds;
+- bounded polling с diagnostics;
+- explicit timeouts;
+- local controllable stubs.
 
-### 3.5 Fail-closed test environment
+### 5.5 Fail-closed environment
 
-Тестовое окружение должно завершаться ошибкой при:
+Test runner обязан завершиться ошибкой при:
 
-- подключении к production-like host без явного разрешения;
-- использовании production database name/credentials;
-- отсутствии isolation marker;
-- попытке destructive cleanup вне тестовой БД;
-- обнаружении real secrets или production PII в fixtures.
+- production-like host/database name без explicit allow flag;
+- production credentials или PII;
+- отсутствии test isolation marker;
+- destructive cleanup вне test database;
+- неконтролируемой внешней интеграции;
+- отсутствующем timeout для integration/concurrency test.
 
-## 4. Пирамида тестирования
+## 6. Test suite classes
 
-Используются следующие уровни:
-
-| Уровень | Основная цель | Скорость | Реальные зависимости |
+| Suite | Цель | Целевое время | Gate |
 |---|---|---:|---|
-| Domain unit | инварианты value objects и aggregates | высокая | нет |
-| Application unit/component | orchestration и policies | высокая | узкие fakes/ports |
-| Repository integration | SQL, mappings, constraints, locks | средняя | PostgreSQL |
-| Module integration | use case + UoW + repositories | средняя | PostgreSQL |
-| HTTP contract | routing, DTO, envelope, status codes | средняя | app + test server |
-| Concurrency | race/lock/retry correctness | ниже | PostgreSQL |
-| Security/adversarial | abuse и boundary failures | средняя/ниже | app + PostgreSQL/browser |
-| Frontend component | UI state и user interactions | высокая | mocked contract boundary |
-| Browser E2E | полный user workflow | ниже | frontend + backend + PostgreSQL |
-| Migration/deployment/recovery | эксплуатационная корректность | ниже | production-like environment |
-| Performance | latency/capacity без нарушения correctness | ниже | controlled environment |
+| Fast | domain, application, frontend unit | минуты | каждый PR |
+| Integration | PostgreSQL repositories, modules, HTTP contracts | минуты | каждый PR |
+| Critical concurrency | изменённые race/lock scenarios | минуты | каждый PR |
+| Full concurrency/security | полный набор adversarial scenarios | дольше | main/nightly |
+| Browser E2E | role-based workflows | дольше | main/release |
+| Migration/recovery | schema, deploy, restore | дольше | release candidate |
+| Performance/capacity | baseline и regression | контролируемо | scheduled/release |
 
-E2E не заменяет unit/integration tests. Unit tests не заменяют PostgreSQL concurrency и migration tests.
+Один и тот же critical regression не должен существовать только в nightly suite. Минимальный репродуктор обязан выполняться в PR gate.
 
-## 5. Backend domain tests
+## 7. Пирамида тестирования
 
-Domain tests проверяют:
+Уровни:
 
-- конструкторы создают только валидные сущности;
-- недопустимые state transitions отклоняются;
-- Money и quantity operations проверяют overflow;
-- package/inner-unit conversion корректна;
-- snapshots не изменяются задним числом;
-- posted document не редактируется как draft;
-- reversal создаёт компенсацию, а не переписывает историю;
-- cumulative return не превышает исходную allocation;
-- invalid reason/status/enum отклоняются;
-- ARCHIVED является терминальным состоянием, где это определено;
-- domain errors корректно распознаются через `errors.Is()`/`errors.As()`.
+1. Domain unit.
+2. Application component.
+3. Repository integration.
+4. Module integration.
+5. HTTP contract.
+6. Concurrency.
+7. Security/adversarial.
+8. Frontend component/contract.
+9. Browser E2E.
+10. Migration/deployment/recovery.
+11. Performance/capacity.
+
+E2E не заменяет lower-level tests. Unit tests не заменяют PostgreSQL tests.
+
+## 8. Domain tests
+
+Проверяются:
+
+- валидность constructors;
+- state transitions;
+- Money/quantity overflow;
+- package/base-unit conversion;
+- immutable snapshots;
+- posted document immutability;
+- reversal как компенсация;
+- cumulative return bounds;
+- enum/reason validation;
+- terminal states;
+- `errors.Is()`/`errors.As()` semantics.
 
 Domain tests не используют PostgreSQL, Gin, `pgx.Tx`, HTTP DTO или filesystem.
 
-## 6. Application tests
+## 9. Application tests
 
-Application tests проверяют orchestration:
+Проверяются:
 
-- authorization вызывается до business mutation;
-- stale-sensitive state повторно проверяется внутри transaction function;
-- UoW охватывает все обязательные writes;
-- audit записывается до commit;
-- idempotency claim/complete/replay protocol соблюдается;
-- post-commit side effects не выполняются до commit;
-- non-retryable errors не повторяются;
-- retryable transaction повторяется целиком;
-- cancellation/timeout приводят к rollback;
-- mapping domain/repository errors не зависит от строкового сравнения;
-- frontend-supplied price/lot/total не становится authoritative.
+- authorization до mutation;
+- stale-sensitive revalidation внутри transaction function;
+- корректная UoW boundary;
+- audit до commit;
+- idempotency claim/complete/replay;
+- отсутствие side effect до commit;
+- bounded full-transaction retry;
+- rollback при timeout/cancellation;
+- error classification без string matching;
+- server authority для price, total, lot и scope;
+- отсутствие success result при failed commit.
 
-Fakes должны моделировать только contract порта. Нельзя писать fake, который автоматически скрывает важные ошибки порядка вызовов или транзакций.
+Fake обязан поддерживать controlled error injection и не скрывать нарушение sequence.
 
-## 7. Repository integration tests
+## 10. Repository integration tests
 
-Каждый PostgreSQL adapter проверяется на реальной schema.
+Каждый PostgreSQL adapter проверяется на real schema и production-like role permissions.
 
 Обязательны:
 
-- create/read/update только разрешённых mutable entities;
-- nullable и enum mapping;
-- foreign key behavior;
-- unique/check constraints;
+- mapping nullable/enum/value types;
+- foreign keys, unique и check constraints;
 - not-found semantics;
-- optimistic version checks;
+- optimistic version;
 - deterministic ordering;
-- pagination/cursor correctness;
+- cursor pagination;
 - transaction visibility;
-- row lock behavior;
-- immutable history restrictions;
-- runtime role permissions;
-- query cancellation и timeout handling;
-- PostgreSQL errors преобразуются в стабильные repository/domain errors.
+- lock behavior;
+- query cancellation/timeouts;
+- immutable restrictions;
+- stable error translation;
+- absence of unauthorized generic update/delete methods.
 
-Тест не должен напрямую утверждать driver error как внешний application error.
+Driver errors не выходят как application/public errors.
 
-## 8. Module integration tests
+## 11. Module integration tests
 
-Module integration test запускает реальный use case с настоящими UoW и repositories.
+Для каждой critical command минимум проверяются:
 
-Для каждой критической команды проверяются минимум:
-
-1. success path;
+1. success;
 2. validation failure;
 3. unauthenticated actor;
 4. wrong role;
@@ -194,582 +231,560 @@ Module integration test запускает реальный use case с наст
 10. audit failure;
 11. repository failure до commit;
 12. commit/retry failure;
-13. network-style client retry после успешного commit;
-14. отсутствие partial writes после rollback.
+13. disconnect-after-commit replay;
+14. absence of partial writes;
+15. reconciliation oracle.
 
-После теста проверяется не только response, но и состояние всех затронутых таблиц: business records, movements, audit, idempotency и outbox.
+После выполнения проверяются business rows, movements, audit, idempotency, outbox и materialized balances.
 
-## 9. HTTP contract tests
-
-HTTP contract tests должны подтверждать `05-api-design.md`.
+## 12. HTTP contract tests
 
 Проверяются:
 
-- method и URL;
-- authentication requirement;
-- authorization result;
-- request DTO;
+- method/URL;
+- authentication/authorization;
+- strict DTO;
 - unknown fields;
-- malformed JSON;
-- multiple JSON objects;
-- unsupported content type/accept;
+- malformed/multiple JSON objects;
+- content negotiation;
 - body/header/query/path limits;
-- success envelope;
-- error envelope;
+- success/error envelopes;
 - stable `error.code`;
-- `meta.request_id`;
+- request ID;
 - pagination;
-- `Idempotency-Key` semantics;
-- cache headers;
-- `401` vs `403` vs concealment `404` policy;
-- no internal SQL/stack/constraint leakage;
-- `Cache-Control: no-store` для auth/admin/sensitive responses;
-- CORS/preflight behavior;
-- security headers, где они принадлежат приложению.
+- idempotency headers;
+- cache/security headers;
+- `401/403/404` concealment policy;
+- отсутствие SQL/stack/constraint leakage;
+- CORS и preflight;
+- compatibility с frontend client.
 
-Backend contract и frontend generated/typed client должны проверяться на расхождение автоматически.
+### 12.1 API compatibility
 
-## 10. Authentication и session tests
+Для каждого breaking-risk change CI обязан сравнить current contract с предыдущей поддерживаемой version.
 
-Обязательные сценарии:
+Проверяются:
 
-- неизвестный login и неверный password имеют одинаковый внешний ответ;
-- password hash verification использует dummy path для отсутствующего user;
-- blocked/archived user не создаёт session;
-- login success невозможен без сохранённых session и audit;
-- access token проверяет signature, algorithm, issuer, audience, expiry, nbf и claims format;
-- неизвестный `kid` отклоняется;
-- refresh token хранится только как hash;
-- refresh rotation одноразова;
-- два параллельных refresh одного generation не успешны одновременно;
-- reuse отзывает всю token family;
-- expired/revoked session отклоняется;
-- logout current/all sessions работает атомарно;
-- password reset/change отзывает требуемые sessions;
-- JWT key rotation принимает допустимый overlap и отклоняет retired key после policy window;
-- ADMIN MFA и recovery codes проверяются согласно ADR;
-- refresh/logout CSRF protection работает;
-- cookie flags соответствуют environment policy.
+- удалённые/переименованные поля;
+- изменение type/nullability;
+- новые required fields;
+- удалённые enum values;
+- изменённые status/error codes;
+- изменённая authorization/side-effect semantics.
 
-## 11. Authorization tests
+Новый backend должен пройти smoke с текущим frontend artifact, а новый frontend — с поддерживаемой backend version в пределах deployment compatibility window.
 
-Authorization matrix должна быть машинно проверяемой.
+## 13. Authentication и sessions
 
-Для каждого protected use case проверяются:
+Обязательны:
 
-- разрешённая роль и scope;
-- каждая запрещённая роль;
-- ресурс другой аптеки;
-- отсутствующий assignment;
-- revoked assignment;
+- indistinguishable invalid login response;
+- dummy password verification path;
+- inactive user login rejection;
+- session+audit atomicity;
+- JWT signature/algorithm/issuer/audience/expiry/nbf/claims;
+- unknown `kid` rejection;
+- hashed refresh storage;
+- one-time rotation;
+- concurrent refresh exclusion;
+- family revoke on reuse;
+- logout current/all;
+- password change/reset revocation;
+- key rotation overlap/retirement;
+- ADMIN MFA/recovery;
+- CSRF protection;
+- cookie flags;
+- clock skew boundaries.
+
+## 14. Authorization matrix
+
+Для каждого protected use case машинно проверяются:
+
+- allowed role/scope;
+- каждая denied role;
+- other-pharmacy resource;
+- missing/revoked assignment;
 - inactive pharmacy;
 - blocked/archived actor;
 - self-target restrictions;
 - last-admin protection;
-- replay после отзыва доступа;
-- role/assignment revoked между предварительной проверкой и mutation;
+- replay after revoke;
+- revoke between precheck and mutation;
 - forged resource ID;
-- mass assignment попытка через неизвестные/запрещённые поля.
+- mass assignment attempt.
 
-Frontend route guards не считаются authorization test.
+Frontend guards не являются security test.
 
-## 12. Idempotency tests
+## 15. Idempotency tests
 
-Для каждой критической mutation обязательны:
+Для каждой critical mutation:
 
-- новый key выполняет effect один раз;
-- тот же key + тот же semantic payload возвращает исходный safe result;
-- тот же key + другой payload возвращает conflict;
-- JSON key order и transport-only поля не меняют fingerprint;
-- effective pharmacy/resource scope входит в fingerprint;
+- new key → один effect;
+- same key/same payload → original safe result;
+- same key/different payload → conflict;
+- JSON key order не меняет fingerprint;
+- scope/path/version входят в fingerprint;
 - actor/operation/scope разделяют namespace;
-- concurrent requests с одним key не выполняют effect дважды;
-- rollback не оставляет ложный completed result;
-- disconnect после commit безопасно восстанавливается replay-ом;
-- replay повторно проверяет текущую authorization;
-- retention/expiry idempotency record соответствует policy;
-- sensitive result snapshot не раскрывается другому actor.
+- concurrent same-key requests не дублируют effect;
+- rollback не оставляет completed record;
+- disconnect after commit восстанавливается replay;
+- replay revalidates authorization;
+- retention semantics проверены;
+- result недоступен другому actor;
+- idempotency storage failure вызывает rollback.
 
-## 13. Concurrency tests
+## 16. Concurrency tests
 
-Concurrency tests используют explicit barriers/channels и реальный PostgreSQL.
+Concurrency tests используют real PostgreSQL, independent connections и explicit synchronization.
 
 Минимальный набор:
 
-- две продажи конкурируют за один lot;
-- продажа и write-off конкурируют за один lot;
-- два возврата конкурируют за одну sale allocation;
-- два refresh используют один token generation;
-- два assignment create конкурируют за unique active assignment;
-- два worker-а claim-ят одну outbox job;
-- два migration processes конкурируют за migration lock;
-- stale worker с истёкшим lease не может завершить job после нового owner;
-- simultaneous price updates не создают lost update;
-- block/revoke конкурирует с protected mutation;
-- deadlock/serialization retry не создаёт duplicate effect;
-- deterministic lock order предотвращает известные циклы.
+- sale vs sale за один lot;
+- sale vs write-off;
+- return vs return за одну allocation;
+- concurrent refresh generation;
+- concurrent active assignment create;
+- two workers claim one job;
+- concurrent migration lock;
+- stale lease/fencing owner;
+- price lost update;
+- block/revoke vs protected mutation;
+- retry after deadlock/serialization;
+- lock-order cycle prevention.
 
-Тест обязан иметь bounded timeout и диагностировать зависшие goroutines, locks и SQL queries.
+Каждый тест обязан иметь bounded timeout и diagnostics:
 
-## 14. Inventory, sales и returns tests
+- goroutine stack dump;
+- `pg_stat_activity` snapshot;
+- blocking/blocked PID;
+- SQL state;
+- transaction attempt number;
+- relevant request/idempotency IDs.
 
-### 14.1 Receipts
+Тест, который только редко воспроизводит race через цикл и `sleep`, недостаточен.
 
-- initial stock создаётся только через movement;
-- receipt, lines, lots, movements, audit и idempotency атомарны;
-- posted receipt immutable;
-- reversal создаёт compensating movements;
-- malformed quantity/expiration/batch отклоняется;
-- network retry не удваивает stock.
+## 17. Inventory, sales и returns
 
-### 14.2 Sales
+### 17.1 Receipts
 
-- FEFO выбирает earliest eligible expiration;
-- expired/quarantined/depleted lot исключается;
-- quantity пересчитывается в base units;
-- server рассчитывает total;
-- price snapshot сохраняется;
-- stock не становится отрицательным;
-- allocations и movements immutable;
-- concurrent sale не oversell-ит;
-- overflow money/quantity отклоняется;
-- outbox event создаётся в той же transaction.
+- initial stock только через movement;
+- receipt/lots/movements/audit/idempotency atomicity;
+- posted immutability;
+- compensating reversal;
+- quantity/expiration/batch validation;
+- network retry не удваивает stock;
+- reconciliation после receipt/reversal.
 
-### 14.3 Returns
+### 17.2 Sales
 
-- return привязан к исходной sale allocation;
-- cumulative quantity не превышает sold quantity;
-- disposition применяется согласно legal policy;
-- RETURN_TO_STOCK создаёт допустимый lot/movement;
-- non-restocking return не увеличивает stock;
-- concurrent returns не превышают allocation;
-- return не изменяет original sale history.
+- FEFO deterministic ordering;
+- expired/quarantined/depleted exclusion;
+- base-unit conversion;
+- server total;
+- price/presentation snapshots;
+- no negative stock;
+- immutable allocations/movements;
+- no oversell;
+- overflow rejection;
+- transactional outbox;
+- reconciliation после sale.
 
-### 14.4 Adjustments/write-offs
+### 17.3 Returns
 
-- generic stock patch отсутствует;
-- reason обязателен и валидируется;
-- elevated permission применяется;
-- document + movement + audit атомарны;
-- negative resulting balance запрещён;
-- reversal не удаляет историю.
+- original allocation linkage;
+- cumulative bound;
+- legal disposition policy;
+- safe RETURN_TO_STOCK lot/movement;
+- non-restocking does not increase stock;
+- concurrent return bound;
+- original sale immutable;
+- reconciliation после return.
 
-## 15. Worker и outbox tests
+### 17.4 Adjustments/write-offs
+
+- no generic stock patch;
+- mandatory allowlisted reason;
+- elevated permission;
+- document+movement+audit atomicity;
+- non-negative result;
+- compensation instead of deletion;
+- anomaly metric emission.
+
+## 18. Worker и outbox
 
 Проверяются:
 
-- outbox write атомарен с business transaction;
-- worker claim использует lease/lock protocol;
-- at-least-once delivery не создаёт duplicate projection/effect;
-- crash до side effect допускает retry;
-- crash после side effect до mark-processed не создаёт duplicate effect;
-- lease expiry позволяет recovery;
-- stale fencing token отклоняется;
-- bounded retry и backoff работают;
-- poison event переходит в dead-letter/failed state;
-- manual replay audit-ится;
-- worker shutdown не claim-ит новую работу;
-- protocol version mismatch блокирует readiness/processing;
-- projection lag и backlog измеримы.
+- outbox atomicity;
+- lease/lock protocol;
+- duplicate delivery safety;
+- crash before side effect;
+- crash after side effect before acknowledge;
+- lease expiry recovery;
+- stale fencing rejection;
+- bounded retry/backoff;
+- poison event dead-letter;
+- audited manual replay;
+- graceful shutdown;
+- protocol mismatch readiness failure;
+- backlog/lag metrics;
+- worker version compatibility during rolling deployment.
 
-## 16. Migration tests
+## 19. Migration tests
 
 Каждая migration проверяется:
 
-1. на пустой database;
-2. в последовательности со всеми предыдущими migrations;
-3. на production-like volume/data shape, если есть риск lock/rewrite;
-4. на совместимость с old и new application version в expand/migrate/contract window;
-5. на повторный безопасный запуск, где это применимо;
+1. на пустой БД;
+2. во всей chain;
+3. на representative data volume;
+4. с old/new application compatibility;
+5. на безопасный retry, где применимо;
 6. verification queries;
-7. rollback или forward-fix rehearsal;
-8. runtime role permissions после применения;
-9. schema version/readiness compatibility;
-10. отсутствие silent data truncation/overflow.
+7. rollback/forward-fix rehearsal;
+8. runtime role permissions;
+9. readiness compatibility;
+10. отсутствие truncation/overflow;
+11. duplicate/dirty input handling при backfill;
+12. cancellation и restart semantics.
 
-Для destructive/large migrations дополнительно измеряются:
+Для large/destructive migrations измеряются lock duration, WAL, disk, backfill rate и abort threshold.
 
-- lock duration;
-- WAL growth;
-- disk growth;
-- backfill rate;
-- cancellation behavior;
-- abort threshold;
-- recovery procedure.
+Contract migration нельзя merge-ить, пока telemetry/evidence не подтверждает отсутствие старых consumers.
 
-`down` migration не считается обязательной, если она небезопасна; в этом случае тестируется forward-fix plan.
+## 20. Frontend testing
 
-## 17. Frontend tests
+### 20.1 Component
 
-### 17.1 Unit/component
+- form/state behavior;
+- loading/empty/error/success;
+- error-code localization;
+- duplicate submit prevention;
+- accessibility/keyboard;
+- dangerous action confirmation;
+- sensitive state cleanup;
+- stale response generation guard;
+- server authority preservation.
+
+### 20.2 Contract integration
+
+- typed DTO compatibility;
+- envelopes;
+- refresh behavior;
+- idempotency key generation/persistence per logical submit;
+- pagination;
+- cancellation;
+- unknown response fields;
+- breaking contract detection.
+
+### 20.3 Browser E2E
+
+Role-based workflows:
+
+- ADMIN users/pharmacies/assignments/catalog;
+- PHARMACIST assortment/receipt/sale/return/adjustment;
+- public search/map/freshness;
+- forbidden cross-pharmacy access;
+- session expiry/logout;
+- late response after logout;
+- duplicate click/retry;
+- page reload during command outcome uncertainty.
+
+External map/provider uses controllable stub or graceful fallback.
+
+## 21. Security и adversarial tests
 
 Проверяются:
 
-- rendering states;
-- form validation;
-- stable error-code mapping;
-- loading/empty/error/success states;
-- duplicate submit prevention;
-- accessibility basics;
-- keyboard navigation;
-- confirmation опасных действий;
-- state cleanup при logout/session expiry;
-- stale response не восстанавливает очищенные sensitive данные;
-- prices/lots/totals не становятся frontend authority.
-
-### 17.2 Contract integration
-
-Frontend API layer проверяет:
-
-- generated/typed DTO compatibility;
-- envelopes;
-- auth refresh behavior;
-- `Idempotency-Key` для critical commands;
-- pagination/cursors;
-- cancellation через `AbortController` или generation guard;
-- unknown response fields не ломают клиента;
-- incompatible breaking contract обнаруживается в CI.
-
-### 17.3 Browser E2E
-
-Минимальные role-based workflows:
-
-- ADMIN login, user/pharmacy/assignment management;
-- PHARMACIST login и pharmacy scope;
-- catalog moderation;
-- assortment/pricing;
-- receipt → lot → inventory history;
-- sale → FEFO decrement;
-- permitted return/write-off/adjustment;
-- logout/session expiry;
-- public search list/map/freshness;
-- forbidden cross-pharmacy access;
-- late response после logout;
-- duplicate click/retry.
-
-E2E использует synthetic data и не зависит от внешней map service availability без controllable stub/fallback.
-
-## 18. Security и adversarial tests
-
-Обязательны проверки:
-
-- malformed/oversized requests;
-- unknown JSON fields;
-- path/query/header injection;
-- SQL injection payloads;
-- XSS payloads в catalog/import/user-controlled fields;
-- CSV formula injection;
-- path traversal filename;
+- malformed/oversized input;
+- unknown fields;
+- injection payloads;
+- XSS/CSV formula injection;
+- path traversal;
 - MIME/magic-byte mismatch;
-- decompression/row-count limits;
-- CORS origin reflection;
-- CSRF для cookie-auth endpoints;
-- spoofed forwarded headers вне trusted proxy;
-- auth header/cookie/log redaction;
-- rate limit bypass attempts;
+- archive/decompression limits;
+- CORS reflection;
+- CSRF;
+- spoofed proxy headers;
+- secret/log redaction;
+- rate-limit bypass;
 - user enumeration;
-- token algorithm confusion;
+- JWT algorithm confusion;
 - session fixation/reuse;
-- IDOR/cross-pharmacy access;
-- public endpoint data leakage;
-- admin self-escalation/last-admin removal;
-- secret scanning и dependency vulnerability checks.
+- IDOR;
+- public data leakage;
+- admin escalation/last-admin;
+- dependency/secret scans.
 
-Security findings Critical/High блокируют release без утверждённого исключения; P0 исключений не допускает.
+Critical/High findings блокируют release без approved exception; P0 exceptions запрещены.
 
-## 19. Property-based и fuzz testing
+## 22. Fault injection и resilience tests
 
-Fuzz/property tests применяются для:
+Для critical paths обязателен контролируемый fault injection:
 
-- JSON decoding и strict DTO validation;
-- IDs, barcodes, dosage/product names;
-- Money/quantity arithmetic;
-- package/base-unit conversion;
-- cursor parsing;
-- semantic fingerprint canonicalization;
-- import parsers;
-- HTTP error mapper;
-- date/time boundaries;
-- token parsing.
+- DB connection drop до commit;
+- ambiguous client disconnect после commit;
+- commit error;
+- audit insert failure;
+- outbox insert failure;
+- worker crash в каждой значимой фазе;
+- storage unavailable during import;
+- PostgreSQL restart;
+- pool exhaustion;
+- disk/volume near-full signal;
+- telemetry backend unavailable.
 
-Любой найденный crash, panic, invariant violation или resource exhaustion превращается в regression test.
+Fault injection не должен выполняться против production. Результат обязан подтверждать rollback, retry, replay или безопасную degradation semantics.
 
-## 20. Performance и capacity tests
+## 23. Property-based и fuzz testing
 
-Performance tests выполняются после фиксации correctness baseline.
+Применяется для DTO/JSON, IDs, barcode/name normalization, Money/quantity, conversion, cursors, fingerprint canonicalization, import parsers, error mapper, dates и token parsing.
 
-Измеряются:
+Crash, panic, invariant violation или resource exhaustion превращается в deterministic regression test. Seed и corpus сохраняются.
 
-- password hashing throughput;
-- login/refresh latency;
-- sale transaction p50/p95/p99;
-- FEFO query plan и lock wait;
-- public search latency;
-- import throughput и memory;
-- outbox lag;
-- pool saturation;
-- DB CPU/IO/WAL;
-- backup/restore duration;
-- frontend bundle/load performance.
+## 24. Performance и capacity
 
-Нагрузочный тест обязан одновременно проверять correctness counters: отрицательный stock, duplicate effect, потерянный audit, failed idempotency и projection divergence.
+Измеряются login/refresh, sale latency, FEFO plans/locks, search, imports, outbox lag, pool saturation, DB CPU/IO/WAL, backup/restore и frontend performance.
 
-Оптимизация, нарушающая инварианты, считается failed test независимо от latency.
+Нагрузочный тест одновременно проверяет correctness oracles:
 
-## 21. Recovery и deployment tests
+- no negative stock;
+- no duplicate effect;
+- complete audit;
+- idempotency consistency;
+- projection reconciliation;
+- bounded lock wait/retry rate.
+
+Хорошая latency при нарушении invariant означает failed test.
+
+## 25. Recovery и deployment
 
 До pilot/production проверяются:
 
-- clean environment deployment;
-- staging deployment тем же image digest;
-- readiness при несовместимой schema;
+- clean deployment;
+- same digest staging/production path;
+- incompatible schema readiness failure;
 - worker protocol mismatch;
-- graceful API shutdown во время request/transaction;
-- worker shutdown во время lease;
-- migration failure и stop-rollout;
-- application rollback при совместимой schema;
-- forward-fix при необратимой migration;
+- graceful shutdown API/worker;
+- migration failure stops rollout;
+- compatible app rollback;
+- forward-fix;
 - PostgreSQL restart;
-- connection exhaustion;
-- outbox backlog recovery;
-- backup creation/freshness;
-- restore в изолированное окружение;
-- inventory reconciliation после restore;
-- audit completeness после restore;
+- backlog recovery;
+- backup freshness/integrity;
+- isolated restore;
+- inventory reconciliation;
+- audit traceability;
 - initial catalog/stock cutover rehearsal;
-- post-deploy smoke suite.
+- post-deploy smoke;
+- mixed-version compatibility window.
 
-## 22. Test data strategy
+## 26. Test data strategy
 
-Тестовые данные должны быть:
+Данные synthetic, reproducible, minimal but realistic, isolated и явно scoped к actor/pharmacy.
 
-- synthetic;
-- минимальными, но доменно реалистичными;
-- независимыми между tests;
-- reproducible;
-- без production credentials/PII;
-- явно привязанными к pharmacy/actor scope.
+Builders выражают бизнес-намерение. Generic fixtures, обходящие constraints, запрещены, кроме corruption/migration tests.
 
-Используются builders/factories, выражающие бизнес-намерение, а не необозримые generic fixtures.
+Production data допускаются только в отдельно утверждённом anonymization process. Простое маскирование нескольких полей не считается достаточным.
 
-Fixtures не должны обходить constraints прямыми небезопасными inserts, кроме специально маркированных corruption/migration tests.
-
-Для дат истечения используется controlled clock. Для денежных значений — целые dirams. Для quantities — base units.
-
-## 23. Isolation и cleanup
-
-Предпочтительные стратегии:
-
-- отдельная ephemeral database/schema на test process;
-- transaction rollback для тестов, которым не нужны concurrent connections;
-- explicit truncate/reset между integration cases;
-- unique IDs/namespaces для parallel tests.
-
-Transaction-wrapped test нельзя использовать для concurrency behavior, которое требует нескольких независимых connections и реального commit visibility.
-
-Cleanup failure должна падать тестом, а не скрываться.
-
-## 24. Моки, fakes и test doubles
+## 27. Isolation и cleanup
 
 Допустимы:
 
-- fake clock;
-- fake ID generator;
-- fake crypto/token generator для application unit tests;
-- HTTP stub внешнего map/object storage provider;
-- in-memory publisher только для post-commit boundary tests.
+- ephemeral database per process;
+- schema/database namespace per suite;
+- rollback для single-connection tests;
+- explicit reset/truncate;
+- unique IDs для parallel tests.
 
-Не допускается использовать mock вместо реального PostgreSQL для доказательства:
+Concurrency tests не оборачиваются одной внешней transaction. Cleanup failure падает тестом. Parallel tests обязаны иметь documented resource ownership.
 
-- UoW;
-- locks;
-- constraints;
-- idempotency concurrency;
-- outbox claim;
-- migrations;
-- role permissions.
+## 28. Test doubles
 
-Test double обязан поддерживать error injection для rollback/failure-path tests.
+Допустимы fake clock/IDs/crypto, controlled HTTP provider stub и in-memory publisher для narrow unit boundary.
 
-## 25. CI test suites
+Mock не заменяет PostgreSQL для UoW, locks, constraints, idempotency concurrency, outbox claim, migrations и roles.
 
-### 25.1 Pull request gate
+Все важные ports должны поддерживать deterministic error injection.
 
-На каждый PR выполняются:
+## 29. CI gates
 
-- formatting/lint;
-- backend unit/application tests;
-- frontend unit/component tests;
-- repository/module integration tests;
-- HTTP contract tests;
-- relevant migration tests;
-- relevant concurrency/security regression tests;
-- architecture checks;
-- secret/dependency scans;
-- Markdown links и Mermaid syntax.
+### 29.1 PR
 
-### 25.2 Main/nightly gate
+- format/lint/static checks;
+- backend/frontend fast tests;
+- PostgreSQL integration;
+- HTTP contracts;
+- relevant migrations;
+- changed critical concurrency/security regressions;
+- architecture/docs checks;
+- secret/dependency scans.
 
-Дополнительно:
+### 29.2 Main/nightly
 
-- полный concurrency suite;
-- fuzz corpus;
+- full concurrency;
 - race detector;
+- fuzz corpus;
 - browser E2E;
 - full migration chain;
-- query plan regression checks;
+- query-plan regression;
 - worker crash/recovery;
-- extended security tests;
-- performance smoke baseline.
+- extended security;
+- performance smoke;
+- reconciliation suite.
 
-### 25.3 Release candidate gate
+### 29.3 Release candidate
 
-Обязательны:
-
-- все PR/main suites;
+- all suites;
 - production-like migration rehearsal;
-- deployment/rollback/forward-fix rehearsal;
-- restore drill в пределах утверждённого RTO;
-- inventory reconciliation;
+- deployment/rollback/forward-fix;
+- restore drill within RTO;
+- reconciliation;
 - post-deploy smoke;
 - security review;
-- performance/capacity baseline;
-- отсутствие открытых P0/P1 blockers.
+- capacity baseline;
+- no P0/P1 blockers.
 
-## 26. Flaky tests
+## 30. Failure evidence
 
-Flaky test является defect, а не нормой.
+При падении integration/concurrency/E2E test CI сохраняет:
 
-Правила:
+- commit SHA и test seed;
+- relevant logs with request/trace IDs;
+- DB schema version;
+- PostgreSQL version;
+- sanitized `pg_stat_activity`/lock snapshot;
+- browser screenshot/trace, где применимо;
+- migration output;
+- test data identifiers;
+- retry attempt information.
 
-1. test нельзя бесконечно rerun-ить до зелёного результата;
-2. известный flaky test получает owner и root-cause task;
-3. quarantine допускается только временно и не для P0/P1 correctness/security coverage;
-4. quarantine сохраняет visibility и не превращается в silent skip;
-5. причина nondeterminism устраняется через synchronization, fake clock, isolation или environment control;
-6. flaky rate измеряется.
+Evidence не должно содержать secrets или raw credentials.
 
-## 27. Coverage и mutation testing
+## 31. Flaky tests
 
-Line/branch coverage используется как диагностический показатель, а не как доказательство качества.
+Flaky test — defect.
 
-Обязательные бизнес-инварианты и failure paths должны иметь явные tests независимо от общего процента.
+- infinite rerun запрещён;
+- flaky test имеет owner/root-cause task;
+- quarantine временная и visible;
+- P0/P1 coverage не quarantine-ится;
+- flaky rate измеряется;
+- release suite не считается green из-за случайного успешного rerun.
 
-Mutation testing рекомендуется для:
+Тест возвращается из quarantine только после доказанного deterministic fix.
 
-- Money/quantity rules;
-- authorization policies;
-- FEFO eligibility;
-- idempotency fingerprint;
-- status transitions;
-- error mapping.
+## 32. Coverage и mutation testing
 
-Выжившая mutation в критическом инварианте означает недостаточную test suite.
+Coverage — diagnostic, не доказательство.
 
-## 28. Test evidence и traceability
+Mutation testing особенно важно для Money/quantity, authorization, FEFO, fingerprint, transitions и error mapping.
 
-Для каждого critical feature должна существовать связь:
+Выжившая mutation в critical invariant означает test gap и блокирует закрытие соответствующего gate.
+
+## 33. Traceability
+
+Для critical feature должна существовать связь:
 
 ```text
 SRS requirement
   → API/domain/database rule
   → sequence/failure scenario
-  → automated test(s)
-  → CI/release gate
+  → test case ID
+  → CI/release evidence
 ```
 
-Release evidence хранит:
+Test case IDs или machine-readable metadata должны позволять найти проверку требования без поиска по всему repository.
 
-- commit/image digest;
-- test suite versions;
-- migration result;
-- security scan result;
-- performance baseline;
-- restore/reconciliation result;
-- known accepted risks;
-- owner approval.
+Release evidence содержит commit/digest, suite versions, migration result, security result, performance baseline, restore/reconciliation result и accepted risks.
 
-Скриншот зелёного CI без идентифицируемого commit не является достаточным evidence.
-
-## 29. Definition of Ready для тестирования feature
+## 34. Definition of Ready
 
 Feature готова к тестированию, когда:
 
 1. acceptance criteria определены;
-2. actor, role и pharmacy scope известны;
+2. actor/role/scope известны;
 3. API contract определён;
-4. transaction boundary и lock order определены;
+4. transaction/lock order определены;
 5. idempotency/audit requirements определены;
 6. failure/retry/race scenarios перечислены;
-7. schema/migration impact понятен;
-8. test data и environment requirements известны;
+7. migration impact понятен;
+8. test data/environment известны;
 9. observability signals определены;
-10. юридические/security blockers закрыты или явно отмечены.
+10. test oracle для critical invariants определён;
+11. blockers закрыты или явно отмечены.
 
-## 30. Definition of Done для тестирования feature
+## 35. Definition of Done
 
-Testing для feature завершён только если:
+Testing завершён, если:
 
 1. domain/application behavior покрыто;
-2. persistence проверена на реальном PostgreSQL;
-3. HTTP contract проверен;
-4. authorization matrix включает negative cases;
-5. critical mutation имеет idempotency tests;
-6. shared mutable state имеет concurrency tests;
-7. audit failure и rollback path проверены;
-8. migration/constraint changes протестированы;
-9. frontend workflow и stale-state behavior проверены;
-10. security/adversarial cases проверены;
-11. logs/responses не раскрывают secrets/internal data;
-12. CI suites стабильны;
-13. regression test добавлен для каждого исправленного critical defect;
-14. документация синхронизирована;
-15. нет открытых P0/P1 test gaps.
+2. persistence проверена на real PostgreSQL;
+3. HTTP и version compatibility проверены;
+4. authorization matrix включает negative/race cases;
+5. idempotency проверена;
+6. shared state имеет deterministic concurrency tests;
+7. audit failure/rollback проверены;
+8. migrations/constraints проверены;
+9. frontend workflow/stale state проверены;
+10. security/fault-injection cases проверены;
+11. reconciliation oracle проходит;
+12. logs/responses не раскрывают secrets;
+13. CI стабильна;
+14. critical defects имеют regression tests;
+15. failure evidence доступно;
+16. documentation синхронизирована;
+17. нет P0/P1 test gaps.
 
-## 31. Минимальная матрица по типу изменения
+## 36. Минимальная матрица изменений
 
 | Изменение | Обязательные тесты |
 |---|---|
-| Domain rule | domain unit + application regression |
-| HTTP endpoint | contract + auth + error envelope + frontend client |
-| DB schema | migration + constraint + compatibility + verification query |
-| Critical command | integration + idempotency + audit rollback + concurrency |
-| Auth/session | adversarial + concurrent refresh + browser state cleanup |
-| Worker/outbox | lease + crash + duplicate delivery + protocol version |
-| Frontend workflow | component + contract + browser E2E |
-| Deployment config | startup validation + readiness + smoke |
-| Backup/recovery | restore drill + reconciliation + audit verification |
-| Performance change | benchmark/load + correctness assertions |
+| Domain rule | unit + application regression + property where useful |
+| HTTP endpoint | contract + auth + envelope + client compatibility |
+| DB schema | migration + constraints + compatibility + verification |
+| Critical command | integration + idempotency + audit rollback + concurrency + reconciliation |
+| Auth/session | adversarial + concurrent refresh + browser cleanup |
+| Worker/outbox | lease + crash + duplicate + fencing + protocol version |
+| Frontend workflow | component + contract + E2E + stale response |
+| Deployment config | startup validation + readiness + smoke + rollback |
+| Backup/recovery | restore + reconciliation + audit verification |
+| Performance | load + correctness oracle + resource limits |
 
-## 32. Запрещённые практики
+## 37. Запрещённые практики
 
 Запрещено:
 
 - считать happy path достаточным;
-- заменять PostgreSQL SQLite/mock-ом для транзакционных гарантий;
-- использовать arbitrary sleep как основной synchronization mechanism;
-- отключать failing critical test без risk record;
-- утверждать correctness только coverage percentage;
-- тестировать authorization только через frontend;
-- хранить real credentials/PII в fixtures;
-- делать tests зависимыми от порядка запуска;
-- использовать shared mutable global state без reset;
-- игнорировать goroutine leaks и hanging transactions;
-- проверять errors через string matching, когда доступен `errors.Is()`/`errors.As()`;
-- выполнять destructive test cleanup без environment guard;
-- запускать release при неизвестном migration/restore результате.
+- заменять PostgreSQL mock/SQLite;
+- использовать arbitrary sleep для synchronization;
+- отключать critical test без risk record;
+- доказывать correctness coverage percentage;
+- тестировать authorization только UI-ем;
+- хранить real credentials/PII;
+- зависеть от test order;
+- использовать shared mutable globals без reset;
+- игнорировать goroutine/transaction leaks;
+- сравнивать errors по тексту;
+- destructive cleanup без guard;
+- release при ambiguous migration/restore result;
+- скрывать flaky test автоматическим бесконечным rerun;
+- использовать success HTTP status как единственный oracle critical mutation.
 
-## 33. Открытые решения
+## 38. Открытые решения
 
 До production необходимо утвердить:
 
-1. backend test libraries и assertion style;
-2. frontend test runner и browser E2E framework;
-3. test database provisioning strategy в CI;
-4. property/fuzz corpus storage;
-5. mutation testing tooling и частоту;
-6. performance environment и baseline SLO;
-7. security scanning/DAST tooling;
-8. production-like migration dataset strategy;
+1. backend test/assertion libraries;
+2. frontend test runner и E2E framework;
+3. CI PostgreSQL provisioning;
+4. fuzz corpus storage;
+5. mutation tooling/frequency;
+6. performance environment и SLO;
+7. DAST tooling;
+8. production-like migration dataset;
 9. restore drill frequency;
-10. ownership flaky test triage и release evidence.
+10. flaky triage ownership;
+11. test case traceability format;
+12. failure evidence retention;
+13. anonymization process;
+14. reconciliation oracle implementation;
+15. chaos/fault injection tooling.
