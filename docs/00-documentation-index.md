@@ -1,7 +1,7 @@
 # PharmacyCRM — Documentation Index
 
 **Статус документа:** Active  
-**Версия:** 2.0  
+**Версия:** 2.1  
 **Дата:** 2026-07-20
 
 ## 1. Назначение
@@ -43,16 +43,22 @@
 | 11 | `11-development-roadmap.md` | risk-first этапы реализации, зависимости, quality gates и Definition of Done | Draft |
 | 12 | `12-deployment.md` | окружения, Docker, volumes, migrations, release, backup, recovery и production operations | Draft |
 | 13 | `13-testing-strategy.md` | уровни тестирования, PostgreSQL integration, concurrency, security, contract, migration, recovery и release gates | Draft |
+| 14 | `14-observability.md` | Zap logging, audit correlation, metrics, tracing, SLI/SLO, alerts, dashboards и incident evidence | Draft |
 
-## 4. Планируемые документы
+## 4. Статус основного комплекта
 
-Следующая рекомендуемая последовательность:
+Основной проектный комплект документов `00–14` создан. Новые верхнеуровневые документы добавляются только при появлении отдельной нормативной области, которую нельзя корректно включить в существующие документы.
 
-| № | Планируемый документ | Назначение |
-|---:|---|---|
-| 14 | `14-observability.md` | Zap, log schema, ротация, tracing, metrics и alerting |
+Дальнейшая работа с документацией состоит из:
 
-Номер зарезервирован даже до создания файла, чтобы новые документы не нарушали принятую последовательность.
+- финального cross-document review;
+- устранения противоречий и открытых вопросов;
+- принятия обязательных ADR;
+- перевода зрелых документов из `Draft` в утверждённый статус;
+- синхронизации документов с реализацией в каждом change set;
+- создания узких runbooks, policies и amendments по мере необходимости.
+
+Новый файл не создаётся только ради переноса раздела из существующего документа.
 
 ## 5. ADR
 
@@ -81,12 +87,13 @@ ADR после принятия не переписывается так, буд
 4. `00` зарезервирован для индекса и документационного governance.
 5. ADR сохраняют собственную четырёхзначную нумерацию внутри `docs/adr`.
 6. Переименование файла обязательно сопровождается обновлением всех ссылок.
+7. Runbooks и operational policies размещаются в соответствующей deployment/operations структуре и не обязаны становиться новыми основными документами.
 
 ## 7. Definition of Done для документации
 
 Изменение считается документированным только если:
 
-1. затронутые SRS, Architecture, API, Domain Model, Project Structure, Security Design, Sequence Diagrams, Development Roadmap, Deployment, Testing Strategy и Database Design не противоречат друг другу;
+1. затронутые SRS, Architecture, API, Domain Model, Project Structure, Security Design, Sequence Diagrams, Development Roadmap, Deployment, Testing Strategy, Observability и Database Design не противоречат друг другу;
 2. все ссылки используют актуальные пути;
 3. новый верхнеуровневый файл имеет номер;
 4. статус и версия документа обновлены;
@@ -103,25 +110,28 @@ ADR после принятия не переписывается так, буд
 15. изменение MVP scope, зависимостей этапов, release gate, Definition of Ready/Done или приоритета P0/P1 синхронизирует `11-development-roadmap.md`;
 16. изменение topology, ports, volumes, runtime configuration, migration order, readiness, release, rollback, backup или restore синхронизирует `12-deployment.md`;
 17. изменение acceptance criteria, authorization matrix, persistence behavior, concurrency protocol, contract, migration, security, frontend workflow, performance baseline или recovery procedure синхронизирует `13-testing-strategy.md` и соответствующие automated suites;
-18. архитектурно значимое решение оформлено ADR;
-19. примеры кода и диаграммы не противоречат принятым ADR и текущему стеку.
+18. изменение log/audit schema, metrics, labels, traces, SLI/SLO, alerts, dashboards, retention, redaction или incident evidence синхронизирует `14-observability.md`;
+19. архитектурно значимое решение оформлено ADR;
+20. примеры кода и диаграммы не противоречат принятым ADR и текущему стеку.
 
 ## 8. Известные задачи синхронизации
 
-Перед началом массовой реализации необходимо:
+Перед массовой реализацией и production rollout необходимо:
 
 1. определить нормативные правила возврата лекарств после юридической проверки;
-2. создать observability документ до production-ready реализации;
-3. принять security ADR, перечисленные в `09-security-design.md`, до завершения соответствующих механизмов;
-4. разрешить открытые вопросы lock order, transactional outbox и retry policy из `10-sequence-diagrams.md`;
-5. закрыть Gate E0 из `11-development-roadmap.md` до массовой реализации зависимых механизмов;
-6. утвердить deployment ADR/policies, перечисленные в `12-deployment.md`, до production rollout;
-7. утвердить testing tooling и CI/release policies, перечисленные в `13-testing-strategy.md`;
-8. при создании первых migrations сверить их с `06-database-design.md` версии 1.1 и добавить migration/concurrency tests;
+2. принять security ADR, перечисленные в `09-security-design.md`, до завершения соответствующих механизмов;
+3. разрешить открытые вопросы lock order, transactional outbox и retry policy из `10-sequence-diagrams.md`;
+4. закрыть Gate E0 из `11-development-roadmap.md` до массовой реализации зависимых механизмов;
+5. утвердить deployment ADR/policies, перечисленные в `12-deployment.md`, до production rollout;
+6. утвердить testing tooling и CI/release policies, перечисленные в `13-testing-strategy.md`;
+7. утвердить observability tooling, SLO, retention, alert routing и ownership из `14-observability.md`;
+8. при создании первых migrations сверить их с `06-database-design.md` и добавить migration/concurrency tests;
 9. внедрить автоматические architecture checks для package/import boundaries и запрета cross-root source imports;
-10. утвердить frontend package manager, API client generation flow и ownership browser E2E tests.
+10. утвердить frontend package manager, API client generation flow и ownership browser E2E tests;
+11. выполнить финальный cross-document review и сформировать единый список ADR/open decisions;
+12. после review обновить статусы документов, готовых к утверждению.
 
-Задачи создания `05-api-design.md`, интеграции возвратного amendment, добавления identity/assignments/sessions/idempotency/audit в Database Design, создания `07-domain-model.md`, фиксации независимых application roots, синхронизации backend architecture с Project Structure, создания Security Design, фиксации критических sequence diagrams, создания Development Roadmap, Deployment Design и Testing Strategy закрыты.
+Задачи создания `05-api-design.md`, интеграции возвратного amendment, добавления identity/assignments/sessions/idempotency/audit в Database Design, создания `07-domain-model.md`, фиксации независимых application roots, синхронизации backend architecture с Project Structure, создания Security Design, фиксации критических sequence diagrams, создания Development Roadmap, Deployment Design, Testing Strategy и Observability закрыты.
 
 ## 9. Правило сопровождения
 
@@ -136,6 +146,7 @@ ADR после принятия не переписывается так, буд
 - согласованность этапов, gates, Definition of Ready/Done и release blockers;
 - согласованность deployment topology, ports, volumes, configuration, migrations, release и recovery;
 - согласованность test levels, authorization matrix, concurrency, migration, contract, security и release evidence;
+- согласованность logs, audit, metrics, traces, SLI/SLO, alerts, dashboards и retention;
 - согласованность backend module ownership и package layout;
 - согласованность authentication, authorization, sessions, secrets и audit controls;
 - независимость `backend/` и `frontend/`;
