@@ -1,8 +1,8 @@
 # PharmacyCRM — Documentation Index
 
 **Статус документа:** Active  
-**Версия:** 1.6  
-**Дата:** 2026-07-17
+**Версия:** 1.7  
+**Дата:** 2026-07-20
 
 ## 1. Назначение
 
@@ -39,6 +39,7 @@
 | 07 | `07-domain-model.md` | bounded contexts, агрегаты, сущности, value objects, состояния, события и транзакционные границы | Draft |
 | 08 | `08-project-structure.md` | независимые корневые приложения `backend/` и `frontend/`, package layout, build/test/config boundaries | Draft |
 | 09 | `09-security-design.md` | модель угроз, authentication, authorization, sessions, secrets, audit и secure development controls | Draft |
+| 10 | `10-sequence-diagrams.md` | последовательности критических сценариев, transaction boundaries, locks, idempotency, audit и failure paths | Draft |
 
 ## 4. Планируемые документы
 
@@ -46,7 +47,6 @@
 
 | № | Планируемый документ | Назначение |
 |---:|---|---|
-| 10 | `10-sequence-diagrams.md` | последовательности критических бизнес-сценариев |
 | 11 | `11-development-roadmap.md` | этапы реализации, зависимости и Definition of Done |
 | 12 | `12-deployment.md` | Docker, volumes, PostgreSQL `5433`, окружения, backup и recovery |
 | 13 | `13-testing-strategy.md` | уровни тестирования и обязательные concurrency/contract/security tests |
@@ -86,7 +86,7 @@ ADR после принятия не переписывается так, буд
 
 Изменение считается документированным только если:
 
-1. затронутые SRS, Architecture, API, Domain Model, Project Structure, Security Design и Database Design не противоречат друг другу;
+1. затронутые SRS, Architecture, API, Domain Model, Project Structure, Security Design, Sequence Diagrams и Database Design не противоречат друг другу;
 2. все ссылки используют актуальные пути;
 3. новый верхнеуровневый файл имеет номер;
 4. статус и версия документа обновлены;
@@ -99,8 +99,9 @@ ADR после принятия не переписывается так, буд
 11. изменение корневого layout сохраняет независимые sibling roots `backend/` и `frontend/` и синхронизирует CI, Docker, Makefile, configuration и deployment paths;
 12. изменение API generation flow синхронизирует backend contract и frontend generated-client rules;
 13. изменение authentication, authorization, sessions, secrets, audit или public/private data boundary синхронизирует `09-security-design.md` и при необходимости оформляется ADR;
-14. архитектурно значимое решение оформлено ADR;
-15. примеры кода не противоречат принятым ADR и текущему стеку.
+14. изменение transaction boundary, lock order, idempotency protocol, transactional audit или post-commit flow синхронизирует `10-sequence-diagrams.md`;
+15. архитектурно значимое решение оформлено ADR;
+16. примеры кода и диаграммы не противоречат принятым ADR и текущему стеку.
 
 ## 8. Известные задачи синхронизации
 
@@ -109,11 +110,12 @@ ADR после принятия не переписывается так, буд
 1. определить нормативные правила возврата лекарств после юридической проверки;
 2. создать deployment, testing и observability документы до production-ready реализации;
 3. принять security ADR, перечисленные в `09-security-design.md`, до завершения соответствующих механизмов;
-4. при создании первых migrations сверить их с `06-database-design.md` версии 1.1 и добавить migration/concurrency tests;
-5. внедрить автоматические architecture checks для package/import boundaries и запрета cross-root source imports;
-6. утвердить frontend package manager, API client generation flow и ownership browser E2E tests.
+4. разрешить открытые вопросы lock order, transactional outbox и retry policy из `10-sequence-diagrams.md`;
+5. при создании первых migrations сверить их с `06-database-design.md` версии 1.1 и добавить migration/concurrency tests;
+6. внедрить автоматические architecture checks для package/import boundaries и запрета cross-root source imports;
+7. утвердить frontend package manager, API client generation flow и ownership browser E2E tests.
 
-Задачи создания `05-api-design.md`, интеграции возвратного amendment, добавления identity/assignments/sessions/idempotency/audit в Database Design, создания `07-domain-model.md`, фиксации независимых application roots, синхронизации backend architecture с Project Structure и создания Security Design закрыты.
+Задачи создания `05-api-design.md`, интеграции возвратного amendment, добавления identity/assignments/sessions/idempotency/audit в Database Design, создания `07-domain-model.md`, фиксации независимых application roots, синхронизации backend architecture с Project Structure, создания Security Design и фиксации критических sequence diagrams закрыты.
 
 ## 9. Правило сопровождения
 
@@ -124,6 +126,7 @@ ADR после принятия не переписывается так, буд
 - статусы документов;
 - ссылки на ADR;
 - согласованность aggregate и transaction boundaries;
+- согласованность lock order, idempotency, audit и post-commit flow;
 - согласованность backend module ownership и package layout;
 - согласованность authentication, authorization, sessions, secrets и audit controls;
 - независимость `backend/` и `frontend/`;
