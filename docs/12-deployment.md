@@ -1,7 +1,7 @@
 # PharmacyCRM — Deployment
 
 **Статус документа:** Draft  
-**Версия:** 0.2  
+**Версия:** 1.0  
 **Дата:** 2026-07-20  
 **Связанные документы:** `03-system-context.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `06-database-design.md`, `08-project-structure.md`, `09-security-design.md`, `10-sequence-diagrams.md`, `11-development-roadmap.md`
 
@@ -970,3 +970,17 @@ Deployment change завершён только если:
 18. fencing implementation для singleton jobs;
 19. immutable backup retention policy;
 20. initial data cutover owner и sign-off form.
+
+<!-- gate-e0-approved:start -->
+## Утверждённый production/deployment baseline
+### Topology и trust
+Production path: trusted reverse proxy → backend API; отдельный outbox worker использует ту же release version/protocol; PostgreSQL является authoritative store. Redis/broker/search engine не требуются для MVP correctness. Trusted proxy CIDRs задаются конфигурацией, default deny; forwarded headers от иных peers игнорируются.
+### Release и migrations
+Backend/frontend artifacts immutable; backend image развёртывается по digest. Migrations запускаются отдельным one-shot job до rollout. Application startup не выполняет migrations. Schema changes следуют `expand → migrate/backfill → validate → contract`; API, application, schema и worker protocol совместимы на всём rolling window.
+### Outbox worker
+Worker claim batch 100, lease 30 s, max 8 attempts, guarded completion по token+generation, full-jitter backoff 2 s…15 min, dead-letter после исчерпания attempts. Deployment несовместимой worker protocol version блокируется readiness/release gate.
+### RPO/RTO и backups
+Authoritative PostgreSQL target: RPO ≤ 15 минут, RTO ≤ 4 часа. Используются daily base backup и continuous WAL archive; restore drill минимум ежеквартально. Backup retention: 35 daily, 12 weekly, 12 monthly copies; encryption и restore credentials проверяются отдельно. Rebuildable projections восстанавливаются из authoritative data/outbox и не считаются отдельным источником истины.
+### Retention execution
+Cleanup jobs удаляют expired sessions/idempotency/outbox/import/log artifacts по утверждённым срокам, учитывают legal hold, работают небольшими batch и экспортируют metrics. Audit/inventory/sales history не удаляется обычным runtime cleanup до истечения minimum 5-year policy или более длинного обязательного срока.
+<!-- gate-e0-approved:end -->

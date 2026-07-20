@@ -1,7 +1,7 @@
 # PharmacyCRM — Testing Strategy
 
 **Статус документа:** Draft  
-**Версия:** 0.2  
+**Версия:** 1.0  
 **Дата:** 2026-07-20  
 **Связанные документы:** `02-srs.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `05-api-design.md`, `06-database-design.md`, `07-domain-model.md`, `08-project-structure.md`, `09-security-design.md`, `10-sequence-diagrams.md`, `11-development-roadmap.md`, `12-deployment.md`
 
@@ -788,3 +788,26 @@ Testing завершён, если:
 13. anonymization process;
 14. reconciliation oracle implementation;
 15. chaos/fault injection tooling.
+
+<!-- consistency-regression:start -->
+## Обязательная consistency/Gate E0 regression matrix
+Automated suites должны доказать:
+1. module/import ownership и отсутствие отдельных `import`, `receipt`, `adjustments` modules;
+2. `pharmacy_assignments` изменяются только Pharmacy owner contract;
+3. critical mutation выполняет idempotency claim → authorization revalidation → canonical business locks;
+4. replay после block/role revoke/assignment end не раскрывает сохранённый result;
+5. FEFO lock/allocation order включает `expiration_date`, `received_at`, `id`;
+6. API contract использует только нормативные paths и UUID examples;
+7. persisted ImportJob states и ReturnAction/Sale status enum совпадают с DB/domain/API;
+8. event catalog не допускает `SaleCompleted`, `SaleReturnCompleted` или generic unregistered reversal event;
+9. audit/outbox/idempotency failure откатывает business effect;
+10. two-worker claim race, stale lease completion, retry/backoff и dead-letter;
+11. DB retry выполняет whole transaction максимум три попытки только для `40001`/`40P01`;
+12. Argon2id verify/rehash, refresh rotation/reuse-family revoke и all-session invalidation;
+13. access token отсутствует в local/session storage, refresh token недоступен JavaScript;
+14. untrusted forwarded headers, disallowed CORS origin и CSRF request отклоняются;
+15. pnpm lockfile/API generation reproducibility и generated-client diff gate;
+16. backup restore достигает RPO/RTO target на rehearsal dataset;
+17. customer-returned medicine не переходит в sellable stock;
+18. literal/column version-counter authorization mechanism отсутствует в schema, docs fixtures и migrations.
+<!-- consistency-regression:end -->

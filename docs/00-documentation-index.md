@@ -1,8 +1,8 @@
 # PharmacyCRM — Documentation Index
 
 **Статус документа:** Active  
-**Версия:** 2.1  
-**Дата:** 2026-07-20
+**Версия:** 2.2  
+**Дата:** 2026-07-20  
 
 ## 1. Назначение
 
@@ -28,6 +28,7 @@
 | № | Документ | Назначение | Текущий статус |
 |---:|---|---|---|
 | 00 | `00-documentation-index.md` | карта документации и правила её сопровождения | Active |
+| 00-01 | `00-01-cross-document-consistency.md` | исторический cross-document review, полностью включённый в исходные документы | Incorporated |
 | 01 | `01-product-vision.md` | продуктовое видение, пользователи и границы MVP | Draft |
 | 02 | `02-srs.md` | нормативные системные требования и критерии приёмки | Draft |
 | 03 | `03-system-context.md` | системная граница, акторы, внешние зависимости и trust boundaries | Draft |
@@ -51,8 +52,8 @@
 
 Дальнейшая работа с документацией состоит из:
 
-- финального cross-document review;
-- устранения противоречий и открытых вопросов;
+- сопровождения уже инкорпорированного cross-document review;
+- предотвращения новых противоречий в одном change set;
 - принятия обязательных ADR;
 - перевода зрелых документов из `Draft` в утверждённый статус;
 - синхронизации документов с реализацией в каждом change set;
@@ -114,25 +115,9 @@ ADR после принятия не переписывается так, буд
 19. архитектурно значимое решение оформлено ADR;
 20. примеры кода и диаграммы не противоречат принятым ADR и текущему стеку.
 
-## 8. Известные задачи синхронизации
-
-Перед массовой реализацией и production rollout необходимо:
-
-1. определить нормативные правила возврата лекарств после юридической проверки;
-2. принять security ADR, перечисленные в `09-security-design.md`, до завершения соответствующих механизмов;
-3. разрешить открытые вопросы lock order, transactional outbox и retry policy из `10-sequence-diagrams.md`;
-4. закрыть Gate E0 из `11-development-roadmap.md` до массовой реализации зависимых механизмов;
-5. утвердить deployment ADR/policies, перечисленные в `12-deployment.md`, до production rollout;
-6. утвердить testing tooling и CI/release policies, перечисленные в `13-testing-strategy.md`;
-7. утвердить observability tooling, SLO, retention, alert routing и ownership из `14-observability.md`;
-8. при создании первых migrations сверить их с `06-database-design.md` и добавить migration/concurrency tests;
-9. внедрить автоматические architecture checks для package/import boundaries и запрета cross-root source imports;
-10. утвердить frontend package manager, API client generation flow и ownership browser E2E tests;
-11. выполнить финальный cross-document review и сформировать единый список ADR/open decisions;
-12. после review обновить статусы документов, готовых к утверждению.
-
-Задачи создания `05-api-design.md`, интеграции возвратного amendment, добавления identity/assignments/sessions/idempotency/audit в Database Design, создания `07-domain-model.md`, фиксации независимых application roots, синхронизации backend architecture с Project Structure, создания Security Design, фиксации критических sequence diagrams, создания Development Roadmap, Deployment Design, Testing Strategy и Observability закрыты.
-
+## 8. Текущий статус синхронизации
+Cross-document consistency amendment полностью инкорпорирован. Gate E0 закрыт: security, reliability, delivery, retention, recovery, legal-return и frontend/tooling baselines утверждены в исходных документах.
+До начала зависимого этапа остаются только implementation evidence соответствующего gate: migrations, tests, restore drills, security review и CI artifacts. Они не являются альтернативными архитектурными решениями.
 ## 9. Правило сопровождения
 
 После каждого изменения документации автор обязан проверить:

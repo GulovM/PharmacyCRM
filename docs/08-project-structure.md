@@ -1,8 +1,8 @@
 # PharmacyCRM — Project Structure
 
 **Статус документа:** Draft  
-**Версия:** 1.3  
-**Дата:** 2026-07-17  
+**Версия:** 1.2  
+**Дата:** 2026-07-20  
 **Связанные документы:** `02-srs.md`, `03-system-context.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `05-api-design.md`, `06-database-design.md`, `07-domain-model.md`  
 **Связанные ADR:** ADR-0011, ADR-0013, ADR-0014, ADR-0015, ADR-0016, ADR-0017
 
@@ -582,3 +582,25 @@ Structural change завершено только если:
 12. E2E ownership не дублируется;
 13. architecture checks запрещают cross-root source imports;
 14. README и документация обновлены.
+
+<!-- consistency-incorporated:start -->
+## Инкорпорированные ownership/tooling rules
+Backend modules: `identity`, `pharmacy`, `catalog`, `assortment`, `inventory`, `sales`, `returns`, `reliability`, `audit`, `alerts`, `search`, `replenishment`. Не создаются отдельные top-level modules `import`, `receipt`, `adjustments`.
+- `backend/internal/pharmacy` содержит assignment aggregate/repository/use cases.
+- `backend/internal/reliability` содержит idempotency, outbox writer/worker и retry classifier.
+- catalog import остаётся в `backend/internal/catalog`.
+- receipts, initial-stock confirmation, write-offs и adjustments остаются в `backend/internal/inventory`.
+- generated OpenAPI artifacts не смешиваются с handwritten domain/application code.
+Frontend использует `pnpm` 10.x через Corepack, один `pnpm-lock.yaml`, strict TypeScript и generated client:
+```text
+frontend/
+  package.json
+  pnpm-lock.yaml
+  src/
+    shared/
+      api/
+        generated/   # openapi-typescript output, read-only
+        client/      # handwritten auth/error/retry wrapper
+```
+Machine-readable API contract: `backend/api/openapi.yaml`. Команда `pnpm api:generate` детерминированна; CI отклоняет ручные изменения generated output и npm/yarn lockfiles.
+<!-- consistency-incorporated:end -->

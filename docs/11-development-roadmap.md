@@ -1,7 +1,7 @@
 # PharmacyCRM — Development Roadmap
 
 **Статус документа:** Draft  
-**Версия:** 0.2  
+**Версия:** 1.0  
 **Дата:** 2026-07-20  
 **Связанные документы:** `01-product-vision.md`, `02-srs.md`, `03-system-context.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `05-api-design.md`, `06-database-design.md`, `07-domain-model.md`, `08-project-structure.md`, `09-security-design.md`, `10-sequence-diagrams.md`
 
@@ -118,46 +118,40 @@ Roadmap состоит из:
 
 Например, frontend shell может развиваться на E1, но frontend продажи не могут считаться завершёнными до стабильного API, transaction semantics и backend contract E7.
 
-## 5. E0 — закрытие решений и baseline governance
+## 5. E0 — решения и baseline governance — CLOSED
+### Результат
+Gate E0 закрыт 2026-07-20. Параллельные несовместимые implementation paths запрещены.
+### Decision register
 
-### Цель
+| Решение | Утверждённый baseline |
+|---|---|
+| Password hashing | Argon2id PHC string: `m=65536 KiB`, `t=3`, `p=2`, salt 16 bytes, hash 32 bytes. Rehash после успешной проверки, если algorithm/parameters ниже current policy. |
+| Access token | JWT `EdDSA`/Ed25519, TTL 10 минут, обязательные `iss`, `aud`, `sub`, `sid`, `iat`, `nbf`, `exp`, `jti`, `kid`; private keys вне repository, rotation каждые 90 дней с overlap не менее 20 минут. |
+| Refresh token | Opaque CSPRNG token 32 bytes; хранится только hash. Browser transport: host-only `__Secure-pharmacy_refresh`, `Secure`, `HttpOnly`, `SameSite=Strict`, `Path=/api/v1/auth`; absolute TTL 30 дней, idle TTL 7 дней, rotation при каждом refresh. |
+| Session invalidation | Block/archive, password change/recovery, role revoke/change, assignment end/change и compromise отзывают все применимые sessions; refresh reuse отзывает token family; logout отзывает current session, logout-all — все sessions. |
+| Transaction retry | Только `40001` и `40P01`; максимум 3 попытки на request path, whole-transaction retry, full-jitter exponential backoff от 25 ms с cap 250 ms. |
+| Outbox delivery | At-least-once, batch 100, lease 30 s, guarded completion по `lease_token`, max 8 attempts, full-jitter backoff от 2 s с cap 15 min, затем `DEAD_LETTER`. |
+| Retention | Sessions 90 дней после expiry/revoke; idempotency 30 дней; processed outbox 30 дней; dead letters 180 дней; application logs 30 дней hot + 180 дней archive; traces 7 дней; import source 30 дней after success/90 дней after failure; audit/inventory/sales history минимум 5 лет либо дольше по обязательному праву. |
+| Proxy/CORS/CSRF | Trusted proxy CIDR allowlist, default none; forwarded headers only from trusted peers. CORS exact-origin allowlist, no wildcard with credentials. Cookie-auth endpoints require exact `Origin` and `X-CSRF-Protection: 1`; absent/mismatched browser origin is rejected. |
+| RPO/RTO | PostgreSQL production target: RPO ≤ 15 минут, RTO ≤ 4 часа; daily base backup + continuous WAL archive; restore drill at least quarterly. Rebuildable projections do not raise authoritative-data RPO. |
+| Returns | Customer-return mutation is production-disabled by default. Before custody transfer use sale reversal. After transfer, legally approved exception may refund, but physical goods use `QUARANTINE`, `WRITE_OFF` or `NO_PHYSICAL_RETURN`; `RESTOCK` is forbidden for customer-returned medicines. |
+| Frontend package manager | `pnpm` 10.x via Corepack, exact `packageManager` pin and committed `pnpm-lock.yaml`; npm/yarn lockfiles are rejected by CI. |
+| API client generation | OpenAPI 3.1 contract in `backend/api/openapi.yaml`; frontend uses pinned `openapi-typescript` + `openapi-fetch`, output under `frontend/src/shared/api/generated/`; generated code is not edited manually and CI fails on diff. |
+| ADMIN MFA/recovery | TOTP MFA is mandatory for production `ADMIN`; recovery uses one-time recovery codes and audited operator-assisted reset. No security-question recovery. |
+| Release/migrations | Immutable OCI images referenced by digest; migrations run as a separate one-shot job before rollout; no automatic migration on application startup; `expand → migrate/backfill → validate → contract`. |
 
-Исключить параллельную реализацию несовместимых архитектурных решений.
-
-### Entry criteria
-
-- Product Vision, SRS и документы 03–10 доступны и не имеют неизвестного владельца;
-- открытые противоречия перечислены;
-- определён владелец архитектурных решений.
-
-### Обязательный scope
-
-Принять ADR или явно отложить с обоснованием:
-
-1. password hashing и rehash policy;
-2. access/refresh token model, JWT key rotation и session invalidation;
-3. MFA и recovery для `ADMIN`;
-4. окончательный lock order;
-5. transaction retry policy;
-6. transactional outbox и delivery semantics;
-7. юридическую policy возврата лекарств;
-8. retention audit, logs, sessions, imports и backups;
-9. frontend package manager и API client generation;
-10. deployment topology и trusted proxy model;
-11. RPO/RTO;
-12. release artifact и migration deployment model.
-
-### Exit gate E0
-
-- каждое решение имеет status, owner и ссылку;
-- deferred decision не блокирует E1–E3;
-- документы 01–10 не содержат известных взаимоисключающих правил;
-- создан risk register;
-- определено, кто может принять остаточный риск.
-
+Дополнительно утверждено:
+- production topology baseline: reverse proxy → backend API + outbox worker → PostgreSQL; projection/search остаются rebuildable;
+- risk acceptance owner — project owner/architecture owner; security/legal exceptions требуют явной записи и срока;
+- release artifacts — immutable OCI images by digest; migration — separate one-shot job; startup auto-migration запрещена.
+### Exit evidence
+- каждое решение имеет нормативный раздел в документах 04–14;
+- cross-document amendment переведён в `Incorporated`;
+- module ownership, API paths, states, enum, events и transaction protocol едины;
+- Gate E1–E3 могут начинаться без выбора альтернативной архитектуры;
+- implementation evidence остаётся exit condition соответствующих этапов, но не открытым design decision.
 ### Запрещённый переход
-
-Нельзя реализовывать production auth, Unit of Work, outbox или critical inventory mutation до утверждения соответствующего решения.
+Нельзя отклоняться от утверждённого baseline без ADR/policy update и синхронизации всех затронутых документов в одном change set.
 
 ## 6. E1 — engineering foundation
 

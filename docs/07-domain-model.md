@@ -1,8 +1,8 @@
 # PharmacyCRM — Domain Model
 
 **Статус документа:** Draft  
-**Версия:** 1.1  
-**Дата:** 2026-07-17  
+**Версия:** 1.2  
+**Дата:** 2026-07-20  
 **Связанные документы:** `01-product-vision.md`, `02-srs.md`, `03-system-context.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `05-api-design.md`, `06-database-design.md`  
 **Связанные ADR:** ADR-0009, ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0014, ADR-0016, ADR-0017
 
@@ -829,3 +829,54 @@ Feature завершена только если:
 9. API и Database Design синхронизированы;
 10. eventual-consistency reaction не выдаётся за гарантированную без outbox;
 11. открытые legal/security policies не реализованы скрытыми defaults.
+
+<!-- consistency-incorporated:start -->
+## Инкорпорированные domain boundaries
+`PharmacyAssignment` принадлежит Pharmacy context и имеет lifecycle `ACTIVE → ENDED`, выраженный `ended_at`, `ended_by_user_id`, `end_reason`. Identity context владеет user/role/session state, но не assignment history.
+Reliability context содержит `IdempotencyRecord` и `OutboxEvent`. `OutboxEvent` — durable entity со статусами `PENDING`, `PROCESSING`, `PROCESSED`, `DEAD_LETTER`, lease/fencing metadata, attempt count и immutable event envelope. Durable domain/integration event не допускает best-effort-only publication.
+Persisted `ImportJob` states: `UPLOADED`, `VALIDATING`, `READY`, `HAS_ERRORS`, `CONFIRMING`, `COMPLETED`, `FAILED`.
+`ReturnAction`: `RESTOCK`, `WRITE_OFF`, `QUARANTINE`, `NO_PHYSICAL_RETURN`. Sale lifecycle after completion: `COMPLETED → PARTIALLY_REFUNDED → REFUNDED`; compensating reversal uses `REVERSED`.
+### Event catalog
+
+| Context | Канонические committed events |
+|---|---|
+| Identity | `UserCreated`, `UserBlocked`, `UserUnblocked`, `UserArchived`, `UserPasswordChanged`, `UserRoleAssigned`, `UserRoleRevoked`, `SessionCreated`, `SessionRotated`, `SessionRevoked` |
+| Pharmacy | `PharmacistAssigned`, `PharmacistAssignmentEnded` |
+| Catalog | `ProductCreated`, `ProductArchived`, `PresentationCreated`, `BarcodeAssigned`, `CatalogImportCompleted` |
+| Assortment | `PharmacyProductActivated`, `PharmacyProductPriceChanged` |
+| Inventory | `ReceiptPosted`, `InitialStockConfirmed`, `WriteOffCompleted`, `InventoryAdjusted`, `InventoryOperationReversed` |
+| Sales | `SaleCompleted`, `SalePartiallyRefunded`, `SaleRefunded`, `SaleReversed` |
+| Returns | `SaleReturnCompleted`, `SaleReturnReversed` |
+Domain event отражает уже committed business fact и именуется в прошедшем времени. Technical names используют lower-case dot namespace, например `sales.sale.completed`, но не меняют бизнес-семантику.
+
+### Transaction boundary
+
+Для authenticated critical mutation действует один порядок:
+1. delivery проверяет формат credential, DTO, headers и transport limits;
+2. до транзакции выполняются только детерминированные validation/canonicalization;
+3. Unit of Work начинает PostgreSQL transaction;
+4. первым сериализующим lock берётся idempotency identity `actor + operation + effective_scope + key`;
+5. внутри транзакции повторно читаются actor, session, role, pharmacy assignment и pharmacy state;
+6. replay возвращается только после текущей authorization и result-visibility revalidation;
+7. business roots блокируются в каноническом порядке;
+8. после locks повторно вычисляются eligibility, prices, quantities, FEFO и return limits;
+9. атомарно сохраняются business effect, snapshots, allocations, lot balances и append-only movements;
+10. сохраняются обязательный transactional audit и необходимые outbox rows;
+11. idempotency record переводится в `COMPLETED`;
+12. commit предшествует успешному HTTP response.
+Retryable PostgreSQL error повторяет всю transaction function с шага idempotency claim. Внешний network side effect внутри transaction callback запрещён.
+
+
+Канонический lock order:
+1. idempotency scope/key;
+2. current actor/user/session/role для security-sensitive mutation;
+3. target user, если он изменяется;
+4. pharmacy;
+5. root document (`sale`, `receipt`, `sale_return`, adjustment/reversal root);
+6. `pharmacy_products` по `id`;
+7. sale items/source allocations по `id`;
+8. stock lots по `expiration_date`, затем `received_at`, затем `id`;
+9. insert documents, allocations, movements, audit, outbox и completed idempotency result;
+10. commit.
+Неиспользуемый уровень пропускается без изменения взаимного порядка остальных locks.
+<!-- consistency-incorporated:end -->

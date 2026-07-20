@@ -1,8 +1,8 @@
 # PharmacyCRM — Backend Architecture
 
 **Статус документа:** Draft  
-**Версия:** 0.2  
-**Дата:** 2026-07-17  
+**Версия:** 1.2  
+**Дата:** 2026-07-20  
 **Связанные документы:** `02-srs.md`, `04-architecture.md`, `05-api-design.md`, `06-database-design.md`, `07-domain-model.md`, `08-project-structure.md`  
 **Связанные ADR:** ADR-0013, ADR-0014, ADR-0015, ADR-0016, ADR-0017
 
@@ -467,3 +467,43 @@ Backend structural change завершено только если:
 8. schema change синхронизирован с `06-database-design.md`;
 9. добавлены unit/integration/concurrency tests по типу изменения;
 10. frontend не помещён внутрь backend и backend build не устанавливает frontend dependencies.
+
+<!-- consistency-incorporated:start -->
+## Инкорпорированные backend boundaries
+Backend package/module ownership полностью совпадает с общей Architecture и Database Design.
+
+| Module owner | Таблицы / данные |
+|---|---|
+| `identity` | `users`, `roles`, `user_roles`, `user_sessions` |
+| `pharmacy` | `pharmacies`, `pharmacy_assignments` |
+| `catalog` | `products`, `product_presentations`, `product_barcodes`, `product_requests`, `import_jobs`, `import_rows` |
+| `assortment` | `pharmacy_products` |
+| `inventory` | `inventory_operations`, `inventory_movements`, `stock_lots`, `receipts`, `receipt_items`, `write_offs`, `write_off_items`, `inventory_adjustments`, `inventory_adjustment_items` |
+| `sales` | `sales`, `sale_items`, `sale_item_allocations` |
+| `returns` | `sale_returns`, `sale_return_items`, `sale_return_item_allocations` |
+| `reliability` | `idempotency_records`, `outbox_events` |
+| `audit` | `audit_events` |
+| `alerts` | `alerts` |
+| `search` | rebuildable public projections/read models |
+| `replenishment` | вычисляемые recommendation read models |
+
+`pharmacy` владеет aggregate/repository `PharmacyAssignment`; `identity` предоставляет current user/role/session revalidation. `reliability` владеет idempotency и `OutboxEvent`, включая writer и worker protocol. `catalog` включает import use cases; `inventory` включает receipts, initial stock, write-offs и adjustments.
+Application orchestration вызывает owner contracts через use-case-specific Unit of Work. Domain/Application API не принимает `gin.Context`, `pgx.Tx` или driver errors.
+
+Для authenticated critical mutation действует один порядок:
+1. delivery проверяет формат credential, DTO, headers и transport limits;
+2. до транзакции выполняются только детерминированные validation/canonicalization;
+3. Unit of Work начинает PostgreSQL transaction;
+4. первым сериализующим lock берётся idempotency identity `actor + operation + effective_scope + key`;
+5. внутри транзакции повторно читаются actor, session, role, pharmacy assignment и pharmacy state;
+6. replay возвращается только после текущей authorization и result-visibility revalidation;
+7. business roots блокируются в каноническом порядке;
+8. после locks повторно вычисляются eligibility, prices, quantities, FEFO и return limits;
+9. атомарно сохраняются business effect, snapshots, allocations, lot balances и append-only movements;
+10. сохраняются обязательный transactional audit и необходимые outbox rows;
+11. idempotency record переводится в `COMPLETED`;
+12. commit предшествует успешному HTTP response.
+Retryable PostgreSQL error повторяет всю transaction function с шага idempotency claim. Внешний network side effect внутри transaction callback запрещён.
+
+Outbox worker размещается в reliability/infrastructure boundary, claim-ит batch после короткой транзакции, выполняет side effect вне business transaction и завершает row только guarded update по актуальному lease token.
+<!-- consistency-incorporated:end -->

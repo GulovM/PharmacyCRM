@@ -1,8 +1,8 @@
 # PharmacyCRM — API Design
 
 **Статус документа:** Draft  
-**Версия:** 0.2  
-**Дата:** 2026-07-17  
+**Версия:** 1.2  
+**Дата:** 2026-07-20  
 **Связанные документы:** `01-product-vision.md`, `02-srs.md`, `03-system-context.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `06-database-design.md`  
 **Связанные ADR:** ADR-0011, ADR-0012, ADR-0013, ADR-0014, ADR-0016, ADR-0017
 
@@ -739,3 +739,33 @@ HTTP feature завершена только если:
 6. ETag/version policy для mutable resources;
 7. поддерживаемые MIME/size/row limits импортов;
 8. публичная cache TTL и freshness policy availability.
+
+<!-- consistency-incorporated:start -->
+## Инкорпорированные API contracts
+### Authentication transport
+- `POST /api/v1/auth/login` возвращает access token в JSON и устанавливает rotating refresh cookie.
+- `POST /api/v1/auth/refresh`, `POST /api/v1/auth/logout`, `POST /api/v1/auth/logout-all` используют refresh/session contract из Security Design.
+- Access token хранится frontend только in-memory и передаётся `Authorization: Bearer`.
+- Refresh token не возвращается в JSON и не хранится в Web Storage.
+- Cookie-auth endpoints требуют exact allowed `Origin` и `X-CSRF-Protection: 1`.
+### Нормативные mutation paths
+| Сценарий | Method/path |
+|---|---|
+| Block user | `POST /api/v1/admin/users/{user_id}/block` |
+| Assign pharmacist | `POST /api/v1/admin/users/{user_id}/pharmacy-assignments` |
+| End assignment | `DELETE /api/v1/admin/users/{user_id}/pharmacy-assignments/{assignment_id}` |
+| Post receipt | `POST /api/v1/pharmacies/{pharmacy_id}/receipts` |
+| Complete sale | `POST /api/v1/pharmacies/{pharmacy_id}/sales` |
+| Complete return | `POST /api/v1/pharmacies/{pharmacy_id}/returns` |
+| Post adjustment | `POST /api/v1/pharmacies/{pharmacy_id}/inventory-adjustments` |
+| Upload catalog import | `POST /api/v1/admin/catalog-imports` |
+Return request передаёт `sale_id` в request body согласно endpoint schema. Generic `/api/v1/{documents}/{id}/reverse` не является contract; используются resource-specific endpoints.
+### Persisted states и enum
+`ImportJob`: `UPLOADED`, `VALIDATING`, `READY`, `HAS_ERRORS`, `CONFIRMING`, `COMPLETED`, `FAILED`.
+`ReturnAction`: `RESTOCK`, `WRITE_OFF`, `QUARANTINE`, `NO_PHYSICAL_RETURN`. Значения `RETURN_TO_STOCK`, `RETURN_WRITE_OFF`, `RETURN_QUARANTINE` относятся к `InventoryOperation.type`.
+`Sale.status`: `COMPLETED`, `PARTIALLY_REFUNDED`, `REFUNDED`, `REVERSED`.
+### Idempotency и IDs
+Critical mutation требует `Idempotency-Key`. Identity ключа: `actor + operation + effective_scope + key`; pharmacy scope использует `pharmacy_id`, global/admin scope — `GLOBAL`. Replay повторно проверяет authorization и visibility. API ID — opaque UUID string; примеры используют UUID.
+### Machine-readable contract
+OpenAPI 3.1 хранится в `backend/api/openapi.yaml`. Frontend generated client создаётся pinned `openapi-typescript` + `openapi-fetch`; CI проверяет, что generated output соответствует contract.
+<!-- consistency-incorporated:end -->
