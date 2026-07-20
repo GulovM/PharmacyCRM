@@ -1,0 +1,35 @@
+name: Execute final documentation pass
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  finalize:
+    if: github.event.issue.pull_request && github.event.comment.body == '/finalize-docs'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Execute registered finalization script
+        shell: bash
+        run: |
+          awk '
+            /run: \|/ { capture=1; next }
+            capture {
+              if ($0 ~ /^          /) {
+                sub(/^          /, "")
+                print
+              }
+            }
+          ' .github/workflows/finalize-incorporated-documentation.yml > /tmp/finalize.sh
+
+          sed -i 's#rm -f .github/workflows/finalize-incorporated-documentation.yml#rm -f .github/workflows/finalize-incorporated-documentation.yml .github/workflows/execute-final-docs-on-comment.yml#' /tmp/finalize.sh
+          bash /tmp/finalize.sh
