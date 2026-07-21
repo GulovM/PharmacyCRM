@@ -789,7 +789,6 @@ Testing завершён, если:
 14. reconciliation oracle implementation;
 15. chaos/fault injection tooling.
 
-<!-- consistency-regression:start -->
 ## Обязательная consistency/Gate E0 regression matrix
 Automated suites должны доказать:
 1. module/import ownership и отсутствие отдельных `import`, `receipt`, `adjustments` modules;
@@ -810,4 +809,3 @@ Automated suites должны доказать:
 16. backup restore достигает RPO/RTO target на rehearsal dataset;
 17. customer-returned medicine не переходит в sellable stock;
 18. schema, fixtures и migrations не содержат скрытого дополнительного поля для инвалидирования доступа.
-<!-- consistency-regression:end -->

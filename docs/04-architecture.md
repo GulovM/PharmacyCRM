@@ -433,34 +433,28 @@ FEFO является бизнес-правилом, а не UI-сортиров
 
 ### 11.1 Продажа
 
-Use case проведения продажи обязан в одной транзакции:
+Use case проведения продажи внутри одной transaction соблюдает общий protocol из раздела 9:
 
-1. повторно проверить пользователя и его назначение аптеке;
-2. проверить или создать запись идемпотентности;
-3. загрузить актуальные ассортиментные правила;
-4. вычислить итоговые количества и цену на backend;
-5. выбрать и заблокировать подходящие лоты в детерминированном FEFO-порядке;
-6. проверить достаточность суммарного остатка;
-7. создать документ и строки продажи со снимками;
-8. уменьшить остатки лотов;
-9. создать движения;
-10. создать аудит;
-11. сохранить повторяемый результат команды;
-12. выполнить commit.
+1. claim/lock idempotency record;
+2. revalidate current user, session, role, pharmacy assignment и pharmacy;
+3. lock affected `pharmacy_products` по `id` и повторно проверить assortment, unit policy и server prices;
+4. lock eligible lots по `expiration_date`, `received_at`, `id`;
+5. повторно проверить sellability и quantity;
+6. выполнить server-side FEFO allocation и totals;
+7. создать sale, items, snapshots, allocations, operation, movements и обновить lot balances;
+8. записать mandatory audit и outbox events;
+9. complete idempotency result;
+10. commit до возврата success.
+
+Недостаток любой строки отклоняет всю продажу. Frontend price, total и lot selection не являются authoritative.
 
 ### 11.2 Возврат
 
-Возврат является отдельным документом, связанным с исходной продажей. Он не переписывает количество или сумму исходной продажи.
+`ReturnAction`: `RESTOCK`, `WRITE_OFF`, `QUARANTINE`, `NO_PHYSICAL_RETURN`. Sale status: `COMPLETED`, `PARTIALLY_REFUNDED`, `REFUNDED`, `REVERSED`.
 
-Система должна отделять:
+Gate E0 устанавливает консервативную legal policy: customer-return mutation production-disabled по умолчанию; до передачи товара применяется sale void/reversal. После передачи legally approved exception может создать refund, но physical goods получают `QUARANTINE`, `WRITE_OFF` или `NO_PHYSICAL_RETURN`; `RESTOCK` для customer-returned medicines запрещён.
 
-- факт принятия возврата от клиента;
-- финансовый эффект;
-- решение о возвращении товара в доступный остаток.
-
-Возврат в продаваемый остаток допускается только при выполнении нормативных и бизнес-условий. Если возврат не может быть повторно продан, он учитывается отдельным движением и направляется в карантин, списание или иной утверждённый процесс.
-
-Распределение возвращаемого количества по исходным sale allocations должно быть детерминированным и не допускать возврата количества сверх ранее проданного с учётом уже проведённых возвратов.
+Разрешённый return use case сначала claim-ит idempotency, затем revalidate-ит authorization, после чего блокирует source sale, sale items, source allocations, `pharmacy_products` и lots в каноническом порядке. Cumulative completed non-reversed returned quantity не превышает sold allocation. Return document, sale status, refund/inventory effect, audit, outbox и idempotency result commit-ятся атомарно.
 
 ## 12. Аутентификация и авторизация
 

@@ -249,7 +249,7 @@ Backend обязан:
 - разделять ключи access token и любые другие криптографические назначения;
 - не загружать signing key из repository или frontend bundle.
 
-Предпочтительна асимметричная подпись `EdDSA` или `ES256`. Выбор алгоритма и key-rotation protocol фиксируются ADR.
+Нормативный algorithm — `EdDSA`/Ed25519; key rotation выполняется каждые 90 дней с verification overlap не менее 20 минут. Альтернатива требует нового ADR и синхронного изменения API, deployment и tests.
 
 ### 10.3 TTL и key rotation
 
@@ -321,7 +321,7 @@ Role и assignment изменяются только отдельными адм
 6. проверяет бизнес-состояние;
 7. выполняет изменение.
 
-Для критических mutations user, role, assignment, session и target resource повторно проверяются внутри той же транзакции после необходимых locks.
+Для critical mutation первым сериализующим lock является idempotency record; затем внутри transaction повторно читаются user, session, role, assignment и pharmacy; только после authorization revalidation берутся business locks в каноническом порядке.
 
 Изменение роли или назначения, происходящее конкурентно с операцией, должно приводить либо к сериализованному безопасному результату, либо к rollback. Check-then-act вне транзакции запрещён.
 
@@ -379,7 +379,7 @@ Sensitive responses используют `Cache-Control: no-store`.
 
 Idempotency key обязателен для поступления, продажи, возврата, списания, корректировки, создающего данные импорта и опасных административных команд.
 
-Scope включает actor/client identity, pharmacy ID, operation name и key.
+Полная idempotency identity: `actor + operation + effective_scope + key`; `effective_scope = pharmacy_id` для pharmacy command и `GLOBAL` для global/admin command.
 
 Backend строит canonical semantic payload и hash. Повтор с тем же key и payload возвращает исходный результат. Тот же key с другим payload отклоняется как conflict и создаёт security signal.
 

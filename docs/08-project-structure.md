@@ -427,7 +427,7 @@ frontend-run:
 	$(MAKE) -C frontend run
 ```
 
-Предпочтительно, чтобы component Makefile/script скрывал выбранный package manager; root Makefile не должен жёстко предполагать npm до принятия решения.
+Component Makefile/script вызывает утверждённый `pnpm` через Corepack; root Makefile не допускает параллельный npm/yarn workflow.
 
 Root targets не объединяют dependency installation в общий workspace.
 
