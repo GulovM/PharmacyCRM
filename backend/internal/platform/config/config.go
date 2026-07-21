@@ -89,9 +89,13 @@ type ProxyCORSConfig struct {
 }
 
 type LoggingConfig struct {
-	Level    string `default:"info"`
-	Format   string `default:"console"`
-	FilePath string `envconfig:"FILE_PATH" default:"var/log/pharmacycrm/app.log"`
+	Level      string `default:"info"`
+	Format     string `default:"console"`
+	FilePath   string `envconfig:"FILE_PATH" default:"var/log/pharmacycrm/app.log"`
+	MaxSizeMB  int    `envconfig:"MAX_SIZE_MB" default:"100"`
+	MaxBackups int    `envconfig:"MAX_BACKUPS" default:"10"`
+	MaxAgeDays int    `envconfig:"MAX_AGE_DAYS" default:"30"`
+	Compress   bool   `default:"true"`
 }
 
 type TelemetryConfig struct {
@@ -312,6 +316,9 @@ func validateLogging(c LoggingConfig, environment string) error {
 	}
 	if c.FilePath == "" || filepath.Clean(c.FilePath) == "." || strings.HasSuffix(c.FilePath, string(filepath.Separator)) {
 		return invalid("logging file path is invalid")
+	}
+	if c.MaxSizeMB < 1 || c.MaxBackups < 1 || c.MaxAgeDays < 1 {
+		return invalid("logging rotation settings must be positive")
 	}
 	return nil
 }

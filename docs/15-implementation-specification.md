@@ -488,6 +488,9 @@ Startup fail-fast при missing secret, invalid DSN, unsafe production cookie/T
 
 ### E1-FND-003 — Logger
 
+**Статус:** `IMPLEMENTED`
+**Evidence:** `cd backend && go test ./internal/platform/logging`
+
 Создать Zap logger с terminal и rotating file sink. File path configurable, local default mounted volume. Startup probe проверяет path/permissions. Runtime file-sink failure использует fallback terminal, metric и alert, но не отключает transactional audit.
 
 ### E1-FND-004 — HTTP server

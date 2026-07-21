@@ -29,7 +29,7 @@ func validConfig() Config {
 		HTTP:      HTTPConfig{Address: ":8080", TLSMode: "disabled", ReadHeaderTimeout: 1, ReadTimeout: 1, WriteTimeout: 1, IdleTimeout: 1, ShutdownTimeout: 1, MaxHeaderBytes: 1, MaxBodyBytes: 1},
 		Postgres:  PostgresConfig{RuntimeDSN: "postgres://user:password@localhost:5432/pharmacy", MigrationDSN: "postgres://migrator:password@localhost:5432/pharmacy", MaxConnections: 1, AcquireTimeout: 1, MaxConnectionLife: 1, MaxConnectionIdle: 1, HealthCheckPeriod: 1, ConnectionCapacity: 1},
 		Auth:      AuthConfig{JWTIssuer: "pharmacycrm", JWTAudience: "pharmacycrm-api", JWTAlgorithm: "EdDSA", JWTPrivateKey: "private-key", RefreshTokenPepper: "pepper", CookieSameSite: "strict", AccessTokenTTL: 1, RefreshAbsoluteTTL: 2, RefreshIdleTTL: 1},
-		Logging:   LoggingConfig{Level: "info", Format: "console", FilePath: "var/log/pharmacycrm/app.log"},
+		Logging:   LoggingConfig{Level: "info", Format: "console", FilePath: "var/log/pharmacycrm/app.log", MaxSizeMB: 1, MaxBackups: 1, MaxAgeDays: 1},
 		Telemetry: TelemetryConfig{MetricsAddress: ":9090", ExportTimeout: 1},
 		Worker:    WorkerConfig{ProtocolVersion: 1, Concurrency: 1, PollInterval: 1, LeaseDuration: 1, MaxClaim: 1},
 		Storage:   StorageConfig{ImportRoot: "var/imports", MaxUploadBytes: 1, Retention: 1},

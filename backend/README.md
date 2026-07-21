@@ -17,3 +17,10 @@ timeouts or pool bounds, incompatible worker protocol declarations, unsafe
 production TLS/cookie/debug settings, a wildcard credentialed CORS origin, and
 invalid log/import paths. Error messages name a configuration category but never
 echo secret values or DSNs.
+
+The configured Zap logger writes to the terminal and to a rotating JSON file.
+`LOGGING_MAX_SIZE_MB`, `LOGGING_MAX_BACKUPS`, `LOGGING_MAX_AGE_DAYS`, and
+`LOGGING_COMPRESS` control retention. Startup verifies that the configured path
+is writable; a runtime file-sink failure leaves terminal logging active and is
+available through `FileSinkFailureCount` for the later metrics/alerting setup.
+It also emits the stable `file_log_sink_failed` terminal alert event.
