@@ -146,7 +146,7 @@ Gate E0 закрыт 2026-07-20. Параллельные несовместим
 - release artifacts — immutable OCI images by digest; migration — separate one-shot job; startup auto-migration запрещена.
 ### Exit evidence
 - каждое решение имеет нормативный раздел в документах 04–14;
-- cross-document amendment переведён в `Incorporated`;
+- правила cross-document amendment полностью перенесены в основные документы, а промежуточный файл удалён;
 - module ownership, API paths, states, enum, events и transaction protocol едины;
 - Gate E1–E3 могут начинаться без выбора альтернативной архитектуры;
 - implementation evidence остаётся exit condition соответствующих этапов, но не открытым design decision.
