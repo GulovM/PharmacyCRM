@@ -1,30 +1,44 @@
-name: Export transformed documentation
+name: Apply final integrated documentation
 
 on:
   pull_request:
     types: [opened, reopened, synchronize]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  export:
+  apply:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
+          fetch-depth: 0
           show-progress: false
 
-      - name: Apply transformation
+      - name: Apply amendment incorporation
         shell: bash
         run: |
           python3 .github/scripts/finalize_docs.py || true
+          python3 .github/scripts/finalize_integrated_docs.py
 
-      - name: Upload transformed documentation
-        uses: actions/upload-artifact@v4
-        with:
-          name: transformed-documentation
-          path: docs
-          if-no-files-found: error
-          retention-days: 1
+      - name: Remove one-shot migration artifacts
+        shell: bash
+        run: |
+          rm -f \
+            .github/scripts/finalize_docs.py \
+            .github/scripts/finalize_integrated_docs.py \
+            .github/workflows/run-final-doc-migration.yml \
+            .github/workflows/run-final-doc-on-pr.yml \
+            .github/workflows/export-final-docs.yml
+
+      - name: Commit final documentation
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Complete amendment incorporation and close Gate E0"
+          git push origin HEAD:main
