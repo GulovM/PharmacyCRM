@@ -550,6 +550,9 @@ Middleware order:
 
 ### E1-FND-008 — Migration executable
 
+**Статус:** `IMPLEMENTED`
+**Evidence:** `cd backend && go test ./internal/platform/migration`
+
 `cmd/migrate` выполняет migrations как one-shot command. API/worker не мигрируют schema при startup. Добавить advisory lock, schema version, verification query и machine-readable exit status.
 
 ### E1-FND-009 — Frontend shell

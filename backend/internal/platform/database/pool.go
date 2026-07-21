@@ -58,6 +58,7 @@ func (p *Pool) Acquire(ctx context.Context) (*pgxpool.Conn, error) {
 	defer cancel()
 	return p.pool.Acquire(ctx)
 }
-func (p *Pool) Ping(ctx context.Context) error { return p.pool.Ping(ctx) }
-func (p *Pool) Close()                         { p.pool.Close() }
-func (p *Pool) Stat() *pgxpool.Stat            { return p.pool.Stat() }
+func (p *Pool) Ping(ctx context.Context) error                         { return p.pool.Ping(ctx) }
+func (p *Pool) AcquireConn(ctx context.Context) (*pgxpool.Conn, error) { return p.Acquire(ctx) }
+func (p *Pool) Close()                                                 { p.pool.Close() }
+func (p *Pool) Stat() *pgxpool.Stat                                    { return p.pool.Stat() }
