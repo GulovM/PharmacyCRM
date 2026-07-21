@@ -1,0 +1,30 @@
+name: Export transformed documentation
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          show-progress: false
+
+      - name: Apply transformation
+        shell: bash
+        run: |
+          python3 .github/scripts/finalize_docs.py || true
+
+      - name: Upload transformed documentation
+        uses: actions/upload-artifact@v4
+        with:
+          name: transformed-documentation
+          path: docs
+          if-no-files-found: error
+          retention-days: 1
