@@ -127,27 +127,21 @@ sequenceDiagram
         Audit->>DB: INSERT event
         UoW->>DB: COMMIT
         HTTP-->>Browser: 401 UNAUTHENTICATED
-    else credentials valid
+    else credentials valid and current user remains active
         LoginUC->>UoW: Create session transaction
         UoW->>DB: BEGIN
         LoginUC->>UserRepo: Revalidate and lock auth-relevant user state
         UserRepo->>DB: SELECT status, password_changed_at, version FOR UPDATE
-        alt user changed or inactive
-            LoginUC->>Audit: Record denied due to stale snapshot
-            Audit->>DB: INSERT event
-            UoW->>DB: COMMIT
-            HTTP-->>Browser: 401 UNAUTHENTICATED
-        else still valid
-            LoginUC->>SessionRepo: Insert session + refresh token hash
-            SessionRepo->>DB: INSERT session
-            LoginUC->>UserRepo: Record successful login / optional rehash metadata
-            UserRepo->>DB: UPDATE auth metadata
-            LoginUC->>Audit: Record login success
-            Audit->>DB: INSERT event
-            UoW->>DB: COMMIT
-            LoginUC-->>HTTP: access token + raw refresh token
-            HTTP-->>Browser: 200; HttpOnly refresh cookie
-        end
+        Note over LoginUC,DB: Changed or inactive user follows denied audit path and returns 401
+        LoginUC->>SessionRepo: Insert session + refresh token hash
+        SessionRepo->>DB: INSERT session
+        LoginUC->>UserRepo: Record successful login / optional rehash metadata
+        UserRepo->>DB: UPDATE auth metadata
+        LoginUC->>Audit: Record login success
+        Audit->>DB: INSERT event
+        UoW->>DB: COMMIT
+        LoginUC-->>HTTP: access token + raw refresh token
+        HTTP-->>Browser: 200; HttpOnly refresh cookie
     end
 ```
 
