@@ -1,3 +1,3 @@
-module github.com/pharmacycrm/pharmacycrm/backend
+module github.com/GulovM/PharmacyCRM/backend
 
 go 1.24.0
