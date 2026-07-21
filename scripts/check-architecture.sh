@@ -34,12 +34,16 @@ if find backend -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.jsx' -o -na
   fail 'frontend source must not be placed in backend/'
 fi
 
-if find frontend -type f -name '*.go' -print -quit | grep -q .; then
+if find frontend -path '*/node_modules' -prune -o -type f -name '*.go' -print -quit | grep -q .; then
   fail 'backend Go source must not be placed in frontend/'
 fi
 
 if rg -n --glob '*.go' '"[^"\n]*frontend/' backend >/dev/null; then
   fail 'backend Go source must not import frontend source'
+fi
+
+if rg -n --pcre2 --glob '*.go' '"github\.com/GulovM/PharmacyCRM/backend/(?!internal/bootstrap(?:/|"))' backend/cmd >/dev/null; then
+  fail 'cmd entry points may import project code only from internal/bootstrap'
 fi
 
 if rg -n --glob '*.{ts,tsx,js,jsx}' "from ['\"][^'\"]*backend/|import\(['\"][^'\"]*backend/" frontend >/dev/null; then

@@ -477,6 +477,9 @@ Backend содержит `cmd/api`, `cmd/worker`, `cmd/migrate`, `internal/boots
 
 ### E1-FND-002 — Backend configuration
 
+**Статус:** `IMPLEMENTED`
+**Evidence:** `cd backend && go test ./internal/platform/config`
+
 Использовать `github.com/kelseyhightower/envconfig`. Configuration groups: app, HTTP, PostgreSQL, auth, proxy/CORS, logging, tracing/metrics, worker, import/storage.
 
 Startup fail-fast при missing secret, invalid DSN, unsafe production cookie/TLS, wildcard CORS with credentials, invalid TTL/timeouts/pool, incompatible schema/protocol, invalid log path или production debug mode.
@@ -485,9 +488,15 @@ Startup fail-fast при missing secret, invalid DSN, unsafe production cookie/T
 
 ### E1-FND-003 — Logger
 
+**Статус:** `IMPLEMENTED`
+**Evidence:** `cd backend && go test ./internal/platform/logging`
+
 Создать Zap logger с terminal и rotating file sink. File path configurable, local default mounted volume. Startup probe проверяет path/permissions. Runtime file-sink failure использует fallback terminal, metric и alert, но не отключает transactional audit.
 
 ### E1-FND-004 — HTTP server
+
+**Статус:** `IMPLEMENTED`
+**Evidence:** `cd backend && go test ./internal/platform/httpserver`
 
 Использовать `gin.New()` и explicit `http.Server` с `ReadHeaderTimeout`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, header/body limits и graceful shutdown.
 
@@ -506,15 +515,24 @@ Middleware order:
 
 ### E1-FND-005 — Central HTTP responder
 
+**Статус:** `IMPLEMENTED`
+**Evidence:** `cd backend && go test ./internal/shared/httpx`
+
 Создать единый response/error mapper. Он формирует envelopes, request ID, safe message/details и mapping typed errors через `errors.Is()`/`errors.As()`.
 
 **Acceptance:** fuzz/contract tests не обнаруживают panic, multiple responses, SQL/stack/secret leakage.
 
 ### E1-FND-006 — PostgreSQL pool
 
+**Статус:** `IMPLEMENTED`
+**Evidence:** `cd backend && go test ./internal/platform/database`
+
 Настроить `pgxpool` с max/min connections, acquire timeout, connection lifetime, idle timeout, health interval и cancellation propagation. Runtime и migration credentials разделены.
 
 ### E1-FND-007 — Operational endpoints
+
+**Статус:** `IMPLEMENTED`
+**Evidence:** `cd backend && go test ./internal/platform/httpserver`
 
 #### `GET /healthz`
 
@@ -532,9 +550,15 @@ Middleware order:
 
 ### E1-FND-008 — Migration executable
 
+**Статус:** `IMPLEMENTED`
+**Evidence:** `cd backend && go test ./internal/platform/migration`
+
 `cmd/migrate` выполняет migrations как one-shot command. API/worker не мигрируют schema при startup. Добавить advisory lock, schema version, verification query и machine-readable exit status.
 
 ### E1-FND-009 — Frontend shell
+
+**Статус:** `IMPLEMENTED`
+**Evidence:** `cd frontend && pnpm typecheck && pnpm build`
 
 - React + TypeScript strict + Vite;
 - `pnpm` 10.x через Corepack;
@@ -548,6 +572,9 @@ Middleware order:
 - sensitive state очищается при logout/session loss.
 
 ### E1-FND-010 — CI baseline
+
+**Статус:** `IMPLEMENTED`
+**Evidence:** `.github/workflows/ci.yml`
 
 PR pipeline:
 

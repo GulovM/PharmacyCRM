@@ -1,0 +1,59 @@
+package config
+
+import (
+	"net"
+	"net/url"
+	"path/filepath"
+	"strings"
+)
+
+func validateLogging(c LoggingConfig, environment string) error {
+	if c.Level != "debug" && c.Level != "info" && c.Level != "warn" && c.Level != "error" {
+		return invalid("logging level is invalid")
+	}
+	if c.Format != "console" && c.Format != "json" {
+		return invalid("logging format is invalid")
+	}
+	if environment == productionEnvironment && (c.Level == "debug" || c.Format != "json") {
+		return invalid("production logging must use non-debug json output")
+	}
+	if c.FilePath == "" || filepath.Clean(c.FilePath) == "." || strings.HasSuffix(c.FilePath, string(filepath.Separator)) {
+		return invalid("logging file path is invalid")
+	}
+	if c.MaxSizeMB < 1 || c.MaxBackups < 1 || c.MaxAgeDays < 1 {
+		return invalid("logging rotation settings must be positive")
+	}
+	return nil
+}
+func validateTelemetry(c TelemetryConfig) error {
+	if _, _, err := net.SplitHostPort(c.MetricsAddress); err != nil {
+		return invalid("telemetry metrics address is invalid")
+	}
+	if c.TracingEndpoint != "" {
+		if u, err := url.ParseRequestURI(c.TracingEndpoint); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return invalid("telemetry tracing endpoint is invalid")
+		}
+	}
+	if c.ExportTimeout <= 0 {
+		return invalid("telemetry export timeout must be positive")
+	}
+	return nil
+}
+func validateWorker(c WorkerConfig, expectedProtocol int) error {
+	if c.ProtocolVersion != SupportedWorkerProtocol {
+		return invalid("worker protocol is unsupported")
+	}
+	if c.ProtocolVersion != expectedProtocol {
+		return invalid("worker protocol is incompatible with application protocol")
+	}
+	if c.Concurrency < 1 || c.MaxClaim < 1 || c.PollInterval <= 0 || c.LeaseDuration <= 0 {
+		return invalid("worker settings are invalid")
+	}
+	return nil
+}
+func validateStorage(c StorageConfig) error {
+	if c.ImportRoot == "" || filepath.Clean(c.ImportRoot) == "." || c.MaxUploadBytes <= 0 || c.Retention <= 0 {
+		return invalid("import storage settings are invalid")
+	}
+	return nil
+}

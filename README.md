@@ -20,4 +20,8 @@ This change establishes **E1-FND-001 — Repository roots**. Runtime services, f
 ```sh
 make architecture-check
 make test
+cd frontend && pnpm build
 ```
+
+`make` automatically uses the Bash architecture check on Unix-like systems and
+the equivalent PowerShell check on Windows.

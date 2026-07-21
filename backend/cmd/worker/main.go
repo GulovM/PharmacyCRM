@@ -1,4 +1,15 @@
-// Command worker will host PharmacyCRM background processing in a later E1 slice.
 package main
 
-func main() {}
+import (
+	"fmt"
+	"os"
+
+	"github.com/GulovM/PharmacyCRM/backend/internal/bootstrap"
+)
+
+func main() {
+	if err := bootstrap.RunWorker(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
