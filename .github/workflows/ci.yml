@@ -81,13 +81,7 @@ jobs:
         env:
           PGPASSWORD: ci-only-password
         run: |
-          psql -h localhost -U pharmacycrm -d pharmacycrm -v ON_ERROR_STOP=1 <<'SQL'
-          CREATE ROLE runtime_user LOGIN PASSWORD 'runtime-ci-password';
-          CREATE ROLE migration_user LOGIN PASSWORD 'migration-ci-password';
-          GRANT CONNECT ON DATABASE pharmacycrm TO runtime_user, migration_user;
-          GRANT USAGE ON SCHEMA public TO runtime_user, migration_user;
-          GRANT CREATE ON SCHEMA public TO migration_user;
-          SQL
+          psql -h localhost -U pharmacycrm -d pharmacycrm -v database_name=pharmacycrm -v runtime_role=runtime_user -v runtime_password=runtime-ci-password -v migration_role=migration_user -v migration_password=migration-ci-password -f deploy/scripts/provision-postgres-roles.sql
       - name: Apply migrations to an empty database
         working-directory: backend
         run: go run ./cmd/migrate
@@ -95,9 +89,7 @@ jobs:
         env:
           PGPASSWORD: ci-only-password
         run: |
-          psql -h localhost -U pharmacycrm -d pharmacycrm -v ON_ERROR_STOP=1 -c 'GRANT SELECT ON pharmacycrm_schema_migrations TO runtime_user'
           PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc 'SELECT MAX(version) FROM pharmacycrm_schema_migrations' | grep -x '1'
-          PGPASSWORD=ci-only-password psql -h localhost -U pharmacycrm -d pharmacycrm -Atc 'GRANT SELECT ON pharmacycrm_schema_metadata TO runtime_user'
           PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc 'SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton' | grep -x '1'
           PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc "SELECT has_schema_privilege(current_user, 'public', 'CREATE')" | grep -x 'f'
 

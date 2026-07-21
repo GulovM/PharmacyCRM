@@ -17,14 +17,14 @@ type Pool struct {
 	acquireTimeout time.Duration
 }
 
-func NewRuntime(ctx context.Context, cfg config.PostgresConfig) (*Pool, error) {
-	return newPool(ctx, cfg, cfg.RuntimeDSN)
+func NewRuntime(ctx context.Context, cfg config.RuntimePostgresConfig) (*Pool, error) {
+	return newPool(ctx, cfg.PoolConfig, cfg.DSN)
 }
-func NewMigration(ctx context.Context, cfg config.PostgresConfig) (*Pool, error) {
-	return newPool(ctx, cfg, cfg.MigrationDSN)
+func NewMigration(ctx context.Context, cfg config.MigrationPostgresConfig) (*Pool, error) {
+	return newPool(ctx, cfg.PoolConfig, cfg.DSN)
 }
 
-func newPool(ctx context.Context, cfg config.PostgresConfig, dsn string) (*Pool, error) {
+func newPool(ctx context.Context, cfg config.PoolConfig, dsn string) (*Pool, error) {
 	poolConfig, err := BuildPoolConfig(cfg, dsn)
 	if err != nil {
 		return nil, err
@@ -38,7 +38,7 @@ func newPool(ctx context.Context, cfg config.PostgresConfig, dsn string) (*Pool,
 
 // BuildPoolConfig is exposed for deterministic configuration tests and never
 // returns a DSN in an error message.
-func BuildPoolConfig(cfg config.PostgresConfig, dsn string) (*pgxpool.Config, error) {
+func BuildPoolConfig(cfg config.PoolConfig, dsn string) (*pgxpool.Config, error) {
 	poolConfig, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parse postgres pool configuration")

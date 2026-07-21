@@ -42,6 +42,10 @@ if rg -n --glob '*.go' '"[^"\n]*frontend/' backend >/dev/null; then
   fail 'backend Go source must not import frontend source'
 fi
 
+if rg -n --pcre2 --glob '*.go' '"github\.com/GulovM/PharmacyCRM/backend/(?!internal/bootstrap(?:/|"))' backend/cmd >/dev/null; then
+  fail 'cmd entry points may import project code only from internal/bootstrap'
+fi
+
 if rg -n --glob '*.{ts,tsx,js,jsx}' "from ['\"][^'\"]*backend/|import\(['\"][^'\"]*backend/" frontend >/dev/null; then
   fail 'frontend source must not import backend source'
 fi

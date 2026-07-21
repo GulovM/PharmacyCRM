@@ -8,12 +8,12 @@ import (
 	"github.com/GulovM/PharmacyCRM/backend/internal/platform/config"
 )
 
-func postgresConfig() config.PostgresConfig {
-	return config.PostgresConfig{RuntimeDSN: "postgres://runtime:runtime-secret@localhost:5432/pharmacy", MigrationDSN: "postgres://migrator:migration-secret@localhost:5432/pharmacy", MinConnections: 2, MaxConnections: 8, AcquireTimeout: 3 * time.Second, MaxConnectionLife: time.Hour, MaxConnectionIdle: 5 * time.Minute, HealthCheckPeriod: time.Minute, ConnectionCapacity: 10}
+func postgresConfig() config.PoolConfig {
+	return config.PoolConfig{MinConnections: 2, MaxConnections: 8, AcquireTimeout: 3 * time.Second, MaxConnectionLife: time.Hour, MaxConnectionIdle: 5 * time.Minute, HealthCheckPeriod: time.Minute, ConnectionCapacity: 10}
 }
 func TestBuildPoolConfigAppliesPoolBudget(t *testing.T) {
 	cfg := postgresConfig()
-	poolConfig, err := BuildPoolConfig(cfg, cfg.RuntimeDSN)
+	poolConfig, err := BuildPoolConfig(cfg, "postgres://runtime:runtime-secret@localhost:5432/pharmacy")
 	if err != nil {
 		t.Fatal(err)
 	}

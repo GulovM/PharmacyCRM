@@ -29,14 +29,35 @@ export class ApiClient {
   constructor(private readonly baseURL: string) {}
 
   async request<T>(path: string, init: RequestInit = {}): Promise<ApiResult<T>> {
-    const response = await authenticatedFetch(new URL(path, this.baseURL), init)
-    const requestID = response.headers.get('X-Request-ID') ?? ''
-    if (!response.ok) throw new ApiTransportError('API request failed', response.status, requestID)
-    if (!response.headers.get('content-type')?.toLowerCase().includes('application/json')) {
-      throw new ApiTransportError('API response is not JSON', response.status, requestID)
+    let response: Response
+    try {
+      response = await authenticatedFetch(new URL(path, this.baseURL), init)
+    } catch {
+      throw new ApiTransportError('API network request failed', 0)
     }
-    const envelope = envelopeSchema.parse(await response.json()) as ApiEnvelope<T>
-    if (!envelope.success && envelope.error.code === 'UNAUTHENTICATED') clearSensitiveSession()
-    return { envelope, requestID: requestID || envelope.meta.request_id }
+    const headerRequestID = response.headers.get('X-Request-ID') ?? ''
+    if (!response.headers.get('content-type')?.toLowerCase().includes('application/json')) {
+      throw new ApiTransportError('API response is not JSON', response.status, headerRequestID)
+    }
+    let body: unknown
+    try {
+      body = await response.json()
+    } catch {
+      throw new ApiTransportError('API response JSON is invalid', response.status, headerRequestID)
+    }
+    const parsed = envelopeSchema.safeParse(body)
+    if (!parsed.success) {
+      throw new ApiTransportError('API response violates the envelope contract', response.status, headerRequestID)
+    }
+    const envelope = parsed.data as ApiEnvelope<T>
+    const requestID = headerRequestID || envelope.meta.request_id
+    if (!envelope.success) {
+      if (response.status === 401 || envelope.error.code === 'UNAUTHENTICATED') clearSensitiveSession()
+      return { envelope, requestID }
+    }
+    if (!response.ok) {
+      throw new ApiTransportError('API response status contradicts success envelope', response.status, requestID)
+    }
+    return { envelope, requestID }
   }
 }

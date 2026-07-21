@@ -61,6 +61,10 @@ if (Test-RipgrepMatch @('-n', '--glob', '*.go', '"[^"\n]*frontend/', 'backend'))
     Fail 'backend Go source must not import frontend source'
 }
 
+if (Test-RipgrepMatch @('-n', '--pcre2', '--glob', '*.go', '"github\.com/GulovM/PharmacyCRM/backend/(?!internal/bootstrap(?:/|"))', 'backend/cmd')) {
+    Fail 'cmd entry points may import project code only from internal/bootstrap'
+}
+
 if (Test-RipgrepMatch @('-n', '--glob', '*.{ts,tsx,js,jsx}', 'from [''"][^''"]*backend/|import\([''"][^''"]*backend/', 'frontend')) {
     Fail 'frontend source must not import backend source'
 }
