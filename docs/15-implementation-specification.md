@@ -477,6 +477,9 @@ Backend содержит `cmd/api`, `cmd/worker`, `cmd/migrate`, `internal/boots
 
 ### E1-FND-002 — Backend configuration
 
+**Статус:** `IMPLEMENTED`
+**Evidence:** `cd backend && go test ./internal/platform/config`
+
 Использовать `github.com/kelseyhightower/envconfig`. Configuration groups: app, HTTP, PostgreSQL, auth, proxy/CORS, logging, tracing/metrics, worker, import/storage.
 
 Startup fail-fast при missing secret, invalid DSN, unsafe production cookie/TLS, wildcard CORS with credentials, invalid TTL/timeouts/pool, incompatible schema/protocol, invalid log path или production debug mode.
