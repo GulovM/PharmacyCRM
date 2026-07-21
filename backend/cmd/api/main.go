@@ -41,11 +41,15 @@ func main() {
 		pool,
 		func(ctx context.Context) error {
 			version, err := pool.SchemaVersion(ctx)
-			if err != nil || (cfg.App.MinSchemaVersion != 0 && version < int64(cfg.App.MinSchemaVersion)) || (cfg.App.MaxSchemaVersion != 0 && version > int64(cfg.App.MaxSchemaVersion)) { return errors.New("schema is incompatible") }
+			if err != nil || (cfg.App.MinSchemaVersion != 0 && version < int64(cfg.App.MinSchemaVersion)) || (cfg.App.MaxSchemaVersion != 0 && version > int64(cfg.App.MaxSchemaVersion)) {
+				return errors.New("schema is incompatible")
+			}
 			return nil
 		},
 		func(context.Context) error {
-			if cfg.Worker.ProtocolVersion != cfg.App.WorkerProtocol { return errors.New("worker protocol is incompatible") }
+			if cfg.Worker.ProtocolVersion != cfg.App.WorkerProtocol {
+				return errors.New("worker protocol is incompatible")
+			}
 			return nil
 		},
 		func(context.Context) error { return nil },

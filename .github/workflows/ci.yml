@@ -109,6 +109,8 @@ jobs:
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: fs
@@ -151,5 +153,5 @@ jobs:
       - name: Render Mermaid diagrams
         run: |
           for diagram in "$RUNNER_TEMP"/mermaid/*.mmd; do
-            npx --yes @mermaid-js/mermaid-cli@11.4.2 -i "$diagram" -o "$RUNNER_TEMP/diagram.svg"
+            npx --yes @mermaid-js/mermaid-cli@11.4.2 -p scripts/mermaid-puppeteer.json -i "$diagram" -o "$RUNNER_TEMP/diagram.svg"
           done
