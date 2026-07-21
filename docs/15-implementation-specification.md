@@ -457,6 +457,9 @@ OpenTelemetry-compatible traces включают HTTP ingress, auth policy, use 
 
 ### E1-FND-001 — Repository roots
 
+**Статус:** `IMPLEMENTED`
+**Evidence:** `make architecture-check` проверяет обязательные roots, запрещённые global paths и source imports между `backend/` и `frontend/`.
+
 Создать sibling roots:
 
 ```text

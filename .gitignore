@@ -1,0 +1,21 @@
+# Environment and local secrets
+.env
+.env.*
+!.env.example
+
+# Go
+backend/bin/
+backend/coverage.out
+
+# Node.js
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Test artifacts
+frontend/test-results/
+frontend/playwright-report/
+
+# Local runtime data
+var/
+*.log
