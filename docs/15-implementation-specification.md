@@ -557,6 +557,9 @@ Middleware order:
 
 ### E1-FND-009 — Frontend shell
 
+**Статус:** `IMPLEMENTED`
+**Evidence:** `cd frontend && pnpm typecheck && pnpm build`
+
 - React + TypeScript strict + Vite;
 - `pnpm` 10.x через Corepack;
 - exact `packageManager` и единственный `pnpm-lock.yaml`;

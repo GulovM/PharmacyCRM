@@ -1,0 +1,12 @@
+openapi: 3.1.0
+info: { title: PharmacyCRM API, version: 0.1.0 }
+paths:
+  /healthz:
+    get:
+      responses:
+        '200': { description: Process is alive }
+  /readyz:
+    get:
+      responses:
+        '200': { description: Process is ready }
+        '503': { description: Dependency is unavailable }
