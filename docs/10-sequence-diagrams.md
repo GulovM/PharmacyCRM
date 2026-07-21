@@ -182,19 +182,19 @@ sequenceDiagram
         Audit->>DB: INSERT event
         UoW->>DB: COMMIT
         RefreshUC-->>HTTP: New access + refresh token
-        HTTP-->>Browser: 200; atomically replace cookie
+        HTTP-->>Browser: 200 with atomically replaced cookie
     else previous generation reused
         RefreshUC->>SessionRepo: Revoke complete family
         SessionRepo->>DB: UPDATE family revoked_at
         RefreshUC->>Audit: Record high-severity reuse
         Audit->>DB: INSERT event
         UoW->>DB: COMMIT
-        HTTP-->>Browser: 401; clear cookie
+        HTTP-->>Browser: 401 and clear cookie
     else expired, revoked, invalid or inactive
         RefreshUC->>Audit: Record denied refresh without secret material
         Audit->>DB: INSERT event
         UoW->>DB: COMMIT
-        HTTP-->>Browser: 401; clear cookie
+        HTTP-->>Browser: 401 and clear cookie
     end
 ```
 
@@ -229,7 +229,7 @@ sequenceDiagram
         Audit->>DB: INSERT event if policy requires
     end
     UoW->>DB: COMMIT
-    HTTP-->>Browser: 204; expire cookie
+    HTTP-->>Browser: 204 and expire cookie
 ```
 
 Logout является идемпотентным и не раскрывает существование другой session.
@@ -498,7 +498,7 @@ sequenceDiagram
         SaleB->>DB: Lock same lot
         DB-->>SaleB: wait
     end
-    SaleA->>DB: UPDATE quantity=0; INSERT movement; COMMIT
+    SaleA->>DB: UPDATE quantity=0 then INSERT movement and COMMIT
     DB-->>SaleB: lock acquired with quantity=0
     SaleB->>SaleB: Recalculate after lock
     SaleB->>DB: ROLLBACK
@@ -724,8 +724,8 @@ sequenceDiagram
     ImportUC->>Policy: Revalidate ADMIN session and role
     Policy->>DB: Lock/read current authorization state
     ImportUC->>ImportRepo: Lock READY job and selected rows
-    ImportRepo->>DB: SELECT FOR UPDATE; set CONFIRMING
-    ImportUC->>ImportRepo: Apply catalog domain commands; set COMPLETED
+    ImportRepo->>DB: SELECT FOR UPDATE then set CONFIRMING
+    ImportUC->>ImportRepo: Apply catalog domain commands then set COMPLETED
     ImportRepo->>DB: INSERT/UPDATE
     ImportUC->>Audit: Record CatalogImportCompleted
     Audit->>DB: INSERT
