@@ -53,7 +53,7 @@ if (Get-ChildItem -Path backend -Recurse -File | Where-Object { $_.Extension -in
     Fail 'frontend source must not be placed in backend/'
 }
 
-if (Get-ChildItem -Path frontend -Recurse -File -Filter '*.go' | Select-Object -First 1) {
+if (Get-ChildItem -Path frontend -Recurse -File -Filter '*.go' | Where-Object { $_.FullName -notmatch '[\\/]node_modules[\\/]' } | Select-Object -First 1) {
     Fail 'backend Go source must not be placed in frontend/'
 }
 

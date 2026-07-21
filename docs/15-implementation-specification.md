@@ -573,6 +573,9 @@ Middleware order:
 
 ### E1-FND-010 — CI baseline
 
+**Статус:** `IMPLEMENTED`
+**Evidence:** `.github/workflows/ci.yml`
+
 PR pipeline:
 
 - formatting/lint/static checks;

@@ -34,7 +34,7 @@ if find backend -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.jsx' -o -na
   fail 'frontend source must not be placed in backend/'
 fi
 
-if find frontend -type f -name '*.go' -print -quit | grep -q .; then
+if find frontend -path '*/node_modules' -prune -o -type f -name '*.go' -print -quit | grep -q .; then
   fail 'backend Go source must not be placed in frontend/'
 fi
 

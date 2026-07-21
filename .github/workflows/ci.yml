@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality and generated contract
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.28.1'
+      - name: Install frontend dependencies from lockfile
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Check Go formatting
+        working-directory: backend
+        run: test -z "$(gofmt -l .)"
+      - name: Run backend static checks and tests
+        working-directory: backend
+        run: |
+          go vet ./...
+          go test ./...
+      - name: Run frontend lint, type checks and tests
+        working-directory: frontend
+        run: |
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+      - name: Verify generated OpenAPI client is current
+        working-directory: frontend
+        run: |
+          pnpm generate:api
+          git diff --exit-code -- src/shared/api/generated/schema.ts
+      - name: Check architecture boundaries
+        run: make architecture-check
+
+  migration-smoke:
+    name: Migration from zero
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17.2-alpine
+        env:
+          POSTGRES_DB: pharmacycrm
+          POSTGRES_USER: pharmacycrm
+          POSTGRES_PASSWORD: ci-only-password
+        options: >-
+          --health-cmd "pg_isready -U pharmacycrm -d pharmacycrm"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+    env:
+      POSTGRES_RUNTIME_DSN: postgres://pharmacycrm:ci-only-password@localhost:5432/pharmacycrm?sslmode=disable
+      POSTGRES_MIGRATION_DSN: postgres://pharmacycrm:ci-only-password@localhost:5432/pharmacycrm?sslmode=disable
+      AUTH_JWT_ISSUER: pharmacycrm-ci
+      AUTH_JWT_AUDIENCE: pharmacycrm-ci
+      AUTH_JWT_PRIVATE_KEY: ci-only-key
+      AUTH_REFRESH_TOKEN_PEPPER: ci-only-pepper
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+      - name: Apply migrations to an empty database
+        working-directory: backend
+        run: go run ./cmd/migrate
+
+  security-and-containers:
+    name: Security and container builds
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+      - uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,config
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+      - name: Build backend without build secrets
+        run: docker build --pull --file backend/Dockerfile --tag pharmacycrm-backend:ci backend
+      - name: Build frontend without build secrets
+        run: docker build --pull --file frontend/Dockerfile --tag pharmacycrm-frontend:ci frontend
+      - uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: pharmacycrm-backend:ci
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+      - uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: pharmacycrm-frontend:ci
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+  documentation:
+    name: Documentation links and Mermaid
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+      - name: Validate Markdown links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --offline --no-progress 'README.md' 'docs/**/*.md'
+          fail: true
+      - name: Extract Mermaid diagrams
+        run: node scripts/extract-mermaid.mjs "$RUNNER_TEMP/mermaid"
+      - name: Render Mermaid diagrams
+        run: |
+          for diagram in "$RUNNER_TEMP"/mermaid/*.mmd; do
+            npx --yes @mermaid-js/mermaid-cli@11.4.2 -i "$diagram" -o "$RUNNER_TEMP/diagram.svg"
+          done
