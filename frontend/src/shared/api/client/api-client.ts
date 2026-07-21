@@ -53,9 +53,8 @@ export class ApiClient {
     const requestID = headerRequestID || envelope.meta.request_id
     if (!envelope.success) {
       if (response.status === 401 || envelope.error.code === 'UNAUTHENTICATED') clearSensitiveSession()
-      return { envelope, requestID }
     }
-    if (!response.ok) {
+    if (response.ok !== envelope.success) {
       throw new ApiTransportError('API response status contradicts success envelope', response.status, requestID)
     }
     return { envelope, requestID }

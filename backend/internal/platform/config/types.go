@@ -8,9 +8,10 @@ import (
 )
 
 const (
-	productionEnvironment  = "production"
-	approvedJWTAlgorithm   = "EdDSA"
-	SupportedSchemaVersion = 1
+	productionEnvironment   = "production"
+	approvedJWTAlgorithm    = "EdDSA"
+	SupportedSchemaVersion  = 1
+	SupportedWorkerProtocol = 1
 )
 
 type AppConfig struct {

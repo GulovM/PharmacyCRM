@@ -10,8 +10,8 @@ func validateApp(c AppConfig) error {
 	if c.MinSchemaVersion < 1 || c.MaxSchemaVersion < c.MinSchemaVersion || c.MinSchemaVersion > SupportedSchemaVersion || c.MaxSchemaVersion > SupportedSchemaVersion {
 		return invalid("app schema compatibility range is invalid")
 	}
-	if c.WorkerProtocol < 1 {
-		return invalid("app worker protocol must be positive")
+	if c.WorkerProtocol != SupportedWorkerProtocol {
+		return invalid("app worker protocol is unsupported")
 	}
 	return nil
 }

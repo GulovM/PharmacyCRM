@@ -57,6 +57,43 @@ func TestLoadMigrationDoesNotRequireRuntimeOrAuthCredentials(t *testing.T) {
 	}
 }
 
+func TestLoadAPIAndWorkerRejectUnsupportedWorkerProtocols(t *testing.T) {
+	tests := []struct {
+		name, appProtocol, workerProtocol string
+	}{
+		{"both unsupported", "999", "999"},
+		{"app unsupported", "999", "1"},
+		{"worker unsupported", "1", "999"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setRuntimeEnvironment(t)
+			t.Setenv("APP_WORKER_PROTOCOL", tt.appProtocol)
+			t.Setenv("WORKER_PROTOCOL_VERSION", tt.workerProtocol)
+			t.Setenv("AUTH_JWT_ISSUER", "pharmacycrm")
+			t.Setenv("AUTH_JWT_AUDIENCE", "pharmacycrm-api")
+			t.Setenv("AUTH_JWT_PRIVATE_KEY", "private-key")
+			t.Setenv("AUTH_REFRESH_TOKEN_PEPPER", "pepper")
+			t.Setenv("PROXY_CORS_ALLOWED_ORIGINS", "http://localhost:5173")
+			for _, load := range []struct {
+				name string
+				run  func() error
+			}{
+				{"api", func() error { _, err := LoadAPI(); return err }},
+				{"worker", func() error { _, err := LoadWorker(); return err }},
+			} {
+				err := load.run()
+				if err == nil {
+					t.Fatalf("Load%s() error = nil", load.name)
+				}
+				if strings.Contains(err.Error(), "999") || strings.Contains(err.Error(), "private-key") {
+					t.Fatalf("validation error exposed configuration: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func validAPIConfig() APIConfig {
 	pool := PoolConfig{MaxConnections: 1, AcquireTimeout: time.Second, MaxConnectionLife: time.Second, MaxConnectionIdle: time.Second, HealthCheckPeriod: time.Second, ConnectionCapacity: 1}
 	return APIConfig{

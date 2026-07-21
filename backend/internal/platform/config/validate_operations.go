@@ -40,6 +40,9 @@ func validateTelemetry(c TelemetryConfig) error {
 	return nil
 }
 func validateWorker(c WorkerConfig, expectedProtocol int) error {
+	if c.ProtocolVersion != SupportedWorkerProtocol {
+		return invalid("worker protocol is unsupported")
+	}
 	if c.ProtocolVersion != expectedProtocol {
 		return invalid("worker protocol is incompatible with application protocol")
 	}

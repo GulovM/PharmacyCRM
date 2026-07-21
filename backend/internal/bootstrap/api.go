@@ -41,7 +41,7 @@ func RunAPI() error {
 			return nil
 		},
 		func(context.Context) error {
-			if cfg.Worker.ProtocolVersion != cfg.App.WorkerProtocol {
+			if cfg.Worker.ProtocolVersion != config.SupportedWorkerProtocol {
 				return errors.New("worker protocol is incompatible")
 			}
 			return nil
