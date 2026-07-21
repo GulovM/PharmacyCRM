@@ -3,8 +3,11 @@ package httpserver
 import (
 	"bytes"
 	"context"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +25,9 @@ func testServer(t *testing.T) *Server {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = logger.Close() })
-	server, err := New(config.HTTPConfig{Address: "127.0.0.1:0", ReadHeaderTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: time.Second, IdleTimeout: time.Second, ShutdownTimeout: time.Second, MaxHeaderBytes: 1024, MaxBodyBytes: 8}, config.ProxyCORSConfig{AllowedOrigins: config.CSV{"https://app.example"}, AllowCredentials: true}, logger, NewReadiness(pingOK{}))
+	readiness := NewReadiness(pingOK{}, func(context.Context) error { return nil }, func(context.Context) error { return nil }, func(context.Context) error { return nil })
+	readiness.MarkStartupComplete()
+	server, err := New(config.HTTPConfig{Address: "127.0.0.1:0", ReadHeaderTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: time.Second, IdleTimeout: time.Second, ShutdownTimeout: time.Second, MaxHeaderBytes: 1024, MaxBodyBytes: 8}, config.ProxyCORSConfig{AllowedOrigins: config.CSV{"https://app.example"}, AllowCredentials: true}, logger, readiness)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,4 +89,78 @@ func TestServerLimitsRequestBody(t *testing.T) {
 	if response.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d", response.Code)
 	}
+}
+
+func TestReadinessRequiresStartupAndEveryCriticalCheck(t *testing.T) {
+	blocked := errors.New("blocked")
+	readiness := NewReadiness(pingOK{}, func(context.Context) error { return blocked }, func(context.Context) error { return nil }, func(context.Context) error { return nil })
+	if err := readiness.Ready(context.Background()); err == nil {
+		t.Fatal("readiness passed before startup completion")
+	}
+	readiness.MarkStartupComplete()
+	if err := readiness.Ready(context.Background()); !errors.Is(err, blocked) {
+		t.Fatalf("readiness error = %v", err)
+	}
+}
+
+func TestShutdownDrainsAndWaitsForInFlightRequest(t *testing.T) {
+	server := testServer(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server.Router.GET("/slow", func(c *gin.Context) { close(started); <-release; c.Status(http.StatusNoContent) })
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() { _ = server.server.Serve(listener) }()
+	requestDone := make(chan error, 1)
+	go func() {
+		response, err := http.Get("http://" + listener.Addr().String() + "/slow")
+		if err == nil {
+			response.Body.Close()
+		}
+		requestDone <- err
+	}()
+	<-started
+	shutdownDone := make(chan error, 1)
+	go func() { shutdownDone <- server.Shutdown(context.Background()) }()
+	for !server.readiness.draining.Load() {
+		runtime.Gosched()
+	}
+	if err := server.readiness.Ready(context.Background()); err == nil {
+		t.Fatal("server remained ready while draining")
+	}
+	select {
+	case err := <-shutdownDone:
+		t.Fatalf("shutdown returned before in-flight request: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	if err := <-requestDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-shutdownDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestShutdownIsBoundedByConfiguredTimeout(t *testing.T) {
+	server := testServer(t)
+	server.config.ShutdownTimeout = 10 * time.Millisecond
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server.Router.GET("/slow-timeout", func(c *gin.Context) { close(started); <-release })
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() { _ = server.server.Serve(listener) }()
+	go func() { _, _ = http.Get("http://" + listener.Addr().String() + "/slow-timeout") }()
+	<-started
+	if err := server.Shutdown(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("shutdown error = %v", err)
+	}
+	close(release)
 }

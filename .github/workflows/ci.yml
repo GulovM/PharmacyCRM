@@ -66,8 +66,8 @@ jobs:
         ports:
           - 5432:5432
     env:
-      POSTGRES_RUNTIME_DSN: postgres://pharmacycrm:ci-only-password@localhost:5432/pharmacycrm?sslmode=disable
-      POSTGRES_MIGRATION_DSN: postgres://pharmacycrm:ci-only-password@localhost:5432/pharmacycrm?sslmode=disable
+      POSTGRES_RUNTIME_DSN: postgres://runtime_user:runtime-ci-password@localhost:5432/pharmacycrm?sslmode=disable
+      POSTGRES_MIGRATION_DSN: postgres://migration_user:migration-ci-password@localhost:5432/pharmacycrm?sslmode=disable
       AUTH_JWT_ISSUER: pharmacycrm-ci
       AUTH_JWT_AUDIENCE: pharmacycrm-ci
       AUTH_JWT_PRIVATE_KEY: ci-only-key
@@ -77,9 +77,29 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.0'
+      - name: Provision separate runtime and migration roles
+        env:
+          PGPASSWORD: ci-only-password
+        run: |
+          psql -h localhost -U pharmacycrm -d pharmacycrm -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE runtime_user LOGIN PASSWORD 'runtime-ci-password';
+          CREATE ROLE migration_user LOGIN PASSWORD 'migration-ci-password';
+          GRANT CONNECT ON DATABASE pharmacycrm TO runtime_user, migration_user;
+          GRANT USAGE ON SCHEMA public TO runtime_user, migration_user;
+          GRANT CREATE ON SCHEMA public TO migration_user;
+          SQL
       - name: Apply migrations to an empty database
         working-directory: backend
         run: go run ./cmd/migrate
+      - name: Verify schema metadata and least-privilege runtime role
+        env:
+          PGPASSWORD: ci-only-password
+        run: |
+          psql -h localhost -U pharmacycrm -d pharmacycrm -v ON_ERROR_STOP=1 -c 'GRANT SELECT ON pharmacycrm_schema_migrations TO runtime_user'
+          PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc 'SELECT MAX(version) FROM pharmacycrm_schema_migrations' | grep -x '1'
+          PGPASSWORD=ci-only-password psql -h localhost -U pharmacycrm -d pharmacycrm -Atc 'GRANT SELECT ON pharmacycrm_schema_metadata TO runtime_user'
+          PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc 'SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton' | grep -x '1'
+          PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc "SELECT has_schema_privilege(current_user, 'public', 'CREATE')" | grep -x 'f'
 
   security-and-containers:
     name: Security and container builds
@@ -89,7 +109,7 @@ jobs:
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
-      - uses: aquasecurity/trivy-action@0.28.0
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: fs
           scanners: vuln,secret,config
@@ -99,13 +119,13 @@ jobs:
         run: docker build --pull --file backend/Dockerfile --tag pharmacycrm-backend:ci backend
       - name: Build frontend without build secrets
         run: docker build --pull --file frontend/Dockerfile --tag pharmacycrm-frontend:ci frontend
-      - uses: aquasecurity/trivy-action@0.28.0
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: pharmacycrm-backend:ci
           format: table
           severity: HIGH,CRITICAL
           exit-code: '1'
-      - uses: aquasecurity/trivy-action@0.28.0
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: pharmacycrm-frontend:ci
           format: table
@@ -125,6 +145,7 @@ jobs:
         with:
           args: --offline --no-progress 'README.md' 'docs/**/*.md'
           fail: true
+          failIfEmpty: false
       - name: Extract Mermaid diagrams
         run: node scripts/extract-mermaid.mjs "$RUNNER_TEMP/mermaid"
       - name: Render Mermaid diagrams

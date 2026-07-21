@@ -222,7 +222,7 @@ func validateHTTP(c HTTPConfig, environment string) error {
 	if _, _, err := net.SplitHostPort(c.Address); err != nil {
 		return invalid("http address is invalid")
 	}
-	if c.TLSMode != "disabled" && c.TLSMode != "terminated" && c.TLSMode != "direct" {
+	if c.TLSMode != "disabled" && c.TLSMode != "terminated" {
 		return invalid("http tls mode is invalid")
 	}
 	if environment == productionEnvironment && c.TLSMode == "disabled" {

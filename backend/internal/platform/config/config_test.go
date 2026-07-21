@@ -55,6 +55,7 @@ func TestValidateRejectsUnsafeConfigurations(t *testing.T) {
 			c.Logging.Format = "json"
 		}},
 		{"invalid dsn", func(c *Config) { c.Postgres.RuntimeDSN = "not-a-dsn" }},
+		{"unsupported direct tls", func(c *Config) { c.HTTP.TLSMode = "direct" }},
 		{"unsafe production cookie", func(c *Config) {
 			c.App.Environment = "production"
 			c.HTTP.TLSMode = "terminated"

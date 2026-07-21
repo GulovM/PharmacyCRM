@@ -73,32 +73,44 @@ func (r *Responder) write(c *gin.Context, response response, operation string) {
 	default:
 		log.Info("http.request.failed")
 	}
-	c.JSON(response.status, errorEnvelope{Success: false, Error: publicError{Code: response.code, Message: response.message}, Meta: Meta{RequestID: requestID(c)}})
+	c.JSON(response.status, errorEnvelope{Success: false, Error: publicError{Code: response.code, Message: response.message, Details: response.details}, Meta: Meta{RequestID: requestID(c)}})
 }
 
 type response struct {
 	status               int
 	code, message, level string
+	details              []Detail
 }
 
 func classify(err error) response {
+	var typed *apperror.Typed
+	if errors.As(err, &typed) {
+		response := classify(typed.Category)
+		if errors.Is(typed.Category, apperror.ErrInvalidArgument) {
+			response.details = make([]Detail, 0, len(typed.Details))
+			for _, detail := range typed.Details {
+				response.details = append(response.details, Detail{Field: detail.Field, Code: detail.Code, Message: detail.Message})
+			}
+		}
+		return response
+	}
 	switch {
 	case errors.Is(err, apperror.ErrInvalidArgument):
-		return response{http.StatusBadRequest, "INVALID_ARGUMENT", "request is invalid", "warn"}
+		return response{status: http.StatusBadRequest, code: "INVALID_ARGUMENT", message: "request is invalid", level: "warn"}
 	case errors.Is(err, apperror.ErrUnauthenticated):
-		return response{http.StatusUnauthorized, "UNAUTHENTICATED", "authentication is required", "info"}
+		return response{status: http.StatusUnauthorized, code: "UNAUTHENTICATED", message: "authentication is required", level: "info"}
 	case errors.Is(err, apperror.ErrForbidden):
-		return response{http.StatusForbidden, "FORBIDDEN", "operation is forbidden", "warn"}
+		return response{status: http.StatusForbidden, code: "FORBIDDEN", message: "operation is forbidden", level: "warn"}
 	case errors.Is(err, apperror.ErrNotFound):
-		return response{http.StatusNotFound, "NOT_FOUND", "resource not found", "info"}
+		return response{status: http.StatusNotFound, code: "NOT_FOUND", message: "resource not found", level: "info"}
 	case errors.Is(err, apperror.ErrConflict):
-		return response{http.StatusConflict, "CONFLICT", "operation conflicts with current state", "warn"}
+		return response{status: http.StatusConflict, code: "CONFLICT", message: "operation conflicts with current state", level: "warn"}
 	case errors.Is(err, apperror.ErrBusinessRule):
-		return response{http.StatusUnprocessableEntity, "BUSINESS_RULE_VIOLATION", "operation violates a business rule", "info"}
+		return response{status: http.StatusUnprocessableEntity, code: "BUSINESS_RULE_VIOLATION", message: "operation violates a business rule", level: "info"}
 	case errors.Is(err, apperror.ErrUnavailable):
-		return response{http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "service is temporarily unavailable", "error"}
+		return response{status: http.StatusServiceUnavailable, code: "SERVICE_UNAVAILABLE", message: "service is temporarily unavailable", level: "error"}
 	default:
-		return response{http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error", "error"}
+		return response{status: http.StatusInternalServerError, code: "INTERNAL_ERROR", message: "internal server error", level: "error"}
 	}
 }
 func requestID(c *gin.Context) string {

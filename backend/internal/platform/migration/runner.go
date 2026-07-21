@@ -107,8 +107,20 @@ func Run(ctx context.Context, pool *database.Pool, migrations []Migration) (Resu
 		result.Applied = append(result.Applied, migration.Version)
 		result.SchemaVersion = migration.Version
 	}
-	if _, err := tx.Exec(ctx, "SELECT 1"); err != nil {
-		return Result{}, fmt.Errorf("verify migration result")
+	var recordedVersion int64
+	var recordedCount int
+	if err := tx.QueryRow(ctx, "SELECT COALESCE(MAX(version), 0), COUNT(*) FROM pharmacycrm_schema_migrations").Scan(&recordedVersion, &recordedCount); err != nil {
+		return Result{}, fmt.Errorf("verify migration metadata")
+	}
+	if recordedCount != len(migrations) || recordedVersion != result.SchemaVersion {
+		return Result{}, fmt.Errorf("verify migration version")
+	}
+	var declaredVersion int64
+	if err := tx.QueryRow(ctx, "SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton").Scan(&declaredVersion); err != nil {
+		return Result{}, fmt.Errorf("verify schema metadata")
+	}
+	if declaredVersion != result.SchemaVersion {
+		return Result{}, fmt.Errorf("verify declared schema version")
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Result{}, fmt.Errorf("commit migrations")

@@ -58,7 +58,14 @@ func (p *Pool) Acquire(ctx context.Context) (*pgxpool.Conn, error) {
 	defer cancel()
 	return p.pool.Acquire(ctx)
 }
-func (p *Pool) Ping(ctx context.Context) error                         { return p.pool.Ping(ctx) }
+func (p *Pool) Ping(ctx context.Context) error { return p.pool.Ping(ctx) }
+func (p *Pool) SchemaVersion(ctx context.Context) (int64, error) {
+	var version int64
+	if err := p.pool.QueryRow(ctx, "SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton").Scan(&version); err != nil {
+		return 0, fmt.Errorf("read schema version")
+	}
+	return version, nil
+}
 func (p *Pool) AcquireConn(ctx context.Context) (*pgxpool.Conn, error) { return p.Acquire(ctx) }
 func (p *Pool) Close()                                                 { p.pool.Close() }
 func (p *Pool) Stat() *pgxpool.Stat                                    { return p.pool.Stat() }

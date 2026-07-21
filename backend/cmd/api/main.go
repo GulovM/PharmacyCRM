@@ -37,11 +37,25 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
-	server, err := httpserver.New(cfg.HTTP, cfg.ProxyCORS, logger, httpserver.NewReadiness(pool))
+	readiness := httpserver.NewReadiness(
+		pool,
+		func(ctx context.Context) error {
+			version, err := pool.SchemaVersion(ctx)
+			if err != nil || (cfg.App.MinSchemaVersion != 0 && version < int64(cfg.App.MinSchemaVersion)) || (cfg.App.MaxSchemaVersion != 0 && version > int64(cfg.App.MaxSchemaVersion)) { return errors.New("schema is incompatible") }
+			return nil
+		},
+		func(context.Context) error {
+			if cfg.Worker.ProtocolVersion != cfg.App.WorkerProtocol { return errors.New("worker protocol is incompatible") }
+			return nil
+		},
+		func(context.Context) error { return nil },
+	)
+	server, err := httpserver.New(cfg.HTTP, cfg.ProxyCORS, logger, readiness)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "initialize http server")
 		os.Exit(1)
 	}
+	readiness.MarkStartupComplete()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	errCh := make(chan error, 1)

@@ -1,3 +1,8 @@
--- E1-FND-008: migration history is bootstrapped by the executable itself.
--- Verification: SELECT 1;
-SELECT 1;
+CREATE TABLE pharmacycrm_schema_metadata (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    schema_version bigint NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO pharmacycrm_schema_metadata (singleton, schema_version)
+VALUES (true, 1);
