@@ -23,22 +23,11 @@ jobs:
           python3 .github/scripts/finalize_docs.py || true
           python3 .github/scripts/finalize_integrated_docs.py
 
-      - name: Remove one-shot migration artifacts
-        shell: bash
-        run: |
-          rm -f \
-            .github/scripts/finalize_docs.py \
-            .github/scripts/finalize_integrated_docs.py \
-            .github/workflows/run-final-doc-migration.yml \
-            .github/workflows/run-final-doc-on-pr.yml \
-            .github/workflows/export-final-docs.yml
-
       - name: Commit final documentation
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --cached --check
+          git add docs
           git commit -m "Complete amendment incorporation and close Gate E0"
           git push origin HEAD:main
