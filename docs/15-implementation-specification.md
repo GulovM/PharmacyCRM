@@ -524,9 +524,15 @@ Middleware order:
 
 ### E1-FND-006 — PostgreSQL pool
 
+**Статус:** `IMPLEMENTED`
+**Evidence:** `cd backend && go test ./internal/platform/database`
+
 Настроить `pgxpool` с max/min connections, acquire timeout, connection lifetime, idle timeout, health interval и cancellation propagation. Runtime и migration credentials разделены.
 
 ### E1-FND-007 — Operational endpoints
+
+**Статус:** `IMPLEMENTED`
+**Evidence:** `cd backend && go test ./internal/platform/httpserver`
 
 #### `GET /healthz`
 

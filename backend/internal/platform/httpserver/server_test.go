@@ -2,8 +2,10 @@ package httpserver
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,12 +22,31 @@ func testServer(t *testing.T) *Server {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = logger.Close() })
-	server, err := New(config.HTTPConfig{Address: "127.0.0.1:0", ReadHeaderTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: time.Second, IdleTimeout: time.Second, ShutdownTimeout: time.Second, MaxHeaderBytes: 1024, MaxBodyBytes: 8}, config.ProxyCORSConfig{AllowedOrigins: config.CSV{"https://app.example"}, AllowCredentials: true}, logger)
+	server, err := New(config.HTTPConfig{Address: "127.0.0.1:0", ReadHeaderTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: time.Second, IdleTimeout: time.Second, ShutdownTimeout: time.Second, MaxHeaderBytes: 1024, MaxBodyBytes: 8}, config.ProxyCORSConfig{AllowedOrigins: config.CSV{"https://app.example"}, AllowCredentials: true}, logger, NewReadiness(pingOK{}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return server
 }
+
+func TestOperationalEndpointsSeparateLivenessAndReadiness(t *testing.T) {
+	server := testServer(t)
+	response := httptest.NewRecorder()
+	server.Router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("health status=%d", response.Code)
+	}
+	server.readiness.SetDraining()
+	response = httptest.NewRecorder()
+	server.Router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if response.Code != http.StatusServiceUnavailable || strings.Contains(response.Body.String(), "database") {
+		t.Fatalf("unsafe readiness response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+type pingOK struct{}
+
+func (pingOK) Ping(context.Context) error { return nil }
 
 func TestServerConfiguresExplicitHTTPServerAndMiddleware(t *testing.T) {
 	server := testServer(t)

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"runtime/debug"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/GulovM/PharmacyCRM/backend/internal/platform/config"
 	"github.com/GulovM/PharmacyCRM/backend/internal/platform/logging"
+	"github.com/GulovM/PharmacyCRM/backend/internal/shared/apperror"
 	"github.com/GulovM/PharmacyCRM/backend/internal/shared/httpx"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -22,15 +24,16 @@ const requestIDHeader = "X-Request-ID"
 
 // Server wraps the explicit net/http server required for production operation.
 type Server struct {
-	Router *gin.Engine
-	server *http.Server
-	config config.HTTPConfig
-	logger *logging.Logger
+	Router    *gin.Engine
+	server    *http.Server
+	config    config.HTTPConfig
+	logger    *logging.Logger
+	readiness *Readiness
 }
 
 // New builds a Gin router with explicitly ordered middleware and never relies
 // on gin.Default's implicit logger or recovery middleware.
-func New(httpConfig config.HTTPConfig, proxyCORS config.ProxyCORSConfig, logger *logging.Logger) (*Server, error) {
+func New(httpConfig config.HTTPConfig, proxyCORS config.ProxyCORSConfig, logger *logging.Logger, readiness *Readiness) (*Server, error) {
 	router := gin.New()
 	if proxyCORS.TrustForwardedHeaders {
 		if err := router.SetTrustedProxies([]string(proxyCORS.TrustedProxyCIDRs)); err != nil {
@@ -54,10 +57,11 @@ func New(httpConfig config.HTTPConfig, proxyCORS config.ProxyCORSConfig, logger 
 		routePolicyAndRateLimit(),
 	)
 
-	return &Server{
-		Router: router,
-		config: httpConfig,
-		logger: logger,
+	server := &Server{
+		Router:    router,
+		config:    httpConfig,
+		logger:    logger,
+		readiness: readiness,
 		server: &http.Server{
 			Addr: httpConfig.Address, Handler: router,
 			ReadHeaderTimeout: httpConfig.ReadHeaderTimeout,
@@ -66,7 +70,16 @@ func New(httpConfig config.HTTPConfig, proxyCORS config.ProxyCORSConfig, logger 
 			IdleTimeout:       httpConfig.IdleTimeout,
 			MaxHeaderBytes:    httpConfig.MaxHeaderBytes,
 		},
-	}, nil
+	}
+	router.GET("/healthz", func(c *gin.Context) { responder.JSON(c, http.StatusOK, gin.H{"status": "ok"}) })
+	router.GET("/readyz", func(c *gin.Context) {
+		if err := readiness.Ready(c.Request.Context()); err != nil {
+			responder.Error(c, fmt.Errorf("readiness: %w", apperror.ErrUnavailable), "readiness")
+			return
+		}
+		responder.JSON(c, http.StatusOK, gin.H{"status": "ready"})
+	})
+	return server, nil
 }
 
 func (s *Server) ListenAndServe() error {
@@ -78,6 +91,7 @@ func (s *Server) ListenAndServe() error {
 }
 
 func (s *Server) Shutdown(parent context.Context) error {
+	s.readiness.SetDraining()
 	ctx, cancel := context.WithTimeout(parent, s.config.ShutdownTimeout)
 	defer cancel()
 	return s.server.Shutdown(ctx)

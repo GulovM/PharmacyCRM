@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/GulovM/PharmacyCRM/backend/internal/platform/config"
+	"github.com/GulovM/PharmacyCRM/backend/internal/platform/database"
 	"github.com/GulovM/PharmacyCRM/backend/internal/platform/httpserver"
 	"github.com/GulovM/PharmacyCRM/backend/internal/platform/logging"
 	"go.uber.org/zap"
@@ -30,7 +31,13 @@ func main() {
 			fmt.Fprintln(os.Stderr, "logger shutdown failed")
 		}
 	}()
-	server, err := httpserver.New(cfg.HTTP, cfg.ProxyCORS, logger)
+	pool, err := database.NewRuntime(context.Background(), cfg.Postgres)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "initialize postgres pool")
+		os.Exit(1)
+	}
+	defer pool.Close()
+	server, err := httpserver.New(cfg.HTTP, cfg.ProxyCORS, logger, httpserver.NewReadiness(pool))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "initialize http server")
 		os.Exit(1)
