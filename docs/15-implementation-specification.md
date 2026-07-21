@@ -495,6 +495,9 @@ Startup fail-fast при missing secret, invalid DSN, unsafe production cookie/T
 
 ### E1-FND-004 — HTTP server
 
+**Статус:** `IMPLEMENTED`
+**Evidence:** `cd backend && go test ./internal/platform/httpserver`
+
 Использовать `gin.New()` и explicit `http.Server` с `ReadHeaderTimeout`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, header/body limits и graceful shutdown.
 
 Middleware order:
