@@ -1,0 +1,30 @@
+name: Apply final consistency patch
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          show-progress: false
+
+      - name: Apply and validate final patch
+        run: python3 .github/scripts/final_consistency_patch.py
+
+      - name: Commit patched documents
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs
+          git commit -m "Eliminate residual documentation contradictions"
+          git push origin HEAD:main
