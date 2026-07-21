@@ -515,6 +515,9 @@ Middleware order:
 
 ### E1-FND-005 — Central HTTP responder
 
+**Статус:** `IMPLEMENTED`
+**Evidence:** `cd backend && go test ./internal/shared/httpx`
+
 Создать единый response/error mapper. Он формирует envelopes, request ID, safe message/details и mapping typed errors через `errors.Is()`/`errors.As()`.
 
 **Acceptance:** fuzz/contract tests не обнаруживают panic, multiple responses, SQL/stack/secret leakage.

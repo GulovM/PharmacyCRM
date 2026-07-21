@@ -13,6 +13,7 @@ import (
 
 	"github.com/GulovM/PharmacyCRM/backend/internal/platform/config"
 	"github.com/GulovM/PharmacyCRM/backend/internal/platform/logging"
+	"github.com/GulovM/PharmacyCRM/backend/internal/shared/httpx"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -41,9 +42,10 @@ func New(httpConfig config.HTTPConfig, proxyCORS config.ProxyCORSConfig, logger 
 
 	// This order is normative. Auth and route-policy middleware are intentional
 	// placeholders until E3 introduces their concrete policies.
+	responder := httpx.NewResponder(logger)
 	router.Use(
 		requestID(),
-		recovery(logger),
+		recovery(logger, responder),
 		accessLog(logger),
 		tracingMetrics(),
 		bodyLimit(httpConfig.MaxBodyBytes),
@@ -93,12 +95,13 @@ func requestID() gin.HandlerFunc {
 	}
 }
 
-func recovery(logger *logging.Logger) gin.HandlerFunc {
+func recovery(logger *logging.Logger, responder *httpx.Responder) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				logger.Error("http.panic", zap.String("request_id", currentRequestID(c)), zap.ByteString("stack", debug.Stack()))
-				c.AbortWithStatus(http.StatusInternalServerError)
+				responder.Panic(c, "http.panic")
+				c.Abort()
 			}
 		}()
 		c.Next()
