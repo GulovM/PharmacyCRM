@@ -1,8 +1,8 @@
 # PharmacyCRM — Cross-Document Consistency Amendment
 
 **Статус документа:** Incorporated  
-**Версия:** 1.1  
-**Дата:** 2026-07-20  
+**Версия:** 1.2  
+**Дата:** 2026-07-21  
 **Связанные документы:** `00-documentation-index.md`, `01-product-vision.md`, `02-srs.md`, `03-system-context.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `05-api-design.md`, `06-database-design.md`, `07-domain-model.md`, `08-project-structure.md`, `09-security-design.md`, `10-sequence-diagrams.md`, `11-development-roadmap.md`, `12-deployment.md`, `13-testing-strategy.md`, `14-observability.md`
 
 ## 0. Статус инкорпорации
@@ -10,30 +10,18 @@
 Документ имеет статус `Incorporated` и сохраняется только как история cross-document review. Он больше не является отдельным активным источником правил: приоритет имеют актуальные исходные документы и принятые ADR/policies.
 Gate E0 закрыт решениями, зафиксированными в Security Design, Database Design, Development Roadmap, Deployment, Testing Strategy и Observability.
 
-## 1. Назначение и нормативный приоритет
+## 1. Историческое назначение
 
-Документ фиксирует результаты полного cross-document review основного комплекта PharmacyCRM `00–14` и устраняет обнаруженные расхождения между детальными проектными документами.
+Документ сохраняет контекст cross-document review, выполненного до инкорпорации: обнаруженные расхождения, выбранные варианты и матрицу переноса в исходные документы.
 
-Поправка не изменяет Product Vision, SRS и принятые ADR. Она:
+После получения статуса `Incorporated` он:
 
-- выбирает единую трактовку там, где два или несколько детальных документов описывают один механизм по-разному;
-- уточняет, как следует читать двусмысленные формулировки Product Vision и SRS без изменения их продуктового смысла;
-- определяет обязательные изменения, которые должны быть инкорпорированы в исходные документы;
-- предотвращает реализацию нескольких несовместимых вариантов одного механизма.
+- не участвует в нормативном порядке приоритетов;
+- не заменяет исходные документы `04–14` и принятые ADR;
+- не используется реализацией как самостоятельный источник правил;
+- обновляется только для сохранения достоверной истории review.
 
-При противоречии применяется порядок:
-
-1. применимое законодательство и обязательные регуляторные требования;
-2. `01-product-vision.md`;
-3. `02-srs.md`;
-4. принятые ADR;
-5. настоящий amendment для явно перечисленных в нём конфликтов;
-6. остальные детальные документы `03–14`;
-7. реализация и тесты.
-
-Если принятый ADR противоречит этой поправке, решение не изменяется молча: создаётся новый ADR со статусом `Supersedes`, после чего amendment и затронутые документы обновляются в одном change set.
-
-До инкорпорации каждого пункта в исходные документы настоящий amendment является нормативным источником истины по соответствующему расхождению.
+Актуальные правила находятся в `00-documentation-index.md`, Product Vision, SRS, принятых ADR и соответствующих исходных документах.
 
 ## 2. Результат review
 
@@ -65,7 +53,7 @@ Gate E0 закрыт решениями, зафиксированными в Sec
 - количества хранятся целыми базовыми единицами;
 - frontend не является источником цены, total, stock, role или FEFO allocation;
 - inventory movements, audit и проведённые документы append-only;
-- возвраты не допускаются к production до утверждения юридической policy;
+- на момент review возвратный production flow ожидал legal policy; после Gate E0 действует консервативный baseline: customer-returned medicines не возвращаются в sellable stock;
 - public API не раскрывает точные остатки, lot IDs, закупочные цены и audit;
 - Redis, broker и search engine не являются обязательными источниками истины MVP.
 
@@ -207,20 +195,17 @@ ENDED -> X
 
 Critical mutations немедленно прекращают доступ после commit изменения security state, поскольку повторно читают актуальные user/session/role/assignment records внутри transaction.
 
-### 7.3 version-counter авторизации
+### 7.3 Актуальность authorization state
 
-Термин version-counter авторизации в диаграммах не означает существующую колонку БД.
+Отдельное скрытое поле или счётчик инвалидирования доступа не используется. Актуальность полномочий определяется текущими записями:
 
-До отдельного ADR/schema change актуальность доступа определяется через:
-
-- `users.status` и `users.version`;
-- `password_changed_at`;
+- `users.status`, `users.version`, `password_changed_at`;
 - active role assignment;
-- active/revoked/expired session;
+- active, non-revoked и non-expired session;
 - active pharmacy assignment;
 - pharmacy state.
 
-Нельзя реализовать скрытое поле version-counter авторизации, denylist или session-version protocol без синхронизации Database Design, Security Design, API/session semantics и migrations.
+Новый механизм инвалидирования требует ADR, изменения схемы, migrations и синхронизации session/API semantics.
 
 ## 8. API paths как источник истины
 
@@ -262,20 +247,16 @@ Path parameters в документах именуются `{pharmacy_id}`, `{us
 
 ## 10. Return terminology и protocol
 
-Domain/API enum `ReturnAction`:
+Domain/API enum `ReturnAction` содержит:
 
 - `RESTOCK`;
 - `WRITE_OFF`;
 - `QUARANTINE`;
 - `NO_PHYSICAL_RETURN`.
 
-`RETURN_TO_STOCK`, `RETURN_WRITE_OFF` и `RETURN_QUARANTINE` являются типами `InventoryOperation`, а не значениями `ReturnAction`.
+Складские типы операций возврата относятся к `InventoryOperation.type`, а не к `ReturnAction`.
 
-Sequence labels `RETURN_TO_STOCK allowed` и `DO_NOT_RETURN_TO_STOCK` должны читаться соответственно как ветви `RESTOCK` и non-restocking action (`WRITE_OFF`, `QUARANTINE`, `NO_PHYSICAL_RETURN`).
-
-Для `RESTOCK`/`QUARANTINE` target lot определяется явной suitability policy. Только `RESTOCK` увеличивает sellable stock. `WRITE_OFF`, `QUARANTINE` и `NO_PHYSICAL_RETURN` не увеличивают доступный остаток.
-
-Return production path остаётся disabled до юридического утверждения policy и refund/rounding rules.
+Для customer-returned medicines Gate E0 запрещает перевод в sellable stock: production flow использует `QUARANTINE`, `WRITE_OFF` или `NO_PHYSICAL_RETURN`. `RESTOCK` допустим только для отдельного юридически и операционно утверждённого non-customer flow.
 
 ## 11. Import states
 
@@ -434,8 +415,8 @@ Central responder является единственным HTTP mapping boundar
 9. amendment отмечает пункт как incorporated;
 10. отсутствует второй несовместимый implementation path.
 
-## 20. Правило сопровождения
+## 20. Историческое сопровождение
 
-Любое изменение modules, ownership, transaction protocol, idempotency, lock order, outbox, assignment/session semantics, API path, domain enum, ImportJob state, event catalog, ID policy или error classification обязано проверяться против этого amendment до его полной инкорпорации.
+Новый конфликт устраняется непосредственно во всех затронутых исходных документах в одном change set и при необходимости оформляется ADR. Этот исторический amendment не расширяется новыми активными правилами.
 
-Новый конфликт не разрешается устно или только в коде. Он либо устраняется во всех документах в одном change set, либо добавляется сюда с явно выбранным нормативным вариантом, владельцем и планом инкорпорации.
+Если нужен новый amendment, создаётся отдельный пронумерованный документ с собственным статусом и матрицей инкорпорации.

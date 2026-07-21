@@ -2,7 +2,7 @@
 
 **Статус документа:** Draft  
 **Версия:** 1.0  
-**Дата:** 2026-07-20  
+**Дата:** 2026-07-21  
 **Связанные документы:** `01-product-vision.md`, `02-srs.md`, `03-system-context.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `05-api-design.md`, `06-database-design.md`, `07-domain-model.md`, `08-project-structure.md`, `09-security-design.md`, `10-sequence-diagrams.md`
 
 ## 1. Назначение и нормативная роль
@@ -962,17 +962,14 @@ E12 Pilot & Production Readiness
 - прямой event publish и outbox для одного critical event;
 - ручного frontend contract и generated contract без одного источника истины.
 
-## 25. Открытые вопросы
+## 25. Remaining roadmap decisions
 
-1. Юридическая политика возврата лекарств.
-2. Итоговый набор security ADR.
-3. Transactional outbox, retry и lock-order ADR.
-4. Deployment topology и environments.
-5. RPO/RTO и backup retention.
-6. Frontend package manager и API generation tool.
-7. SLA public projection.
-8. Dual approval для особо рискованных ADMIN operations.
-9. Pilot pharmacy и количественные exit criteria.
-10. Ownership production operations и incident commander.
-11. SLO для critical API и worker pipelines.
-12. Initial-stock import/cutover procedure.
+Gate E0 закрыт. Открыты только execution-level decisions, не допускающие альтернативную архитектуру:
+
+1. pilot pharmacy и количественные pilot exit criteria;
+2. SLO для critical API/worker pipelines;
+3. ownership production operations, on-call и incident commander;
+4. initial-stock cutover runbook;
+5. public projection freshness target;
+6. elevated approval model для особо рискованных ADMIN operations;
+7. concrete infrastructure products при сохранении утверждённых RPO/RTO, retention, proxy и outbox contracts.

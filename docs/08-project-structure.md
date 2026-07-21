@@ -1,8 +1,8 @@
 # PharmacyCRM — Project Structure
 
 **Статус документа:** Draft  
-**Версия:** 1.2  
-**Дата:** 2026-07-20  
+**Версия:** 2.0  
+**Дата:** 2026-07-21  
 **Связанные документы:** `02-srs.md`, `03-system-context.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `05-api-design.md`, `06-database-design.md`, `07-domain-model.md`  
 **Связанные ADR:** ADR-0011, ADR-0013, ADR-0014, ADR-0015, ADR-0016, ADR-0017
 
@@ -193,6 +193,8 @@ backend/internal/modules/
 └── replenishment/
 ```
 
+Ownership фиксирован: `pharmacy` владеет `pharmacy_assignments`; `reliability` — `idempotency_records` и `outbox_events`; catalog import находится в `catalog`; receipts, initial stock, write-offs и adjustments — в `inventory`. Отдельные module roots `import/`, `receipt/`, `adjustments/` запрещены.
+
 Глобальные технические каталоги запрещены:
 
 ```text
@@ -367,7 +369,7 @@ Generated client:
 - не редактируется вручную;
 - оборачивается application-friendly adapters при необходимости.
 
-До принятия формата генерации `generated/` может отсутствовать.
+Нормативный source contract — OpenAPI 3.1 `backend/api/openapi.yaml`. `pnpm` 10.x через Corepack запускает pinned `openapi-typescript` + `openapi-fetch`; output — `frontend/src/shared/api/generated/`. Generated code не редактируется вручную, а CI выполняет generation и fails on diff.
 
 ## 14. Frontend tests
 
@@ -550,19 +552,17 @@ frontend/src/helpers/
 
 Также запрещены скрытые transaction boundaries, direct DB access из frontend, использование DB models как API DTO и shared package как свалка.
 
-## 23. Открытые решения
+## 23. Remaining structural implementation decisions
 
-До production-ready реализации утверждаются:
+Gate E0 утвердил `pnpm` 10.x/Corepack, committed `pnpm-lock.yaml` и OpenAPI-generated client flow. Остаётся выбрать:
 
-1. frontend package manager и lockfile;
-2. формат frontend runtime config;
-3. API schema и generation flow TypeScript client;
-4. ownership cross-application browser/smoke E2E tests;
-5. deployment overlays и production reverse proxy;
-6. необходимость repository-level contract artifact;
-7. final naming frontend composition layers при изменении выбранной frontend architecture.
+1. frontend runtime-config delivery;
+2. ownership cross-application smoke/E2E suite;
+3. deployment overlays и reverse-proxy implementation;
+4. repository-level contract artifact publication;
+5. final naming composition layers при обоснованном изменении frontend architecture.
 
-Открытые решения не разрешаются неявно случайной реализацией.
+`npm`/`yarn` lockfiles, handwritten parallel API client и source imports между `backend/` и `frontend/` запрещены.
 
 ## 24. Definition of Done
 
@@ -582,25 +582,3 @@ Structural change завершено только если:
 12. E2E ownership не дублируется;
 13. architecture checks запрещают cross-root source imports;
 14. README и документация обновлены.
-
-<!-- consistency-incorporated:start -->
-## Инкорпорированные ownership/tooling rules
-Backend modules: `identity`, `pharmacy`, `catalog`, `assortment`, `inventory`, `sales`, `returns`, `reliability`, `audit`, `alerts`, `search`, `replenishment`. Не создаются отдельные top-level modules `import`, `receipt`, `adjustments`.
-- `backend/internal/pharmacy` содержит assignment aggregate/repository/use cases.
-- `backend/internal/reliability` содержит idempotency, outbox writer/worker и retry classifier.
-- catalog import остаётся в `backend/internal/catalog`.
-- receipts, initial-stock confirmation, write-offs и adjustments остаются в `backend/internal/inventory`.
-- generated OpenAPI artifacts не смешиваются с handwritten domain/application code.
-Frontend использует `pnpm` 10.x через Corepack, один `pnpm-lock.yaml`, strict TypeScript и generated client:
-```text
-frontend/
-  package.json
-  pnpm-lock.yaml
-  src/
-    shared/
-      api/
-        generated/   # openapi-typescript output, read-only
-        client/      # handwritten auth/error/retry wrapper
-```
-Machine-readable API contract: `backend/api/openapi.yaml`. Команда `pnpm api:generate` детерминированна; CI отклоняет ручные изменения generated output и npm/yarn lockfiles.
-<!-- consistency-incorporated:end -->

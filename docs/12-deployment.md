@@ -1,8 +1,8 @@
 # PharmacyCRM — Deployment
 
 **Статус документа:** Draft  
-**Версия:** 1.0  
-**Дата:** 2026-07-20  
+**Версия:** 1.1  
+**Дата:** 2026-07-21  
 **Связанные документы:** `03-system-context.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `06-database-design.md`, `08-project-structure.md`, `09-security-design.md`, `10-sequence-diagrams.md`, `11-development-roadmap.md`
 
 ## 1. Назначение и нормативная роль
@@ -678,7 +678,7 @@ Backup покрывает:
 - release/image digest metadata;
 - configuration metadata без secret values.
 
-До production утверждаются RPO, RTO, frequency, retention, encryption, off-site copy, access roles, integrity verification и drill schedule.
+Утверждённый baseline: RPO ≤ 15 минут, RTO ≤ 4 часа, daily base backup, continuous WAL archive, off-site encrypted copies и restore drill минимум ежеквартально. Конкретный backup product обязан доказать этот baseline.
 
 Backup обязан:
 
@@ -946,41 +946,21 @@ Deployment change завершён только если:
 - disk pressure/log rotation behavior;
 - post-deploy smoke failure stops release.
 
-## 34. Открытые решения
+## 34. Remaining deployment implementation decisions
 
-До production необходимо утвердить:
+Gate E0 topology class, trusted-proxy model, release/migration protocol, outbox fencing, RPO/RTO и retention baseline утверждены. До production требуется выбрать конкретную реализацию:
 
-1. hosting topology и orchestration platform;
-2. ingress implementation;
-3. secret manager;
-4. registry и artifact signing;
-5. RPO/RTO;
-6. backup/PITR technology, schedule и retention;
-7. observability platform;
-8. rollout strategy: rolling, blue-green или canary;
-9. maintenance window policy;
-10. production scaling baseline;
-11. import object storage;
-12. release/DBA/incident ownership;
-13. staging anonymization;
-14. certificate issuance/rotation;
-15. network segmentation;
-16. application-schema compatibility declaration format;
-17. worker protocol versioning strategy;
-18. fencing implementation для singleton jobs;
-19. immutable backup retention policy;
-20. initial data cutover owner и sign-off form.
+1. hosting/orchestration platform и ingress product;
+2. secret manager;
+3. registry, signing и provenance tooling;
+4. observability platform;
+5. rollout strategy и maintenance-window policy;
+6. scaling/connection budget;
+7. import object storage;
+8. release, DBA и incident ownership;
+9. staging anonymization;
+10. certificate rotation и network segmentation;
+11. compatibility declaration format;
+12. initial data cutover owner/sign-off form.
 
-<!-- gate-e0-approved:start -->
-## Утверждённый production/deployment baseline
-### Topology и trust
-Production path: trusted reverse proxy → backend API; отдельный outbox worker использует ту же release version/protocol; PostgreSQL является authoritative store. Redis/broker/search engine не требуются для MVP correctness. Trusted proxy CIDRs задаются конфигурацией, default deny; forwarded headers от иных peers игнорируются.
-### Release и migrations
-Backend/frontend artifacts immutable; backend image развёртывается по digest. Migrations запускаются отдельным one-shot job до rollout. Application startup не выполняет migrations. Schema changes следуют `expand → migrate/backfill → validate → contract`; API, application, schema и worker protocol совместимы на всём rolling window.
-### Outbox worker
-Worker claim batch 100, lease 30 s, max 8 attempts, guarded completion по token+generation, full-jitter backoff 2 s…15 min, dead-letter после исчерпания attempts. Deployment несовместимой worker protocol version блокируется readiness/release gate.
-### RPO/RTO и backups
-Authoritative PostgreSQL target: RPO ≤ 15 минут, RTO ≤ 4 часа. Используются daily base backup и continuous WAL archive; restore drill минимум ежеквартально. Backup retention: 35 daily, 12 weekly, 12 monthly copies; encryption и restore credentials проверяются отдельно. Rebuildable projections восстанавливаются из authoritative data/outbox и не считаются отдельным источником истины.
-### Retention execution
-Cleanup jobs удаляют expired sessions/idempotency/outbox/import/log artifacts по утверждённым срокам, учитывают legal hold, работают небольшими batch и экспортируют metrics. Audit/inventory/sales history не удаляется обычным runtime cleanup до истечения minimum 5-year policy или более длинного обязательного срока.
-<!-- gate-e0-approved:end -->
+Выбранный продукт не может ослабить утверждённые protocol, recovery и trust guarantees.

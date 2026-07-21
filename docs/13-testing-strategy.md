@@ -1,8 +1,8 @@
 # PharmacyCRM — Testing Strategy
 
 **Статус документа:** Draft  
-**Версия:** 1.0  
-**Дата:** 2026-07-20  
+**Версия:** 1.1  
+**Дата:** 2026-07-21  
 **Связанные документы:** `02-srs.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `05-api-design.md`, `06-database-design.md`, `07-domain-model.md`, `08-project-structure.md`, `09-security-design.md`, `10-sequence-diagrams.md`, `11-development-roadmap.md`, `12-deployment.md`
 
 ## 1. Назначение и нормативная роль
@@ -781,7 +781,7 @@ Testing завершён, если:
 6. performance environment и SLO;
 7. DAST tooling;
 8. production-like migration dataset;
-9. restore drill frequency;
+9. automation, dataset sizing и evidence format для утверждённого quarterly restore drill;
 10. flaky triage ownership;
 11. test case traceability format;
 12. failure evidence retention;
@@ -799,7 +799,7 @@ Automated suites должны доказать:
 5. FEFO lock/allocation order включает `expiration_date`, `received_at`, `id`;
 6. API contract использует только нормативные paths и UUID examples;
 7. persisted ImportJob states и ReturnAction/Sale status enum совпадают с DB/domain/API;
-8. event catalog не допускает `SaleCompleted`, `SaleReturnCompleted` или generic unregistered reversal event;
+8. event catalog не допускает незарегистрированные posting aliases или generic reversal event с неоднозначной семантикой;
 9. audit/outbox/idempotency failure откатывает business effect;
 10. two-worker claim race, stale lease completion, retry/backoff и dead-letter;
 11. DB retry выполняет whole transaction максимум три попытки только для `40001`/`40P01`;
@@ -809,5 +809,5 @@ Automated suites должны доказать:
 15. pnpm lockfile/API generation reproducibility и generated-client diff gate;
 16. backup restore достигает RPO/RTO target на rehearsal dataset;
 17. customer-returned medicine не переходит в sellable stock;
-18. literal/column version-counter authorization mechanism отсутствует в schema, docs fixtures и migrations.
+18. schema, fixtures и migrations не содержат скрытого дополнительного поля для инвалидирования доступа.
 <!-- consistency-regression:end -->

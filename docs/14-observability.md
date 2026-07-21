@@ -1,8 +1,8 @@
 # PharmacyCRM — Observability
 
 **Статус документа:** Draft  
-**Версия:** 1.0  
-**Дата:** 2026-07-20  
+**Версия:** 1.1  
+**Дата:** 2026-07-21  
 **Связанные документы:** `02-srs.md`, `03-system-context.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `05-api-design.md`, `06-database-design.md`, `07-domain-model.md`, `08-project-structure.md`, `09-security-design.md`, `10-sequence-diagrams.md`, `11-development-roadmap.md`, `12-deployment.md`, `13-testing-strategy.md`
 
 ## 1. Назначение и нормативная роль
@@ -216,7 +216,7 @@ Query string, request body и response body по умолчанию не лог�
 http.request.completed
 auth.login.denied
 auth.refresh.reuse_detected
-identity.assignment.revoked
+pharmacy.assignment.ended
 inventory.receipt.posted
 sales.sale.completed
 inventory.adjustment.posted
@@ -942,7 +942,7 @@ Manual production-only alert/dashboard change без последующей фи
 
 ## 33. Retention и storage
 
-Отдельная policy утверждается для:
+Утверждённый minimum baseline: application logs — 30 days hot + 180 days archive; traces — 7 days; audit/inventory/sales history — минимум 5 лет или дольше по legal hold. Storage implementation дополнительно классифицирует:
 
 - technical logs;
 - restricted security logs;
@@ -1190,7 +1190,7 @@ Observability завершена, если:
 1. logs/metrics/traces backend и hosting model;
 2. OpenTelemetry SDK/export protocol и collector topology;
 3. production file rotation implementation;
-4. retention по каждому signal class;
+4. storage tiering, deletion jobs и capacity verification для утверждённой retention policy;
 5. exact SLI formulas и numerical SLO;
 6. alert manager, routing и on-call model;
 7. severity/escalation policy;
@@ -1207,21 +1207,3 @@ Observability завершена, если:
 18. privacy policy для network identifiers и search-related telemetry.
 
 Открытые tooling-решения не отменяют обязательные требования schema, redaction, correlation, audit, self-monitoring и diagnostic evidence.
-
-<!-- consistency-incorporated:start -->
-## Инкорпорированные observability contracts
-### Event namespaces
-Assignment events принадлежат Pharmacy namespace: `pharmacy.assignment.assigned`, `pharmacy.assignment.ended`. Sale completion: `sales.sale.completed`; return: `returns.sale_return.completed`; inventory: `inventory.receipt.posted`, `inventory.adjustment.posted`, `inventory.operation.reversed`.
-### Outbox signals
-Обязательные metrics: pending backlog, oldest pending age, processing leases, expired leases, attempt histogram, retry rate, dead-letter count, publish latency, guarded-completion failures и reconciliation lag. Labels не содержат event payload, user ID, pharmacy ID или unbounded error text.
-Alerts:
-- oldest pending age > 5 минут for 10 minutes;
-- any dead-letter in production;
-- expired lease growth;
-- reconciliation lag above documented projection SLA;
-- restore/RPO evidence expired.
-### Security/session signals
-Отдельно наблюдаются password verify/rehash latency, failed login/lockout, refresh reuse, family revoke, all-session revoke, MFA failure, CORS/CSRF rejection и untrusted proxy header attempts. Raw credentials/tokens/cookies/password hashes не логируются.
-### Retention
-Application logs: 30 days hot + 180 days archive; traces 7 days; security metrics follow monitoring capacity policy; audit remains in authoritative storage minimum 5 years or longer under legal hold. Cleanup outcome и dropped/redacted fields наблюдаемы.
-<!-- consistency-incorporated:end -->
