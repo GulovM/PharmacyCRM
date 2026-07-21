@@ -141,7 +141,7 @@ sequenceDiagram
         Audit->>DB: INSERT event
         UoW->>DB: COMMIT
         LoginUC-->>HTTP: access token + raw refresh token
-        HTTP-->>Browser: 200; HttpOnly refresh cookie
+        HTTP-->>Browser: 200 with HttpOnly refresh cookie
     end
 ```
 
