@@ -24,14 +24,15 @@ func TestIdempotencyRepositoryIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	actorID := uuid.New()
 	if _, err := pool.Exec(ctx, "INSERT INTO users (id, login, password_hash, display_name) VALUES ($1, $2, 'hash', 'Idempotency Test')", actorID, "idem-"+actorID.String()); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), "DELETE FROM idempotency_records WHERE actor_user_id = $1; DELETE FROM users WHERE id = $1", actorID)
+		_, _ = pool.Exec(context.Background(), "DELETE FROM idempotency_records WHERE actor_user_id = $1", actorID)
+		_, _ = pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", actorID)
 	})
 
 	claim := idempotency.Claim{Identity: idempotency.Identity{ActorID: actorID, Operation: "test.complete", Key: "same-key"}, Fingerprint: idempotency.NewFingerprint([]byte(`{"value":1}`)), ExpiresAt: time.Now().Add(time.Hour)}

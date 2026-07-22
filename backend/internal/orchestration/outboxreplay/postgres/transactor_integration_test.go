@@ -23,7 +23,7 @@ func TestManualReplayAndAuditCommitAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rawPool.Close()
+	t.Cleanup(rawPool.Close)
 	lockConn, err := rawPool.Acquire(ctx)
 	if err != nil {
 		t.Fatal(err)

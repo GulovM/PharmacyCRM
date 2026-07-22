@@ -23,7 +23,7 @@ func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	lockConn, err := pool.Acquire(ctx)
 	if err != nil {
 		t.Fatal(err)

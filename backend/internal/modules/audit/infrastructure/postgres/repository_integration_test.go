@@ -21,7 +21,7 @@ func TestAuditWriterIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	actorID := uuid.New()
 	login := "audit-" + actorID.String()
@@ -29,7 +29,8 @@ func TestAuditWriterIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), "DELETE FROM audit_events WHERE actor_user_id = $1; DELETE FROM users WHERE id = $1", actorID)
+		_, _ = pool.Exec(context.Background(), "DELETE FROM audit_events WHERE actor_user_id = $1", actorID)
+		_, _ = pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", actorID)
 	})
 	policy := audit.MetadataPolicy{"test.user.changed": {"reason": audit.MetadataString}}
 
