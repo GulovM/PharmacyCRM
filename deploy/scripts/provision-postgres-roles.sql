@@ -125,8 +125,11 @@ BEGIN
         target_role
     );
 
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE oid = target_oid AND (rolcanlogin OR rolpassword IS NOT NULL)) THEN
-        remaining_capabilities := array_append(remaining_capabilities, 'credential');
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE oid = target_oid AND rolcanlogin) THEN
+        remaining_capabilities := array_append(remaining_capabilities, 'login');
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE oid = target_oid AND rolpassword IS NOT NULL) THEN
+        remaining_capabilities := array_append(remaining_capabilities, 'password');
     END IF;
     IF EXISTS (SELECT 1 FROM pg_auth_members WHERE roleid = target_oid OR member = target_oid) THEN
         remaining_capabilities := array_append(remaining_capabilities, 'membership');
@@ -245,7 +248,7 @@ $$;
 
 ALTER ROLE pharmacycrm_api_runtime WITH NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 ALTER ROLE pharmacycrm_worker_runtime WITH NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
-ALTER ROLE pharmacycrm_migration WITH NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+ALTER ROLE pharmacycrm_migration WITH NOLOGIN PASSORD NULL NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 
 SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'api_role', :'api_password')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'api_role') \gexec
