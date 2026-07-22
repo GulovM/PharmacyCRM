@@ -1,0 +1,32 @@
+name: Finalize review fixes
+
+on:
+  pull_request:
+    types: [reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: Database-Kernel-and-Reliability-Primitives
+          fetch-depth: 0
+      - name: Apply targeted documentation updates
+        run: |
+          set -Eeuo pipefail
+          python3 .review-fixes/finalize-docs.py
+          rm -rf .review-fixes
+          rm .github/workflows/finalize-review-fixes.yml
+      - name: Commit cleaned final state
+        run: |
+          set -Eeuo pipefail
+          git add -A
+          git diff --cached --check
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git commit -m 'Finalize E2 review fixes and documentation'
+          git push origin HEAD:Database-Kernel-and-Reliability-Primitives
