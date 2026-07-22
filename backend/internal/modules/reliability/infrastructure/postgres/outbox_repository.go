@@ -85,6 +85,9 @@ func (r *TransactionalOutboxRepository) ClaimBatch(ctx context.Context, request 
 	if affected := tag.RowsAffected(); affected > int64(terminalizationLimit) {
 		return nil, fmt.Errorf("dead-letter exhausted leases changed %d rows above limit %d", affected, terminalizationLimit)
 	}
+	if request.MaintenanceOnly {
+		return []outbox.Lease{}, nil
+	}
 
 	expiresAt := request.Now.Add(request.LeaseDuration)
 	rows, err := r.executor.Query(ctx, `
