@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/GulovM/PharmacyCRM/backend/internal/modules/reliability/application/outbox"
+	"github.com/GulovM/PharmacyCRM/backend/internal/shared/apperror"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -22,7 +24,14 @@ func TestOutboxClaimErrorClassifier(t *testing.T) {
 			}
 		})
 	}
-	if classifier.IsTransientClaimError(errors.New("relation outbox_events does not exist")) {
-		t.Fatal("unknown repository state must remain fatal")
+	for name, err := range map[string]error{
+		"unknown repository state": errors.New("relation outbox_events does not exist"),
+		"invalid claim request":    errors.Join(outbox.ErrInvalidClaimRequest, apperror.ErrInvalidArgument),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if classifier.IsTransientClaimError(err) {
+				t.Fatalf("fatal error was classified as transient: %v", err)
+			}
+		})
 	}
 }
