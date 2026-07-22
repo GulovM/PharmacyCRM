@@ -55,7 +55,7 @@ func TestAPIRuntimeIdempotencyAndReplayCapabilitiesIntegration(t *testing.T) {
 		"pharmacy":        `UPDATE idempotency_records SET pharmacy_id=gen_random_uuid() WHERE id=$1`,
 		"operation":       `UPDATE idempotency_records SET operation='forbidden' WHERE id=$1`,
 		"idempotency key": `UPDATE idempotency_records SET idempotency_key='forbidden' WHERE id=$1`,
-		"scope":           `UPDATE idempotency_records SET scope_key=scope_key WHERE id=$1`,
+		"scope":           `UPDATE idempotency_records SET scope_key=DEFAULT WHERE id=$1`,
 		"request hash":    `UPDATE idempotency_records SET request_hash=decode('01','hex') WHERE id=$1`,
 		"created at":      `UPDATE idempotency_records SET created_at=now() WHERE id=$1`,
 	} {
