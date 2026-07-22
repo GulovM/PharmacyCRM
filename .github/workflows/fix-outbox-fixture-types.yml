@@ -1,0 +1,40 @@
+name: Fix outbox fixture parameter types
+
+on:
+  pull_request:
+  push:
+    branches:
+      - Database-Kernel-and-Reliability-Primitives
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: Database-Kernel-and-Reliability-Primitives
+      - name: Add explicit UUID parameter types
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('backend/internal/modules/reliability/infrastructure/postgres/outbox_exhausted_leases_integration_test.go')
+          text = path.read_text()
+          old = ") VALUES ($1,'test.terminalization',1,'test',$2,$2::text,$1::text,'{}','{}',$3,$4,$5,$6,$7,1,$8,$9,$6,$10,$11)`"
+          new = ") VALUES ($1::uuid,'test.terminalization',1,'test',$2::uuid,$2::uuid::text,$1::uuid::text,'{}','{}',$3,$4,$5,$6,$7,1,$8,$9,$6,$10,$11)`"
+          if text.count(old) != 1:
+              raise RuntimeError(f'expected one fixture statement, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          gofmt -w backend/internal/modules/reliability/infrastructure/postgres/outbox_exhausted_leases_integration_test.go
+      - name: Commit fixture correction
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add backend/internal/modules/reliability/infrastructure/postgres/outbox_exhausted_leases_integration_test.go
+          git diff --cached --check
+          git commit -m 'Fix outbox integration fixture parameter types'
+          git push origin HEAD:Database-Kernel-and-Reliability-Primitives
