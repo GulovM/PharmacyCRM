@@ -31,6 +31,7 @@ DECLARE
     target_oid oid;
     item record;
     unsafe_owner text;
+    remaining_capabilities text[] := ARRAY[]::text[];
 BEGIN
     SELECT oid INTO target_oid FROM pg_roles WHERE rolname = target_role;
     IF target_oid IS NULL THEN
@@ -124,43 +125,61 @@ BEGIN
         target_role
     );
 
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE oid = target_oid AND (rolcanlogin OR rolpassword IS NOT NULL))
-       OR EXISTS (SELECT 1 FROM pg_auth_members WHERE roleid = target_oid OR member = target_oid)
-       OR EXISTS (
-           SELECT 1 FROM pg_default_acl default_acl
-           CROSS JOIN LATERAL aclexplode(default_acl.defaclacl) privilege
-           WHERE default_acl.defaclobjtype = 'r' AND privilege.grantee = target_oid
-       )
-       OR EXISTS (
-           SELECT 1 FROM pg_database database
-           CROSS JOIN LATERAL aclexplode(database.datacl) privilege
-           WHERE database.datname = target_database AND privilege.grantee = target_oid
-       )
-       OR EXISTS (
-           SELECT 1 FROM pg_namespace namespace
-           CROSS JOIN LATERAL aclexplode(namespace.nspacl) privilege
-           WHERE namespace.nspname = 'public' AND privilege.grantee = target_oid
-       )
-       OR EXISTS (
-           SELECT 1 FROM pg_class relation
-           JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
-           CROSS JOIN LATERAL aclexplode(relation.relacl) privilege
-           WHERE namespace.nspname = 'public' AND privilege.grantee = target_oid
-       )
-       OR EXISTS (
-           SELECT 1 FROM pg_attribute attribute
-           JOIN pg_class relation ON relation.oid = attribute.attrelid
-           JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
-           CROSS JOIN LATERAL aclexplode(attribute.attacl) privilege
-           WHERE namespace.nspname = 'public' AND privilege.grantee = target_oid
-       )
-       OR EXISTS (
-           SELECT 1 FROM pg_proc procedure
-           JOIN pg_namespace namespace ON namespace.oid = procedure.pronamespace
-           CROSS JOIN LATERAL aclexplode(procedure.proacl) privilege
-           WHERE namespace.nspname = 'public' AND privilege.grantee = target_oid
-       ) THEN
-        RAISE EXCEPTION 'runtime role % was not fully retired', target_role;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE oid = target_oid AND (rolcanlogin OR rolpassword IS NOT NULL)) THEN
+        remaining_capabilities := array_append(remaining_capabilities, 'credential');
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_auth_members WHERE roleid = target_oid OR member = target_oid) THEN
+        remaining_capabilities := array_append(remaining_capabilities, 'membership');
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM pg_default_acl default_acl
+        CROSS JOIN LATERAL aclexplode(default_acl.defaclacl) privilege
+        WHERE default_acl.defaclobjtype = 'r' AND privilege.grantee = target_oid
+    ) THEN
+        remaining_capabilities := array_append(remaining_capabilities, 'default_table_acl');
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM pg_database database
+        CROSS JOIN LATERAL aclexplode(database.datacl) privilege
+        WHERE database.datname = target_database AND privilege.grantee = target_oid
+    ) THEN
+        remaining_capabilities := array_append(remaining_capabilities, 'database_acl');
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM pg_namespace namespace
+        CROSS JOIN LATERAL aclexplode(namespace.nspacl) privilege
+        WHERE namespace.nspname = 'public' AND privilege.grantee = target_oid
+    ) THEN
+        remaining_capabilities := array_append(remaining_capabilities, 'schema_acl');
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM pg_class relation
+        JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+        CROSS JOIN LATERAL aclexplode(relation.relacl) privilege
+        WHERE namespace.nspname = 'public' AND privilege.grantee = target_oid
+    ) THEN
+        remaining_capabilities := array_append(remaining_capabilities, 'relation_acl');
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM pg_attribute attribute
+        JOIN pg_class relation ON relation.oid = attribute.attrelid
+        JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+        CROSS JOIN LATERAL aclexplode(attribute.attacl) privilege
+        WHERE namespace.nspname = 'public' AND privilege.grantee = target_oid
+    ) THEN
+        remaining_capabilities := array_append(remaining_capabilities, 'column_acl');
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM pg_proc procedure
+        JOIN pg_namespace namespace ON namespace.oid = procedure.pronamespace
+        CROSS JOIN LATERAL aclexplode(procedure.proacl) privilege
+        WHERE namespace.nspname = 'public' AND privilege.grantee = target_oid
+    ) THEN
+        remaining_capabilities := array_append(remaining_capabilities, 'function_acl');
+    END IF;
+    IF cardinality(remaining_capabilities) > 0 THEN
+        RAISE EXCEPTION 'runtime role % was not fully retired; remaining capabilities: %',
+            target_role, array_to_string(remaining_capabilities, ',');
     END IF;
 END
 $$;
