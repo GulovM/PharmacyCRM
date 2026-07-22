@@ -26,7 +26,7 @@ make_lines 450 "$root/frontend/src/shared/api/generated/schema.ts"
   seq 2 450
 } > "$root/backend/internal/generated.go"
 
-if "$checker" "$root" >"$root/out" 2>&1; then
+if bash "$checker" "$root" >"$root/out" 2>&1; then
   echo 'expected source-size checker failure' >&2
   exit 1
 fi
@@ -42,7 +42,7 @@ mkdir -p "$extensions_root/backend" "$extensions_root/frontend" "$extensions_roo
 for extension in go ts tsx js jsx sql sh ps1; do
   make_lines 401 "$extensions_root/backend/oversized.$extension"
 done
-if "$checker" "$extensions_root" >"$extensions_root/out" 2>&1; then
+if bash "$checker" "$extensions_root" >"$extensions_root/out" 2>&1; then
   echo 'expected extension coverage failure' >&2
   exit 1
 fi
