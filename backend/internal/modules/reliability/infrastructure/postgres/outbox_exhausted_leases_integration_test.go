@@ -59,7 +59,7 @@ func seedOutboxState(t *testing.T, ctx context.Context, pool *pgxpool.Pool, aggr
 			deduplication_key,payload,headers,status,attempt_count,max_attempts,
 			available_at,lease_token,lease_generation,leased_by,lease_expires_at,
 			occurred_at,processed_at,dead_lettered_at
-		) VALUES ($1,'test.terminalization',1,'test',$2,$2::text,$1::text,'{}','{}',$3,$4,$5,$6,$7,1,$8,$9,$6,$10,$11)`,
+		) VALUES ($1::uuid,'test.terminalization',1,'test',$2::uuid,$2::uuid::text,$1::uuid::text,'{}','{}',$3,$4,$5,$6,$7,1,$8,$9,$6,$10,$11)`,
 		fixture.id, aggregateID, fixture.status, fixture.attempt, fixture.maxAttempts,
 		now.Add(-time.Hour), leaseToken, leasedBy, fixture.leaseExpires, processedAt, deadLetteredAt); err != nil {
 		t.Fatal(err)
