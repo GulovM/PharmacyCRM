@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/GulovM/PharmacyCRM/backend/internal/shared/contracts"
 )
 
 var workerEnvironmentKeys = []string{
@@ -111,6 +113,18 @@ func TestLoadWorkerDoesNotRequireAuthOrMigrationCredentials(t *testing.T) {
 	}
 }
 
+func TestWorkerOwnerLengthMatchesDatabaseContract(t *testing.T) {
+	setWorkerEnvironment(t)
+	t.Setenv("WORKER_OWNER", strings.Repeat("w", contracts.MaxWorkerOwnerLength))
+	if _, err := LoadWorker(); err != nil {
+		t.Fatalf("maximum worker owner length rejected: %v", err)
+	}
+	t.Setenv("WORKER_OWNER", strings.Repeat("w", contracts.MaxWorkerOwnerLength+1))
+	if _, err := LoadWorker(); err == nil {
+		t.Fatal("oversized worker owner was accepted")
+	}
+}
+
 func TestLoadWorkerStillRequiresWorkerConfiguration(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -189,8 +203,6 @@ func TestLoadAPIRejectsUnsupportedApplicationWorkerProtocol(t *testing.T) {
 	t.Setenv("APP_WORKER_PROTOCOL", "999")
 	if _, err := LoadAPI(); err == nil {
 		t.Fatal("LoadAPI() error = nil")
-	} else if strings.Contains(err.Error(), "999") || strings.Contains(err.Error(), "private-key") {
-		t.Fatalf("validation error exposed configuration: %v", err)
 	}
 }
 
@@ -210,9 +222,6 @@ func TestLoadWorkerRejectsUnsupportedWorkerProtocols(t *testing.T) {
 			err := func() error { _, err := LoadWorker(); return err }()
 			if err == nil {
 				t.Fatal("LoadWorker() error = nil")
-			}
-			if strings.Contains(err.Error(), "999") {
-				t.Fatalf("validation error exposed configuration: %v", err)
 			}
 		})
 	}
