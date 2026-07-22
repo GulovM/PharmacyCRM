@@ -20,11 +20,11 @@ func TestOutboxRetentionTerminalRowsAndPrivilegesIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer admin.Close()
-	runtime, err := pgxpool.New(ctx, postgrestest.RuntimeDSN(t))
+	worker, err := pgxpool.New(ctx, postgrestest.WorkerRuntimeDSN(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer runtime.Close()
+	defer worker.Close()
 
 	aggregateID := uuid.New()
 	ids := []uuid.UUID{uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()}
@@ -52,7 +52,7 @@ func TestOutboxRetentionTerminalRowsAndPrivilegesIntegration(t *testing.T) {
 	}
 
 	deleteBatch := func(method func(*TransactionalOutboxRetentionRepository) (int64, error)) int64 {
-		tx, err := runtime.Begin(ctx)
+		tx, err := worker.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -108,9 +108,9 @@ func TestOutboxRetentionTerminalRowsAndPrivilegesIntegration(t *testing.T) {
 		t.Fatalf("survivors=%v", statuses)
 	}
 
-	_, err = runtime.Exec(ctx, `DELETE FROM outbox_events WHERE aggregate_id=$1`, aggregateID)
+	_, err = worker.Exec(ctx, `DELETE FROM outbox_events WHERE aggregate_id=$1`, aggregateID)
 	var postgresError *pgconn.PgError
 	if !errors.As(err, &postgresError) || postgresError.Code != "42501" {
-		t.Fatalf("runtime table DELETE unexpectedly allowed: %v", err)
+		t.Fatalf("worker table DELETE unexpectedly allowed: %v", err)
 	}
 }
