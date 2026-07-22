@@ -121,7 +121,7 @@ type StorageConfig struct {
 	Retention      time.Duration `envconfig:"RETENTION" default:"720h"`
 }
 
-// APIConfig deliberately has no migration credentials.
+// APIConfig deliberately has no migration credentials or worker operational settings.
 type APIConfig struct {
 	App         AppConfig
 	HTTP        HTTPConfig
@@ -130,7 +130,6 @@ type APIConfig struct {
 	ProxyCORS   ProxyCORSConfig
 	Logging     LoggingConfig
 	Telemetry   TelemetryConfig
-	Worker      WorkerConfig
 	Storage     StorageConfig
 }
 
