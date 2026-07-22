@@ -9,6 +9,8 @@ import (
 
 	"github.com/GulovM/PharmacyCRM/backend/internal/modules/reliability/application/outbox"
 	"github.com/GulovM/PharmacyCRM/backend/internal/platform/config"
+	"github.com/GulovM/PharmacyCRM/backend/internal/platform/database"
+	"github.com/GulovM/PharmacyCRM/backend/internal/testkit/postgrestest"
 	"go.uber.org/zap"
 )
 
@@ -64,6 +66,54 @@ func testWorkerDependencies(ctx context.Context, cancel context.CancelFunc, logg
 		newWorker: func(workerProcessPool, config.WorkerProcessConfig, workerProcessLogger) (workerProcess, []outbox.EventKey, error) {
 			return worker, nil, nil
 		},
+	}
+}
+
+func TestBuildOutboxWorkerWithEmptyRegistryStaysRunningIntegration(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	pool, err := database.NewWorker(ctx, config.WorkerPostgresConfig{
+		DSN: postgrestest.WorkerRuntimeDSN(t),
+		PoolConfig: config.PoolConfig{
+			MinConnections: 0, MaxConnections: 2, AcquireTimeout: time.Second,
+			MaxConnectionLife: time.Minute, MaxConnectionIdle: time.Minute,
+			HealthCheckPeriod: time.Minute, ConnectionCapacity: 2,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	cfg := config.WorkerProcessConfig{
+		App: config.AppConfig{MinSchemaVersion: config.SupportedSchemaVersion, MaxSchemaVersion: config.SupportedSchemaVersion, WorkerProtocol: config.SupportedWorkerProtocol},
+		Worker: config.WorkerConfig{
+			ProtocolVersion: config.SupportedWorkerProtocol, Owner: "worker-maintenance-integration",
+			Concurrency: 1, MaxClaim: 1, PollInterval: 10 * time.Millisecond, LeaseDuration: time.Minute, DrainTimeout: time.Second,
+			RetentionInterval: time.Hour, RetentionBatchSize: 1, RetentionMaxBatches: 1, RetentionMaxDuration: time.Second,
+			ProcessedRetention: outbox.ProcessedRetentionPeriod, DeadLetterRetention: outbox.DeadLetterRetentionPeriod,
+		},
+	}
+	worker, protocols, err := buildOutboxWorker(pool, cfg, &fakeWorkerLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(protocols) != 0 {
+		t.Fatalf("unexpected E2 domain protocols: %#v", protocols)
+	}
+	done := make(chan error, 1)
+	go func() { done <- worker.Run(ctx) }()
+	select {
+	case err := <-done:
+		t.Fatalf("production worker wiring stopped before cancellation: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("production worker wiring shutdown failed: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("production worker wiring did not stop")
 	}
 }
 
