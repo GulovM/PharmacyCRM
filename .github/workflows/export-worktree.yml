@@ -1,0 +1,23 @@
+name: Export PR worktree
+
+on:
+  push:
+    branches:
+      - Database-Kernel-and-Reliability-Primitives
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Archive worktree
+        run: tar --exclude=.git -czf "$RUNNER_TEMP/pharmacycrm-worktree.tar.gz" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pharmacycrm-worktree
+          path: ${{ runner.temp }}/pharmacycrm-worktree.tar.gz
+          if-no-files-found: error
+          retention-days: 1
