@@ -417,10 +417,13 @@ AND pharmacy and assortment are active
 4. Origin и ссылка на receipt/return согласованы.
 5. Просроченный lot не переводится в sellable `ACTIVE`.
 6. Batch, expiration и snapshots после создания неизменяемы без отдельной корректирующей policy.
+7. Каждый movement получает следующий положительный `lotSequence` под lock lot; sequence уникален и непрерывен внутри lot, включая reversal movements.
 
 ### 10.3 `InventoryOperation` и `InventoryMovement`
 
 Operation types: `RECEIPT`, `INITIAL_STOCK`, `SALE`, `RETURN_TO_STOCK`, `RETURN_WRITE_OFF`, `RETURN_QUARANTINE`, `WRITE_OFF`, `INVENTORY_ADJUSTMENT`, `REVERSAL`.
+
+Movement history восстанавливается только по `lotSequence`; `createdAt` и UUID не являются causal ordering.
 
 ```text
 POSTED ──reverse by separate operation──> REVERSED

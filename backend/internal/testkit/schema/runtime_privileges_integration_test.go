@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/GulovM/PharmacyCRM/backend/internal/platform/config"
 	"github.com/GulovM/PharmacyCRM/backend/internal/testkit/postgrestest"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -43,7 +44,7 @@ func TestRuntimePrivilegeMatrixIntegration(t *testing.T) {
 	}
 
 	var schemaVersion int64
-	if err := runtimePool.QueryRow(ctx, `SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton`).Scan(&schemaVersion); err != nil || schemaVersion != 17 {
+	if err := runtimePool.QueryRow(ctx, `SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton`).Scan(&schemaVersion); err != nil || schemaVersion != config.SupportedSchemaVersion {
 		t.Fatalf("runtime readiness read failed: version=%d err=%v", schemaVersion, err)
 	}
 

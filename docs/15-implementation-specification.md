@@ -660,7 +660,7 @@ Audit writer принимает только allowlisted structured metadata. Ma
 SUM(inventory_movements.delta_base_units) = stock_lots.quantity_base_units
 ```
 
-с учётом initial zero balance и operation status. Testkit должен выявлять orphan allocations, duplicate effects, missing audit/outbox и invalid states.
+с учётом initial zero balance и operation status. Для каждого lot movements сортируются только по непрерывному `lot_sequence`, назначенному под lot lock; cumulative sum на каждом sequence равен `quantity_after_base_units`. Testkit должен выявлять gap/missing sequence, invalid cumulative state, orphan allocations, duplicate effects и missing audit/outbox.
 
 **Exit Gate E2:** UoW/retry/idempotency/audit/outbox/lock order доказаны real PostgreSQL tests; runtime role не изменяет immutable rows; critical business commands ещё не включены.
 

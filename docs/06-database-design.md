@@ -577,16 +577,18 @@ CREATE TABLE inventory_movements (
     operation_id uuid NOT NULL
         REFERENCES inventory_operations(id) ON DELETE RESTRICT,
     stock_lot_id uuid NOT NULL REFERENCES stock_lots(id) ON DELETE RESTRICT,
+    lot_sequence bigint NOT NULL CHECK (lot_sequence > 0),
     delta_base_units bigint NOT NULL CHECK (delta_base_units <> 0),
     quantity_after_base_units bigint NOT NULL
         CHECK (quantity_after_base_units >= 0),
     created_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT uq_inventory_movement_operation_lot
-        UNIQUE (operation_id, stock_lot_id)
+        UNIQUE (operation_id, stock_lot_id),
+    CONSTRAINT uq_inventory_movement_lot_sequence
+        UNIQUE (stock_lot_id, lot_sequence)
 );
 
-CREATE INDEX idx_inventory_movements_lot_history
-ON inventory_movements (stock_lot_id, created_at, id);
+`lot_sequence` назначается database trigger только после `FOR UPDATE` lock строки `stock_lots`; явное значение принимается лишь когда оно равно следующему sequence. Поэтому concurrent inserts одного lot сериализуются, а reconciliation использует только `(stock_lot_id, lot_sequence)` и не зависит от timestamp/UUID.
 
 -- =====================================================================
 -- Sales
