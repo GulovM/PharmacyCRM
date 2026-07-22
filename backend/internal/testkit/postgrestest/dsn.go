@@ -10,14 +10,24 @@ import (
 // DSN skips database tests during ordinary local runs, but turns a missing DSN
 // into a hard failure in the mandatory CI integration gate.
 func DSN(t testing.TB) string {
+	return requiredDSN(t, "POSTGRES_TEST_DSN")
+}
+
+// RuntimeDSN returns the least-privilege runtime connection used by privilege
+// and direct-SQL invariant tests.
+func RuntimeDSN(t testing.TB) string {
+	return requiredDSN(t, "POSTGRES_RUNTIME_DSN")
+}
+
+func requiredDSN(t testing.TB, variable string) string {
 	t.Helper()
-	dsn := os.Getenv("POSTGRES_TEST_DSN")
+	dsn := os.Getenv(variable)
 	if dsn != "" {
 		return dsn
 	}
 	if strings.EqualFold(os.Getenv("CI_INTEGRATION_REQUIRED"), "true") {
-		t.Fatal("POSTGRES_TEST_DSN is required by the CI integration gate")
+		t.Fatalf("%s is required by the CI integration gate", variable)
 	}
-	t.Skip("POSTGRES_TEST_DSN is not set")
+	t.Skipf("%s is not set", variable)
 	return ""
 }

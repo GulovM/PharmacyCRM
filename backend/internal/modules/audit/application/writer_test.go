@@ -63,4 +63,17 @@ func TestWriterValidatesActorShape(t *testing.T) {
 	if err := writer.Append(context.Background(), event); err == nil {
 		t.Fatal("expected system actor validation error")
 	}
+	event = testEvent()
+	event.ActorUserID = nil
+	sessionID := uuid.New()
+	event.ActorSessionID = &sessionID
+	if err := writer.Append(context.Background(), event); err == nil {
+		t.Fatal("expected session without user validation error")
+	}
+	event = testEvent()
+	event.ActorType = ActorSystem
+	event.ActorUserID = nil
+	if err := writer.Append(context.Background(), event); err != nil {
+		t.Fatalf("valid system actor rejected: %v", err)
+	}
 }
