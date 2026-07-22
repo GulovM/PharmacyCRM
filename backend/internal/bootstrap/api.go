@@ -23,12 +23,12 @@ func RunAPI() error {
 	}
 	logger, err := logging.New(cfg.Logging, cfg.App)
 	if err != nil {
-		return fmt.Errorf("initialize logger")
+		return fmt.Errorf("initialize API logger: %w", err)
 	}
 	defer logger.Close()
 	pool, err := database.NewAPI(context.Background(), cfg.APIPostgres)
 	if err != nil {
-		return fmt.Errorf("initialize postgres pool")
+		return fmt.Errorf("initialize API postgres pool: %w", err)
 	}
 	defer pool.Close()
 	readiness := httpserver.NewReadiness(
@@ -50,7 +50,7 @@ func RunAPI() error {
 	)
 	server, err := httpserver.New(cfg.HTTP, cfg.ProxyCORS, logger, readiness)
 	if err != nil {
-		return fmt.Errorf("initialize http server")
+		return fmt.Errorf("initialize HTTP server: %w", err)
 	}
 	readiness.MarkStartupComplete()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -61,13 +61,13 @@ func RunAPI() error {
 	case err := <-errCh:
 		if err != nil {
 			logger.Error("http.server.failed", zap.Error(err))
-			return fmt.Errorf("http server failed")
+			return fmt.Errorf("serve HTTP: %w", err)
 		}
 		return nil
 	case <-ctx.Done():
 		if err := server.Shutdown(context.Background()); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("http.server.shutdown_failed", zap.Error(err))
-			return fmt.Errorf("http server shutdown failed")
+			return fmt.Errorf("shutdown HTTP server: %w", err)
 		}
 		return nil
 	}

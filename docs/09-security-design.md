@@ -2,6 +2,8 @@
 
 > E2 schema `23`: API cannot read migration history or directly update outbox rows. Manual dead-letter replay is an audited transaction using a narrowly granted PostgreSQL capability function.
 
+Schema `23` verifies session constraints by catalog structure and expressions; the replay capability is unavailable to both the worker role and `PUBLIC`.
+
 **Статус документа:** Draft  
 **Версия:** 2.0  
 **Дата:** 2026-07-21  

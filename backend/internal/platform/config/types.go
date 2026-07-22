@@ -20,8 +20,8 @@ type AppConfig struct {
 	Version          string `default:"dev"`
 	CommitSHA        string `envconfig:"COMMIT_SHA" default:"unknown"`
 	Debug            bool   `default:"false"`
-	MinSchemaVersion int    `envconfig:"MIN_SCHEMA_VERSION" default:"21"`
-	MaxSchemaVersion int    `envconfig:"MAX_SCHEMA_VERSION" default:"21"`
+	MinSchemaVersion int    `envconfig:"MIN_SCHEMA_VERSION" default:"23"`
+	MaxSchemaVersion int    `envconfig:"MAX_SCHEMA_VERSION" default:"23"`
 	WorkerProtocol   int    `envconfig:"WORKER_PROTOCOL" default:"1"`
 }
 

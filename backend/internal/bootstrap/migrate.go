@@ -21,23 +21,23 @@ func RunMigration() error {
 	}
 	logger, err := logging.New(cfg.Logging, cfg.App)
 	if err != nil {
-		return fmt.Errorf("initialize logger")
+		return fmt.Errorf("initialize migration logger: %w", err)
 	}
 	defer logger.Close()
 	pool, err := database.NewMigration(context.Background(), cfg.MigrationPostgres)
 	if err != nil {
-		return fmt.Errorf("initialize migration pool")
+		return fmt.Errorf("initialize migration postgres pool: %w", err)
 	}
 	defer pool.Close()
 	items, err := migration.Load(migrations.Files)
 	if err != nil {
-		return fmt.Errorf("load migrations")
+		return fmt.Errorf("load embedded migrations: %w", err)
 	}
 	result, err := migration.Run(context.Background(), pool, items)
 	if err != nil {
 		logger.Error("migration.failed", zap.Error(err))
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]string{"status": "failed"})
-		return fmt.Errorf("run migrations")
+		return fmt.Errorf("execute migrations: %w", err)
 	}
 	logger.Info("migration.completed", zap.Int("applied", len(result.Applied)), zap.Int64("schema_version", result.SchemaVersion))
 	return json.NewEncoder(os.Stdout).Encode(result)

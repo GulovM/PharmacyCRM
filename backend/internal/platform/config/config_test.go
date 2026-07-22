@@ -1,10 +1,26 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
 )
+
+func unsetEnvironment(t testing.TB, key string) {
+	t.Helper()
+	value, exists := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if exists {
+			_ = os.Setenv(key, value)
+			return
+		}
+		_ = os.Unsetenv(key)
+	})
+}
 
 func setRuntimeEnvironment(t *testing.T) {
 	t.Helper()
@@ -57,6 +73,47 @@ func TestLoadMigrationDoesNotRequireRuntimeOrAuthCredentials(t *testing.T) {
 	}
 	if cfg.MigrationPostgres.DSN == "" {
 		t.Fatal("migration DSN was not loaded")
+	}
+}
+
+func TestSchemaDefaultsMatchSupportedVersion(t *testing.T) {
+	defaults := AppConfig{MinSchemaVersion: 23, MaxSchemaVersion: 23}
+	if defaults.MinSchemaVersion != SupportedSchemaVersion || defaults.MaxSchemaVersion != SupportedSchemaVersion {
+		t.Fatalf("schema defaults must match supported version %d", SupportedSchemaVersion)
+	}
+}
+
+func TestLoadAPIDefaultsToSupportedSchemaVersion(t *testing.T) {
+	setRuntimeEnvironment(t)
+	unsetEnvironment(t, "APP_MIN_SCHEMA_VERSION")
+	unsetEnvironment(t, "APP_MAX_SCHEMA_VERSION")
+	t.Setenv("AUTH_JWT_ISSUER", "pharmacycrm")
+	t.Setenv("AUTH_JWT_AUDIENCE", "pharmacycrm-api")
+	t.Setenv("AUTH_JWT_PRIVATE_KEY", "private-key")
+	t.Setenv("AUTH_REFRESH_TOKEN_PEPPER", "pepper")
+	cfg, err := LoadAPI()
+	if err != nil || cfg.App.MinSchemaVersion != SupportedSchemaVersion || cfg.App.MaxSchemaVersion != SupportedSchemaVersion {
+		t.Fatalf("defaults=%d..%d err=%v", cfg.App.MinSchemaVersion, cfg.App.MaxSchemaVersion, err)
+	}
+}
+
+func TestLoadWorkerDefaultsToSupportedSchemaVersion(t *testing.T) {
+	setRuntimeEnvironment(t)
+	unsetEnvironment(t, "APP_MIN_SCHEMA_VERSION")
+	unsetEnvironment(t, "APP_MAX_SCHEMA_VERSION")
+	cfg, err := LoadWorker()
+	if err != nil || cfg.App.MinSchemaVersion != SupportedSchemaVersion || cfg.App.MaxSchemaVersion != SupportedSchemaVersion {
+		t.Fatalf("defaults=%d..%d err=%v", cfg.App.MinSchemaVersion, cfg.App.MaxSchemaVersion, err)
+	}
+}
+
+func TestLoadMigrationDefaultsToSupportedSchemaVersion(t *testing.T) {
+	setMigrationEnvironment(t)
+	unsetEnvironment(t, "APP_MIN_SCHEMA_VERSION")
+	unsetEnvironment(t, "APP_MAX_SCHEMA_VERSION")
+	cfg, err := LoadMigration()
+	if err != nil || cfg.App.MinSchemaVersion != SupportedSchemaVersion || cfg.App.MaxSchemaVersion != SupportedSchemaVersion {
+		t.Fatalf("defaults=%d..%d err=%v", cfg.App.MinSchemaVersion, cfg.App.MaxSchemaVersion, err)
 	}
 }
 

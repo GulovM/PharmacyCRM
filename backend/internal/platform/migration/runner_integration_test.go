@@ -212,3 +212,64 @@ func TestUpgradeFromSchema19Integration(t *testing.T) {
 		t.Fatalf("schema 23 replay=%#v err=%v", replayed, err)
 	}
 }
+
+func TestUpgradeFromSchema21Integration(t *testing.T) {
+	adminDSN := os.Getenv("POSTGRES_ADMIN_TEST_DSN")
+	migrationDSN := os.Getenv("POSTGRES_TEST_DSN")
+	if adminDSN == "" || migrationDSN == "" {
+		if os.Getenv("CI_INTEGRATION_REQUIRED") == "true" {
+			t.Fatal("POSTGRES_ADMIN_TEST_DSN and POSTGRES_TEST_DSN are required")
+		}
+		t.Skip("PostgreSQL admin and migration test DSNs are not set")
+	}
+	ctx := context.Background()
+	adminPool, err := pgxpool.New(ctx, adminDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(adminPool.Close)
+	parsedDSN, err := url.Parse(migrationDSN)
+	if err != nil || parsedDSN.Scheme == "" || parsedDSN.Host == "" {
+		t.Fatal("POSTGRES_TEST_DSN must be a PostgreSQL URL")
+	}
+	databaseName := "pharmacycrm_schema21_upgrade_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	parsedDSN.Path = "/" + databaseName
+	isolatedDSN := parsedDSN.String()
+	migrationConfig, err := pgxpool.ParseConfig(migrationDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identifier := pgx.Identifier{databaseName}.Sanitize()
+	if _, err := adminPool.Exec(ctx, "CREATE DATABASE "+identifier+" OWNER "+pgx.Identifier{migrationConfig.ConnConfig.User}.Sanitize()+" TEMPLATE template0"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = adminPool.Exec(context.Background(), "DROP DATABASE IF EXISTS "+identifier+" WITH (FORCE)")
+	})
+	pool, err := database.NewMigration(ctx, config.MigrationPostgresConfig{DSN: isolatedDSN, PoolConfig: config.PoolConfig{
+		MinConnections: 1, MaxConnections: 2, AcquireTimeout: 5 * time.Second,
+		MaxConnectionLife: time.Minute, MaxConnectionIdle: time.Minute, HealthCheckPeriod: time.Minute,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	loaded, err := Load(embeddedmigrations.Files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := Run(ctx, pool, loaded[:21]); err != nil || result.SchemaVersion != 21 {
+		t.Fatalf("schema 21 setup=%#v err=%v", result, err)
+	}
+	result, err := Run(ctx, pool, loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SchemaVersion != 23 || len(result.Applied) != 2 || result.Applied[0] != 22 || result.Applied[1] != 23 {
+		t.Fatalf("unexpected schema 21 upgrade result: %#v", result)
+	}
+	replayed, err := Run(ctx, pool, loaded)
+	if err != nil || len(replayed.Applied) != 0 || replayed.SchemaVersion != 23 {
+		t.Fatalf("schema 23 replay=%#v err=%v", replayed, err)
+	}
+}

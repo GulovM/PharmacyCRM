@@ -2,6 +2,8 @@
 
 > E2 schema `23` integration coverage includes E1/19 upgrades, session-security negative constraints, API/worker privilege denial and capability-based outbox replay.
 
+The source-size architecture gate has Bash and PowerShell fixture tests; retention tests prove the shared batch budget and cycle deadline.
+
 **Статус документа:** Draft  
 **Версия:** 1.1  
 **Дата:** 2026-07-21  

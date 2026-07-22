@@ -46,7 +46,10 @@ jobs:
           pnpm generate:api
           git diff --exit-code -- src/shared/api/generated/schema.ts
       - name: Check architecture boundaries
-        run: make architecture-check
+        run: |
+          bash scripts/tests/check-source-size.sh
+          pwsh -File scripts/tests/check-source-size.ps1
+          make architecture-check
 
   migration-smoke:
     name: Migration from zero
@@ -92,6 +95,9 @@ jobs:
       - name: Verify schema 19 to E2 migration upgrade path
         working-directory: backend
         run: go test ./internal/platform/migration -run UpgradeFromSchema19Integration -count=1
+      - name: Verify schema 21 to E2 migration upgrade path
+        working-directory: backend
+        run: go test ./internal/platform/migration -run UpgradeFromSchema21Integration -count=1
       - name: Apply migrations to an empty database
         working-directory: backend
         run: go run ./cmd/migrate
