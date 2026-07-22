@@ -10,6 +10,15 @@ if [[ -z "${POSTGRES_ADMIN_TEST_DSN:-}" ]]; then
   exit 0
 fi
 
+if [[ "${ALLOW_DESTRUCTIVE_CLUSTER_ROLE_TEST:-}" != "true" ]]; then
+  if [[ "${CI_INTEGRATION_REQUIRED:-}" == "true" ]]; then
+    echo "ALLOW_DESTRUCTIVE_CLUSTER_ROLE_TEST=true is required for the isolated cluster-role gate" >&2
+    exit 1
+  fi
+  echo "destructive cluster-role test is not explicitly enabled; skipping"
+  exit 0
+fi
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 provisioning_script="$repo_root/deploy/scripts/provision-postgres-roles.sql"
 suffix="${RANDOM}_$$_$(date +%s)"
@@ -18,6 +27,8 @@ legacy_migrator="e1_migrator_${suffix}"
 legacy_runtime="e1_runtime_${suffix}"
 api_role="e2_api_${suffix}"
 worker_role="e2_worker_${suffix}"
+polluted_parent="e2_polluted_parent_${suffix}"
+owning_parent="e1_owning_parent_${suffix}"
 migration_password="migration_${suffix}"
 legacy_password="legacy_${suffix}"
 api_password="api_${suffix}"
@@ -54,11 +65,14 @@ compatibility_dsn="$(make_dsn "$POSTGRES_ADMIN_TEST_DSN" "pharmacycrm_runtime" "
 cleanup() {
   set +e
   psql "$POSTGRES_ADMIN_TEST_DSN" -X -v ON_ERROR_STOP=1 \
+    -v provisioning_mode=upgrade \
     -v database_name="$test_database" \
     -v api_role="$api_role" \
     -v worker_role="$worker_role" \
     -v migration_role="$legacy_migrator" \
-    -v legacy_role="$legacy_runtime" <<'SQL' >/dev/null 2>&1
+    -v legacy_role="$legacy_runtime" \
+    -v polluted_parent="$polluted_parent" \
+    -v owning_parent="$owning_parent" <<'SQL' >/dev/null 2>&1
 SELECT pg_terminate_backend(pid)
 FROM pg_stat_activity
 WHERE datname = :'database_name' AND pid <> pg_backend_pid();
@@ -67,12 +81,20 @@ SELECT format('DROP ROLE IF EXISTS %I', :'api_role') \gexec
 SELECT format('DROP ROLE IF EXISTS %I', :'worker_role') \gexec
 SELECT format('DROP ROLE IF EXISTS %I', :'migration_role') \gexec
 SELECT format('DROP ROLE IF EXISTS %I', :'legacy_role') \gexec
+SELECT format('DROP ROLE IF EXISTS %I', :'polluted_parent') \gexec
+SELECT format('DROP ROLE IF EXISTS %I', :'owning_parent') \gexec
 DROP ROLE IF EXISTS pharmacycrm_runtime;
 DROP ROLE IF EXISTS pharmacycrm_api_runtime;
 DROP ROLE IF EXISTS pharmacycrm_worker_runtime;
 DROP ROLE IF EXISTS pharmacycrm_migration;
 SQL
 }
+
+reserved_roles="$(psql "$POSTGRES_ADMIN_TEST_DSN" -X -At -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM pg_roles WHERE rolname IN ('pharmacycrm_runtime','pharmacycrm_api_runtime','pharmacycrm_worker_runtime','pharmacycrm_migration')")"
+if [[ "$reserved_roles" != "0" ]]; then
+  echo "cluster-role test requires a disposable PostgreSQL cluster with no PharmacyCRM reserved roles" >&2
+  exit 1
+fi
 trap cleanup EXIT
 
 psql "$POSTGRES_ADMIN_TEST_DSN" -X -v ON_ERROR_STOP=1 \
@@ -129,6 +151,7 @@ psql "$legacy_dsn" -X -At -v ON_ERROR_STOP=1 -c "SELECT value FROM e1_runtime_vi
 run_provisioning() {
   local legacy_role="$1"
   psql "$admin_database_dsn" -X -v ON_ERROR_STOP=1 \
+    -v provisioning_mode=upgrade \
     -v database_name="$test_database" \
     -v api_role="$api_role" -v api_password="$api_password" \
     -v worker_role="$worker_role" -v worker_password="$worker_password" \
@@ -136,6 +159,47 @@ run_provisioning() {
     -v legacy_runtime_role="$legacy_role" \
     -f "$provisioning_script"
 }
+
+if psql "$admin_database_dsn" -X -v ON_ERROR_STOP=1 \
+  -v provisioning_mode=fresh \
+  -v database_name="$test_database" \
+  -v api_role="$api_role" -v api_password="$api_password" \
+  -v worker_role="$worker_role" -v worker_password="$worker_password" \
+  -v migration_role="$legacy_migrator" -v migration_password="$migration_password" \
+  -f "$provisioning_script" >/dev/null 2>&1; then
+  echo "fresh mode incorrectly accepted an E1 database" >&2
+  exit 1
+fi
+if psql "$admin_database_dsn" -X -v ON_ERROR_STOP=1 \
+  -v database_name="$test_database" \
+  -v api_role="$api_role" -v api_password="$api_password" \
+  -v worker_role="$worker_role" -v worker_password="$worker_password" \
+  -v migration_role="$legacy_migrator" -v migration_password="$migration_password" \
+  -v legacy_runtime_role="$legacy_runtime" \
+  -f "$provisioning_script" >/dev/null 2>&1; then
+  echo "provisioning without an explicit mode unexpectedly succeeded" >&2
+  exit 1
+fi
+
+psql "$admin_database_dsn" -X -v ON_ERROR_STOP=1 \
+  -v owning_parent="$owning_parent" -v legacy_role="$legacy_runtime" <<'SQL'
+SELECT format('CREATE ROLE %I NOLOGIN', :'owning_parent') \gexec
+SELECT format('GRANT %I TO %I', :'owning_parent', :'legacy_role') \gexec
+CREATE TABLE ownership_probe(id bigint PRIMARY KEY);
+SELECT format('ALTER TABLE ownership_probe OWNER TO %I', :'owning_parent') \gexec
+SQL
+if run_provisioning "$legacy_runtime" >/dev/null 2>&1; then
+  echo "upgrade unexpectedly revoked membership in an owning parent role" >&2
+  exit 1
+fi
+psql "$admin_database_dsn" -X -v ON_ERROR_STOP=1 \
+  -v owning_parent="$owning_parent" -v legacy_role="$legacy_runtime" \
+  -v migration_role="$legacy_migrator" <<'SQL'
+SELECT format('REVOKE %I FROM %I', :'owning_parent', :'legacy_role') \gexec
+SELECT format('ALTER TABLE ownership_probe OWNER TO %I', :'migration_role') \gexec
+DROP TABLE ownership_probe;
+SELECT format('DROP ROLE %I', :'owning_parent') \gexec
+SQL
 
 run_provisioning "$legacy_runtime"
 
@@ -169,10 +233,37 @@ SQL
   POSTGRES_MIGRATION_DSN="$migrator_dsn" go run ./cmd/migrate
 )
 
+# Pollute existing service logins to prove reconciliation removes direct ACLs
+# and every unexpected membership before granting the single approved group.
+psql "$admin_database_dsn" -X -v ON_ERROR_STOP=1 \
+  -v api_role="$api_role" -v worker_role="$worker_role" \
+  -v migration_role="$legacy_migrator" -v polluted_parent="$polluted_parent" <<'SQL'
+SELECT format('CREATE ROLE %I NOLOGIN', :'polluted_parent') \gexec
+SELECT format('GRANT %I TO %I', :'polluted_parent', :'api_role') \gexec
+SELECT format('GRANT pg_read_all_data TO %I', :'worker_role') \gexec
+SELECT format('GRANT SELECT ON users TO %I', :'api_role') \gexec
+SELECT format('GRANT SELECT (password_hash) ON users TO %I', :'worker_role') \gexec
+SELECT format('GRANT CREATE ON DATABASE %I TO %I', current_database(), :'worker_role') \gexec
+SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT SELECT ON TABLES TO %I', :'migration_role', :'api_role') \gexec
+SQL
+
 # Immutable migrations intentionally reference pharmacycrm_runtime. Re-run the
-# idempotent provisioning contract after migration to strip their compatibility
-# grants without editing already-published migration files.
+# idempotent provisioning contract after migration to strip compatibility grants
+# and sanitize the existing API/worker logins.
 run_provisioning "$legacy_runtime"
+
+psql "$admin_database_dsn" -X -At -v ON_ERROR_STOP=1 \
+  -v api_role="$api_role" -v worker_role="$worker_role" <<'SQL' | grep -Fx "1|1|0|0|0|0|0|0"
+SELECT
+  (SELECT count(*) FROM pg_auth_members membership JOIN pg_roles role ON role.oid=membership.member WHERE role.rolname=:'api_role'),
+  (SELECT count(*) FROM pg_auth_members membership JOIN pg_roles role ON role.oid=membership.member WHERE role.rolname=:'worker_role'),
+  (SELECT count(*) FROM pg_auth_members membership JOIN pg_roles role ON role.oid=membership.member JOIN pg_roles parent ON parent.oid=membership.roleid WHERE role.rolname=:'api_role' AND parent.rolname<>'pharmacycrm_api_runtime'),
+  (SELECT count(*) FROM pg_auth_members membership JOIN pg_roles role ON role.oid=membership.member JOIN pg_roles parent ON parent.oid=membership.roleid WHERE role.rolname=:'worker_role' AND parent.rolname<>'pharmacycrm_worker_runtime'),
+  (SELECT count(*) FROM pg_default_acl acl CROSS JOIN LATERAL aclexplode(acl.defaclacl) privilege JOIN pg_roles role ON role.oid=privilege.grantee WHERE role.rolname=:'api_role'),
+  (SELECT count(*) FROM pg_class relation CROSS JOIN LATERAL aclexplode(relation.relacl) privilege JOIN pg_roles role ON role.oid=privilege.grantee WHERE role.rolname IN (:'api_role',:'worker_role')),
+  (SELECT count(*) FROM pg_attribute attribute CROSS JOIN LATERAL aclexplode(attribute.attacl) privilege JOIN pg_roles role ON role.oid=privilege.grantee WHERE role.rolname IN (:'api_role',:'worker_role')),
+  (SELECT count(*) FROM pg_database database CROSS JOIN LATERAL aclexplode(database.datacl) privilege JOIN pg_roles role ON role.oid=privilege.grantee WHERE database.datname=current_database() AND role.rolname IN (:'api_role',:'worker_role'));
+SQL
 
 if psql "$legacy_dsn" -X -At -v ON_ERROR_STOP=1 -c "SELECT 1" >/dev/null 2>&1; then
   echo "retired E1 runtime credential reconnects after migrations" >&2
