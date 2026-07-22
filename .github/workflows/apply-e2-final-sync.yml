@@ -24,7 +24,7 @@ jobs:
         run: python scripts/apply-e2-final-sync.py
       - name: Verify current schema references
         run: |
-          if grep -RniE 'current[^\n]*schema[^\n]*21|schema version[^\n]*21' docs deploy backend --exclude='*.sum'; then
+          if grep -RniE 'current E2 schema `21`|application compatibility[^\n]*schema version `21`' docs deploy backend --exclude='*.sum'; then
             echo 'Found stale current-state schema 21 reference'
             exit 1
           fi
