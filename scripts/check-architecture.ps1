@@ -98,7 +98,8 @@ if (Test-RipgrepMatch @('-n', '--glob', '**/application/*.go', '--glob', '**/app
     Fail 'application and domain packages must not import pgx'
 }
 
-& (Join-Path $PSHOME 'powershell.exe') -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot/check-source-size.ps1" -Root $rootDirectory
+$pwshExecutable = (Get-Process -Id $PID).Path
+& $pwshExecutable -NoProfile -File "$PSScriptRoot/check-source-size.ps1" -Root $rootDirectory
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $genericNames = @('utils.go', 'helpers.go', 'common.go', 'misc.go', 'manager.go', 'service_all.go', 'repository_all.go')
