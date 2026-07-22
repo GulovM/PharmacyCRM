@@ -124,7 +124,7 @@ func buildAPIServer(pool apiProcessPool, cfg config.APIConfig, logger apiProcess
 			return nil
 		},
 		func(context.Context) error {
-			if cfg.Worker.ProtocolVersion != config.SupportedWorkerProtocol {
+			if cfg.App.WorkerProtocol != config.SupportedWorkerProtocol {
 				return errors.New("worker protocol is incompatible")
 			}
 			return nil
