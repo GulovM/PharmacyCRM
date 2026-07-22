@@ -22,9 +22,11 @@ func (l *fakeAPILogger) Close() error {
 
 type fakeAPIPool struct{ closeCalls int }
 
-func (*fakeAPIPool) Ping(context.Context) error                 { return nil }
-func (*fakeAPIPool) SchemaVersion(context.Context) (int64, error) { return 23, nil }
-func (p *fakeAPIPool) Close()                                  { p.closeCalls++ }
+func (*fakeAPIPool) Ping(context.Context) error { return nil }
+func (*fakeAPIPool) SchemaVersion(context.Context) (int64, error) {
+	return 23, nil
+}
+func (p *fakeAPIPool) Close() { p.closeCalls++ }
 
 type fakeAPIServer struct {
 	serveErr, shutdownErr error
