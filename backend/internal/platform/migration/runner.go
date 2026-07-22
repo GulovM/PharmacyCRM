@@ -4,6 +4,7 @@ package migration
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io/fs"
 	"regexp"
@@ -18,6 +19,10 @@ const advisoryLockKey int64 = 706515008
 
 var filename = regexp.MustCompile(`^(\d+)_([a-z0-9_]+)\.up\.sql$`)
 var verificationQuery = regexp.MustCompile(`(?m)^-- .*Verification query:\s*(SELECT .+;)\s*$`)
+
+var ErrChecksumMismatch = errors.New("migration checksum mismatch")
+
+const legacySchemaMetadataVerification = "SELECT to_regclass('public.pharmacycrm_schema_metadata') IS NOT NULL;"
 
 type Migration struct {
 	Version                              int64
@@ -53,10 +58,17 @@ func Load(files fs.FS) ([]Migration, error) {
 		}
 		sum := sha256.Sum256(raw)
 		verification := verificationQuery.FindStringSubmatch(string(raw))
-		if verification == nil {
+		verificationSQL := ""
+		if verification == nil && version == 1 && matches[2] == "schema_metadata" {
+			// Migration 000001 predates executable verification queries and is
+			// immutable because its checksum is already persisted by E1 databases.
+			verificationSQL = legacySchemaMetadataVerification
+		} else if verification == nil {
 			return nil, fmt.Errorf("migration %d has no verification query", version)
+		} else {
+			verificationSQL = verification[1]
 		}
-		result = append(result, Migration{version, matches[2], string(raw), fmt.Sprintf("%x", sum), verification[1]})
+		result = append(result, Migration{version, matches[2], string(raw), fmt.Sprintf("%x", sum), verificationSQL})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Version < result[j].Version })
 	return result, nil
@@ -102,7 +114,7 @@ func Run(ctx context.Context, pool *database.Pool, migrations []Migration) (Resu
 	for _, migration := range migrations {
 		if checksum, ok := applied[migration.Version]; ok {
 			if checksum != migration.Checksum {
-				return Result{}, fmt.Errorf("migration checksum mismatch")
+				return Result{}, fmt.Errorf("migration %d: %w", migration.Version, ErrChecksumMismatch)
 			}
 			result.SchemaVersion = migration.Version
 			continue

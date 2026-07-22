@@ -26,8 +26,20 @@ func TestLoadRejectsInvalidName(t *testing.T) {
 }
 
 func TestLoadRejectsMissingVerificationQuery(t *testing.T) {
-	_, err := Load(fstest.MapFS{"000001_first.up.sql": {Data: []byte("SELECT 1;")}})
+	_, err := Load(fstest.MapFS{"000002_second.up.sql": {Data: []byte("SELECT 1;")}})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestLoadPreservesLegacySchemaMetadataMigration(t *testing.T) {
+	migrations, err := Load(fstest.MapFS{
+		"000001_schema_metadata.up.sql": {Data: []byte("CREATE TABLE pharmacycrm_schema_metadata (singleton boolean);")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(migrations) != 1 || migrations[0].VerificationSQL != legacySchemaMetadataVerification {
+		t.Fatalf("unexpected legacy migration: %#v", migrations)
 	}
 }
