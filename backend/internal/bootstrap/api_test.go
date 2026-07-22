@@ -30,7 +30,7 @@ func (p *fakeAPIPool) Close() { p.closeCalls++ }
 
 type fakeAPIServer struct {
 	serveErr, shutdownErr error
-	block                  bool
+	block                 bool
 }
 
 func (s *fakeAPIServer) ListenAndServe() error {
@@ -77,7 +77,9 @@ func TestRunAPIPreservesInitializationErrors(t *testing.T) {
 	serverErr := errors.New("server")
 	logger, pool := &fakeAPILogger{}, &fakeAPIPool{}
 	dependencies = baseAPIDependencies(logger, pool, &fakeAPIServer{})
-	dependencies.newServer = func(apiProcessPool, config.APIConfig, apiProcessLogger) (apiProcessServer, error) { return nil, serverErr }
+	dependencies.newServer = func(apiProcessPool, config.APIConfig, apiProcessLogger) (apiProcessServer, error) {
+		return nil, serverErr
+	}
 	if err := runAPI(dependencies); !errors.Is(err, serverErr) || logger.closeCalls != 1 || pool.closeCalls != 1 {
 		t.Fatalf("server error=%v logger closes=%d pool closes=%d", err, logger.closeCalls, pool.closeCalls)
 	}
