@@ -22,9 +22,6 @@ func validateAPI(c APIConfig) error {
 	if err := validateTelemetry(c.Telemetry); err != nil {
 		return err
 	}
-	if err := validateWorker(c.Worker, c.App.WorkerProtocol); err != nil {
-		return err
-	}
 	return validateStorage(c.Storage)
 }
 
