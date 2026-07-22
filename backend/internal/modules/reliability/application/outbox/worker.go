@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/rand/v2"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +14,8 @@ import (
 const (
 	workerRetryBase = 2 * time.Second
 	workerRetryCap  = 15 * time.Minute
+	claimRetryBase  = 100 * time.Millisecond
+	claimRetryCap   = 5 * time.Second
 )
 
 type Transactor interface {
@@ -29,15 +32,27 @@ type WorkerConfig struct {
 }
 
 type Worker struct {
-	transactor Transactor
-	handlers   map[EventKey]Handler
-	config     WorkerConfig
-	now        func() time.Time
-	retryDelay func(int16) time.Duration
-	observer   Observer
+	transactor      Transactor
+	handlers        map[EventKey]Handler
+	config          WorkerConfig
+	now             func() time.Time
+	retryDelay      func(int16) time.Duration
+	claimRetryDelay func(int) time.Duration
+	claimErrors     ClaimErrorClassifier
+	protocols       []EventKey
+	observer        Observer
 }
 
+type ClaimErrorClassifier interface {
+	IsTransientClaimError(error) bool
+}
+
+type ClaimErrorClassifierFunc func(error) bool
+
+func (f ClaimErrorClassifierFunc) IsTransientClaimError(err error) bool { return f(err) }
+
 type Observer interface {
+	ClaimFailed(context.Context, error, bool, time.Duration)
 	FinalizationFailed(context.Context, Lease, error)
 	StaleLease(context.Context, Lease)
 	DeadLettered(context.Context, Lease, string)
@@ -45,25 +60,34 @@ type Observer interface {
 
 type noopObserver struct{}
 
-func (noopObserver) FinalizationFailed(context.Context, Lease, error) {}
-func (noopObserver) StaleLease(context.Context, Lease)                {}
-func (noopObserver) DeadLettered(context.Context, Lease, string)      {}
+func (noopObserver) ClaimFailed(context.Context, error, bool, time.Duration) {}
+func (noopObserver) FinalizationFailed(context.Context, Lease, error)        {}
+func (noopObserver) StaleLease(context.Context, Lease)                       {}
+func (noopObserver) DeadLettered(context.Context, Lease, string)             {}
 
-func NewWorker(transactor Transactor, handlers map[EventKey]Handler, config WorkerConfig, observer Observer) (*Worker, error) {
-	if transactor == nil || strings.TrimSpace(config.Owner) == "" || config.Concurrency < 1 || config.MaxClaim < 1 || config.MaxClaim > 100 || config.PollInterval <= 0 || config.LeaseDuration <= 0 || config.DrainTimeout <= 0 {
+func NewWorker(transactor Transactor, handlers map[EventKey]Handler, config WorkerConfig, observer Observer, claimErrors ClaimErrorClassifier) (*Worker, error) {
+	if transactor == nil || claimErrors == nil || strings.TrimSpace(config.Owner) == "" || config.Concurrency < 1 || config.MaxClaim < 1 || config.MaxClaim > 100 || config.PollInterval <= 0 || config.LeaseDuration <= 0 || config.DrainTimeout <= 0 {
 		return nil, errors.Join(ErrInvalidEvent, errors.New("invalid worker configuration"))
 	}
 	copyHandlers := make(map[EventKey]Handler, len(handlers))
+	protocols := make([]EventKey, 0, len(handlers))
 	for key, handler := range handlers {
 		if key.Name == "" || key.Version < 1 || handler == nil {
 			return nil, errors.Join(ErrInvalidEvent, errors.New("invalid handler registration"))
 		}
 		copyHandlers[key] = handler
+		protocols = append(protocols, key)
 	}
+	sort.Slice(protocols, func(i, j int) bool {
+		if protocols[i].Name == protocols[j].Name {
+			return protocols[i].Version < protocols[j].Version
+		}
+		return protocols[i].Name < protocols[j].Name
+	})
 	if observer == nil {
 		observer = noopObserver{}
 	}
-	return &Worker{transactor: transactor, handlers: copyHandlers, config: config, now: time.Now, retryDelay: outboxRetryDelay, observer: observer}, nil
+	return &Worker{transactor: transactor, handlers: copyHandlers, protocols: protocols, config: config, now: time.Now, retryDelay: outboxRetryDelay, claimRetryDelay: pollingRetryDelay, claimErrors: claimErrors, observer: observer}, nil
 }
 
 func (w *Worker) SupportsProtocol(key EventKey) bool {
@@ -87,18 +111,30 @@ func (w *Worker) Run(ctx context.Context) error {
 	var workers sync.WaitGroup
 	ticker := time.NewTicker(w.config.PollInterval)
 	defer ticker.Stop()
+	failedClaims := 0
 
 	for {
 		if err := ctx.Err(); err != nil {
-			return waitForDrain(&workers, stopProcessing, w.config.DrainTimeout)
+			return w.shutdown(&workers, stopProcessing, nil)
 		}
 		available := cap(semaphore) - len(semaphore)
 		if available > 0 {
 			limit := min(available, w.config.MaxClaim)
 			leases, err := w.claim(ctx, limit)
 			if err != nil {
-				return err
+				if !w.claimErrors.IsTransientClaimError(err) {
+					w.observer.ClaimFailed(ctx, err, false, 0)
+					return w.shutdown(&workers, stopProcessing, err)
+				}
+				failedClaims++
+				delay := w.claimRetryDelay(failedClaims)
+				w.observer.ClaimFailed(ctx, err, true, delay)
+				if !waitForContext(ctx, delay) {
+					return w.shutdown(&workers, stopProcessing, nil)
+				}
+				continue
 			}
+			failedClaims = 0
 			for _, lease := range leases {
 				semaphore <- struct{}{}
 				workers.Add(1)
@@ -119,11 +155,16 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 }
 
+func (w *Worker) shutdown(workers *sync.WaitGroup, cancel context.CancelFunc, primary error) error {
+	drainErr := waitForDrain(workers, cancel, w.config.DrainTimeout)
+	return errors.Join(primary, drainErr)
+}
+
 func (w *Worker) claim(ctx context.Context, limit int) ([]Lease, error) {
 	var leases []Lease
 	err := w.transactor.WithinTransaction(ctx, func(ctx context.Context, repository Repository) error {
 		var err error
-		leases, err = repository.ClaimBatch(ctx, ClaimRequest{Owner: w.config.Owner, Limit: limit, LeaseDuration: w.config.LeaseDuration, Now: w.now()})
+		leases, err = repository.ClaimBatch(ctx, ClaimRequest{Owner: w.config.Owner, Limit: limit, LeaseDuration: w.config.LeaseDuration, Now: w.now(), Protocols: w.protocols})
 		return err
 	})
 	return leases, err
@@ -206,6 +247,28 @@ func outboxRetryDelay(attempt int16) time.Duration {
 		limit = workerRetryCap
 	}
 	return time.Duration(rand.Int64N(int64(limit) + 1))
+}
+
+func pollingRetryDelay(failedAttempt int) time.Duration {
+	limit := claimRetryBase
+	for current := 1; current < failedAttempt && limit < claimRetryCap; current++ {
+		limit *= 2
+	}
+	if limit > claimRetryCap {
+		limit = claimRetryCap
+	}
+	return time.Duration(rand.Int64N(int64(limit) + 1))
+}
+
+func waitForContext(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func waitForDrain(workers *sync.WaitGroup, cancel context.CancelFunc, timeout time.Duration) error {

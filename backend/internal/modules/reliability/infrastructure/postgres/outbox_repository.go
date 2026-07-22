@@ -42,6 +42,12 @@ func (r *TransactionalOutboxRepository) Append(ctx context.Context, event outbox
 }
 
 func (r *TransactionalOutboxRepository) ClaimBatch(ctx context.Context, request outbox.ClaimRequest) ([]outbox.Lease, error) {
+	eventNames := make([]string, 0, len(request.Protocols))
+	eventVersions := make([]int16, 0, len(request.Protocols))
+	for _, protocol := range request.Protocols {
+		eventNames = append(eventNames, protocol.Name)
+		eventVersions = append(eventVersions, protocol.Version)
+	}
 	// A worker that crashed on its final permitted attempt cannot acknowledge
 	// the result. Once its lease expires, move it to the dead-letter state so
 	// the row cannot remain PROCESSING forever.
@@ -67,6 +73,9 @@ func (r *TransactionalOutboxRepository) ClaimBatch(ctx context.Context, request 
 			SELECT id
 			FROM outbox_events
 			WHERE attempt_count < max_attempts
+			  AND (event_name, event_version) IN (
+				SELECT * FROM unnest($5::varchar[], $6::smallint[])
+			  )
 			  AND ((status = 'PENDING' AND available_at <= $1)
 			       OR (status = 'PROCESSING' AND lease_expires_at <= $1))
 			ORDER BY available_at, created_at, id
@@ -84,7 +93,7 @@ func (r *TransactionalOutboxRepository) ClaimBatch(ctx context.Context, request 
 			event.deduplication_key, event.payload, event.headers,
 			event.occurred_at, event.max_attempts, event.lease_token,
 			event.lease_generation, event.leased_by, event.attempt_count, event.lease_expires_at`,
-		request.Now, request.Limit, request.Owner, expiresAt)
+		request.Now, request.Limit, request.Owner, expiresAt, eventNames, eventVersions)
 	if err != nil {
 		return nil, fmt.Errorf("claim outbox batch: %w", err)
 	}

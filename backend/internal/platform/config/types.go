@@ -96,10 +96,12 @@ type TelemetryConfig struct {
 
 type WorkerConfig struct {
 	ProtocolVersion int           `envconfig:"PROTOCOL_VERSION" default:"1"`
+	Owner           string        `required:"true"`
 	Concurrency     int           `default:"1"`
 	PollInterval    time.Duration `envconfig:"POLL_INTERVAL" default:"1s"`
 	LeaseDuration   time.Duration `envconfig:"LEASE_DURATION" default:"30s"`
 	MaxClaim        int           `envconfig:"MAX_CLAIM" default:"100"`
+	DrainTimeout    time.Duration `envconfig:"DRAIN_TIMEOUT" default:"20s"`
 }
 
 type StorageConfig struct {

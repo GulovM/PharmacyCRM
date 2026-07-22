@@ -9,6 +9,7 @@ import (
 func setRuntimeEnvironment(t *testing.T) {
 	t.Helper()
 	t.Setenv("POSTGRES_RUNTIME_DSN", "postgres://user:password@localhost:5432/pharmacy")
+	t.Setenv("WORKER_OWNER", "worker-test-1")
 }
 
 func setMigrationEnvironment(t *testing.T) {
@@ -103,7 +104,7 @@ func validAPIConfig() APIConfig {
 		Auth:            AuthConfig{JWTIssuer: "pharmacycrm", JWTAudience: "pharmacycrm-api", JWTAlgorithm: "EdDSA", JWTPrivateKey: "private-key", RefreshTokenPepper: "pepper", CookieSameSite: "strict", AccessTokenTTL: time.Second, RefreshAbsoluteTTL: 2 * time.Second, RefreshIdleTTL: time.Second},
 		Logging:         LoggingConfig{Level: "info", Format: "console", FilePath: "var/log/pharmacycrm/app.log", MaxSizeMB: 1, MaxBackups: 1, MaxAgeDays: 1},
 		Telemetry:       TelemetryConfig{MetricsAddress: ":9090", ExportTimeout: time.Second},
-		Worker:          WorkerConfig{ProtocolVersion: 1, Concurrency: 1, PollInterval: time.Second, LeaseDuration: time.Second, MaxClaim: 1},
+		Worker:          WorkerConfig{ProtocolVersion: 1, Owner: "worker-test-1", Concurrency: 1, PollInterval: time.Second, LeaseDuration: time.Second, MaxClaim: 1, DrainTimeout: time.Second},
 		Storage:         StorageConfig{ImportRoot: "var/imports", MaxUploadBytes: 1, Retention: time.Second},
 	}
 }
@@ -118,6 +119,9 @@ func TestValidateAPIRejectsUnsafeConfiguration(t *testing.T) {
 		{"unsupported direct tls", func(c *APIConfig) { c.HTTP.TLSMode = "direct" }},
 		{"cors wildcard credentials", func(c *APIConfig) { c.ProxyCORS.AllowedOrigins = CSV{"*"}; c.ProxyCORS.AllowCredentials = true }},
 		{"invalid pool", func(c *APIConfig) { c.RuntimePostgres.MinConnections = 2; c.RuntimePostgres.MaxConnections = 1 }},
+		{"empty worker owner", func(c *APIConfig) { c.Worker.Owner = "" }},
+		{"oversized claim", func(c *APIConfig) { c.Worker.MaxClaim = 101 }},
+		{"drain exceeds process shutdown", func(c *APIConfig) { c.Worker.DrainTimeout = 21 * time.Second }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

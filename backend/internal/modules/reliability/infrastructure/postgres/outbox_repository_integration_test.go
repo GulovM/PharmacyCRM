@@ -87,6 +87,7 @@ func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 		}
 		leases, err := testOutboxRepository(tx).ClaimBatch(ctx, outbox.ClaimRequest{
 			Owner: owner, Limit: limit, LeaseDuration: 30 * time.Second, Now: now,
+			Protocols: []outbox.EventKey{{Name: "test.outbox", Version: 1}},
 		})
 		if err != nil {
 			_ = tx.Rollback(ctx)
@@ -177,7 +178,7 @@ func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	leasingAt := now.Add(20 * time.Minute)
-	workerOne, err := testOutboxRepository(tx1).ClaimBatch(ctx, outbox.ClaimRequest{Owner: "worker-1", Limit: 1, LeaseDuration: time.Minute, Now: leasingAt})
+	workerOne, err := testOutboxRepository(tx1).ClaimBatch(ctx, outbox.ClaimRequest{Owner: "worker-1", Limit: 1, LeaseDuration: time.Minute, Now: leasingAt, Protocols: []outbox.EventKey{{Name: "test.outbox", Version: 1}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +186,7 @@ func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workerTwo, err := testOutboxRepository(tx2).ClaimBatch(ctx, outbox.ClaimRequest{Owner: "worker-2", Limit: 1, LeaseDuration: time.Minute, Now: leasingAt})
+	workerTwo, err := testOutboxRepository(tx2).ClaimBatch(ctx, outbox.ClaimRequest{Owner: "worker-2", Limit: 1, LeaseDuration: time.Minute, Now: leasingAt, Protocols: []outbox.EventKey{{Name: "test.outbox", Version: 1}}})
 	if err != nil {
 		t.Fatal(err)
 	}

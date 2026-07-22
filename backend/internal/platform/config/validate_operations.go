@@ -5,7 +5,10 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+const workerProcessShutdownTimeout = 20 * time.Second
 
 func validateLogging(c LoggingConfig, environment string) error {
 	if c.Level != "debug" && c.Level != "info" && c.Level != "warn" && c.Level != "error" {
@@ -46,7 +49,10 @@ func validateWorker(c WorkerConfig, expectedProtocol int) error {
 	if c.ProtocolVersion != expectedProtocol {
 		return invalid("worker protocol is incompatible with application protocol")
 	}
-	if c.Concurrency < 1 || c.MaxClaim < 1 || c.PollInterval <= 0 || c.LeaseDuration <= 0 {
+	if strings.TrimSpace(c.Owner) == "" || c.Owner != strings.TrimSpace(c.Owner) || len(c.Owner) > 200 {
+		return invalid("worker owner is invalid")
+	}
+	if c.Concurrency < 1 || c.MaxClaim < 1 || c.MaxClaim > 100 || c.PollInterval <= 0 || c.LeaseDuration <= 0 || c.DrainTimeout <= 0 || c.DrainTimeout > workerProcessShutdownTimeout {
 		return invalid("worker settings are invalid")
 	}
 	return nil

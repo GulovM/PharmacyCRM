@@ -40,6 +40,7 @@ type ClaimRequest struct {
 	Limit         int
 	LeaseDuration time.Duration
 	Now           time.Time
+	Protocols     []EventKey
 }
 
 type Failure struct {
