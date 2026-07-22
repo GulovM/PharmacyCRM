@@ -33,19 +33,22 @@ type atomicReliabilityAdapters struct {
 }
 
 func newAtomicReliabilityAdapters(executor database.TransactionExecutor) atomicReliabilityUnitOfWork {
+	auditWriter, _ := audit.NewWriter(
+		auditpostgres.NewTransactionalAuditRepository(executor),
+		audit.MetadataPolicy{"test.atomic": {"reason": audit.MetadataString}},
+	)
+	outboxWriter, _ := outbox.NewWriter(
+		NewTransactionalOutboxRepository(executor),
+		map[outbox.EventKey]outbox.PayloadValidator{
+			{Name: "test.atomic", Version: 1}: outbox.PayloadValidatorFunc(func(json.RawMessage) error { return nil }),
+		},
+	)
+	idempotencyService, _ := idempotency.NewService(NewTransactionalIdempotencyRepository(executor))
 	return &atomicReliabilityAdapters{
-		executor: executor,
-		audit: audit.NewWriter(
-			auditpostgres.NewTransactionalAuditRepository(executor),
-			audit.MetadataPolicy{"test.atomic": {"reason": audit.MetadataString}},
-		),
-		outbox: outbox.NewWriter(
-			NewTransactionalOutboxRepository(executor),
-			map[outbox.EventKey]outbox.PayloadValidator{
-				{Name: "test.atomic", Version: 1}: outbox.PayloadValidatorFunc(func(json.RawMessage) error { return nil }),
-			},
-		),
-		idempotency: idempotency.NewService(NewTransactionalIdempotencyRepository(executor)),
+		executor:    executor,
+		audit:       auditWriter,
+		outbox:      outboxWriter,
+		idempotency: idempotencyService,
 	}
 }
 
@@ -90,7 +93,7 @@ func TestMandatoryReliabilityFailuresRollbackBusinessWriteIntegration(t *testing
 		t.Fatal(err)
 	}
 
-	pool, err := database.NewRuntime(ctx, config.RuntimePostgresConfig{
+	pool, err := database.NewWorker(ctx, config.WorkerPostgresConfig{
 		DSN: dsn,
 		PoolConfig: config.PoolConfig{
 			MinConnections: 1, MaxConnections: 2, AcquireTimeout: time.Second,

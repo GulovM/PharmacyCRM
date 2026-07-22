@@ -66,7 +66,8 @@ jobs:
         ports:
           - 5432:5432
     env:
-      POSTGRES_RUNTIME_DSN: postgres://runtime_user:runtime-ci-password@localhost:5432/pharmacycrm?sslmode=disable
+      POSTGRES_API_RUNTIME_DSN: postgres://api_user:api-ci-password@localhost:5432/pharmacycrm?sslmode=disable
+      POSTGRES_WORKER_RUNTIME_DSN: postgres://worker_user:worker-ci-password@localhost:5432/pharmacycrm?sslmode=disable
       POSTGRES_MIGRATION_DSN: postgres://migration_user:migration-ci-password@localhost:5432/pharmacycrm?sslmode=disable
       POSTGRES_TEST_DSN: postgres://migration_user:migration-ci-password@localhost:5432/pharmacycrm?sslmode=disable
       POSTGRES_ADMIN_TEST_DSN: postgres://pharmacycrm:ci-only-password@localhost:5432/pharmacycrm?sslmode=disable
@@ -84,7 +85,7 @@ jobs:
         env:
           PGPASSWORD: ci-only-password
         run: |
-          psql -h localhost -U pharmacycrm -d pharmacycrm -v database_name=pharmacycrm -v runtime_role=runtime_user -v runtime_password=runtime-ci-password -v migration_role=migration_user -v migration_password=migration-ci-password -f deploy/scripts/provision-postgres-roles.sql
+          psql -h localhost -U pharmacycrm -d pharmacycrm -v database_name=pharmacycrm -v api_role=api_user -v api_password=api-ci-password -v worker_role=worker_user -v worker_password=worker-ci-password -v migration_role=migration_user -v migration_password=migration-ci-password -f deploy/scripts/provision-postgres-roles.sql
       - name: Verify E1 to E2 migration upgrade path
         working-directory: backend
         run: go test ./internal/platform/migration -run UpgradeFromE1Integration -count=1
@@ -96,12 +97,14 @@ jobs:
         run: |
           test -n "$POSTGRES_TEST_DSN"
           test "$CI_INTEGRATION_REQUIRED" = "true"
+          go test ./internal/platform/migration -run Integration -count=1
           go test ./internal/platform/database -run Integration -count=1
           go test ./internal/modules/reliability/infrastructure/postgres -run Integration -count=1
           go test ./internal/modules/audit/infrastructure/postgres -run Integration -count=1
           go test ./internal/orchestration/outboxreplay/postgres -run Integration -count=1
           go test ./internal/testkit/reconciliation -run Integration -count=1
           go test ./internal/testkit/schema -run Integration -count=1
+          go test ./internal/bootstrap -count=1
       - name: Run database and reliability race detector suites
         working-directory: backend
         run: |
@@ -111,12 +114,11 @@ jobs:
         env:
           PGPASSWORD: ci-only-password
         run: |
-          PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc 'SELECT MAX(version) FROM pharmacycrm_schema_migrations' | grep -x '19'
-          PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc 'SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton' | grep -x '19'
-          PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc "SELECT count(*) FROM roles WHERE is_system AND code IN ('CLIENT','PHARMACIST','ADMIN')" | grep -x '3'
-          PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc "SELECT has_schema_privilege(current_user, 'public', 'CREATE')" | grep -x 'f'
-          PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc "SELECT has_table_privilege(current_user, 'inventory_movements', 'UPDATE')" | grep -x 'f'
-          PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc "SELECT has_table_privilege(current_user, 'audit_events', 'DELETE')" | grep -x 'f'
+          PGPASSWORD=api-ci-password psql -h localhost -U api_user -d pharmacycrm -Atc 'SELECT MAX(version) FROM pharmacycrm_schema_migrations' | grep -x '21'
+          PGPASSWORD=api-ci-password psql -h localhost -U api_user -d pharmacycrm -Atc 'SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton' | grep -x '21'
+          PGPASSWORD=worker-ci-password psql -h localhost -U worker_user -d pharmacycrm -Atc "SELECT has_column_privilege(current_user, 'users', 'password_hash', 'SELECT')" | grep -x 'f'
+          PGPASSWORD=worker-ci-password psql -h localhost -U worker_user -d pharmacycrm -Atc "SELECT has_column_privilege(current_user, 'user_sessions', 'refresh_token_hash', 'SELECT')" | grep -x 'f'
+          PGPASSWORD=worker-ci-password psql -h localhost -U worker_user -d pharmacycrm -Atc "SELECT has_table_privilege(current_user, 'outbox_events', 'DELETE')" | grep -x 'f'
 
   security-and-containers:
     name: Security and container builds

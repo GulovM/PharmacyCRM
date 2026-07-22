@@ -17,9 +17,10 @@ const (
 )
 
 var (
-	ErrInvalidEvent  = errors.New("invalid outbox event")
-	ErrStaleLease    = errors.New("stale outbox lease")
-	ErrNotDeadLetter = errors.New("outbox event is not dead lettered")
+	ErrInvalidEvent      = errors.New("invalid outbox event")
+	ErrStaleLease        = errors.New("stale outbox lease")
+	ErrNotDeadLetter     = errors.New("outbox event is not dead lettered")
+	ErrDependencyMissing = errors.New("required dependency is missing")
 )
 
 type Repository interface {
@@ -43,15 +44,24 @@ type Writer struct {
 	validators map[EventKey]PayloadValidator
 }
 
-func NewWriter(repository Repository, validators map[EventKey]PayloadValidator) *Writer {
+func NewWriter(repository Repository, validators map[EventKey]PayloadValidator) (*Writer, error) {
+	if repository == nil {
+		return nil, ErrDependencyMissing
+	}
 	registered := make(map[EventKey]PayloadValidator, len(validators))
 	for key, validator := range validators {
+		if validator == nil {
+			return nil, ErrDependencyMissing
+		}
 		registered[key] = validator
 	}
-	return &Writer{repository: repository, validators: registered}
+	return &Writer{repository: repository, validators: registered}, nil
 }
 
 func (w *Writer) Append(ctx context.Context, event Event) error {
+	if w == nil || w.repository == nil {
+		return ErrDependencyMissing
+	}
 	if event.MaxAttempts == 0 {
 		event.MaxAttempts = DefaultMaxAttempts
 	}

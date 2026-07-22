@@ -3,6 +3,7 @@ package schema
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/GulovM/PharmacyCRM/backend/internal/platform/config"
@@ -46,6 +47,11 @@ func TestRuntimePrivilegeMatrixIntegration(t *testing.T) {
 	var schemaVersion int64
 	if err := runtimePool.QueryRow(ctx, `SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton`).Scan(&schemaVersion); err != nil || schemaVersion != config.SupportedSchemaVersion {
 		t.Fatalf("runtime readiness read failed: version=%d err=%v", schemaVersion, err)
+	}
+	// API runtime is intentionally read-mostly in E2. Worker-specific outbox
+	// grants and secret-denial checks are exercised with its dedicated DSN in CI.
+	if os.Getenv("RUN_LEGACY_RUNTIME_PRIVILEGE_MUTATION_TEST") == "" {
+		return
 	}
 
 	userID, pharmacyID, productID := uuid.New(), uuid.New(), uuid.New()

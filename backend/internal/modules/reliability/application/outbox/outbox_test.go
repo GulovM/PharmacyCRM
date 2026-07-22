@@ -73,6 +73,15 @@ func validEvent() Event {
 	}
 }
 
+func mustNewWriter(t *testing.T, repository Repository, validators map[EventKey]PayloadValidator) *Writer {
+	t.Helper()
+	writer, err := NewWriter(repository, validators)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return writer
+}
+
 func testWorker(t *testing.T, repository *fakeRepository, handler Handler, observer Observer) *Worker {
 	t.Helper()
 	key := EventKey{Name: "inventory.changed", Version: 1}
@@ -90,7 +99,7 @@ func testWorker(t *testing.T, repository *fakeRepository, handler Handler, obser
 
 func TestWriterDefaultsAttemptsAndRejectsSecrets(t *testing.T) {
 	repository := &fakeRepository{}
-	writer := NewWriter(repository, map[EventKey]PayloadValidator{
+	writer := mustNewWriter(t, repository, map[EventKey]PayloadValidator{
 		{Name: "inventory.changed", Version: 1}: PayloadValidatorFunc(func(json.RawMessage) error { return nil }),
 	})
 	event := validEvent()

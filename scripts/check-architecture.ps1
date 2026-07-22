@@ -98,4 +98,24 @@ if (Test-RipgrepMatch @('-n', '--glob', '**/application/*.go', '--glob', '**/app
     Fail 'application and domain packages must not import pgx'
 }
 
+$sourceExtensions = @('.go', '.ts', '.tsx', '.js', '.jsx', '.sql', '.sh', '.ps1')
+$ignoredSegments = @('node_modules', 'vendor', 'dist', 'build', 'coverage', 'tmp', 'generated')
+Get-ChildItem -Path backend, frontend, scripts -Recurse -File | Where-Object {
+    $_.Extension -in $sourceExtensions -and
+    $_.FullName -notmatch '[\\/]frontend[\\/]src[\\/]shared[\\/]api[\\/]generated[\\/]' -and
+    -not ($_.FullName -split '[\\/]' | Where-Object { $_ -in $ignoredSegments })
+} | ForEach-Object {
+    if (-not (Select-String -LiteralPath $_.FullName -Pattern 'Code generated .* DO NOT EDIT\.' -Quiet)) {
+        $lineCount = (Get-Content -LiteralPath $_.FullName | Measure-Object -Line).Lines
+        if ($lineCount -gt 400) {
+            Fail "handwritten source exceeds 400 lines: $($_.FullName) ($lineCount)"
+        }
+    }
+}
+
+$genericNames = @('utils.go', 'helpers.go', 'common.go', 'misc.go', 'manager.go', 'service_all.go', 'repository_all.go')
+if (Get-ChildItem -Path backend, frontend, scripts -Recurse -File | Where-Object { $_.Name -in $genericNames -and $_.Name -notlike '*_test.go' } | Select-Object -First 1) {
+    Fail 'production source must not use a generic filename'
+}
+
 Write-Output 'architecture check: passed'

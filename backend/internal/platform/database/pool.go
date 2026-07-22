@@ -17,7 +17,10 @@ type Pool struct {
 	acquireTimeout time.Duration
 }
 
-func NewRuntime(ctx context.Context, cfg config.RuntimePostgresConfig) (*Pool, error) {
+func NewAPI(ctx context.Context, cfg config.APIPostgresConfig) (*Pool, error) {
+	return newPool(ctx, cfg.PoolConfig, cfg.DSN)
+}
+func NewWorker(ctx context.Context, cfg config.WorkerPostgresConfig) (*Pool, error) {
 	return newPool(ctx, cfg.PoolConfig, cfg.DSN)
 }
 func NewMigration(ctx context.Context, cfg config.MigrationPostgresConfig) (*Pool, error) {

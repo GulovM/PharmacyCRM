@@ -18,6 +18,11 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	ErrWorkerSchemaIncompatible   = errors.New("worker schema is incompatible")
+	ErrWorkerProtocolIncompatible = errors.New("worker protocol is incompatible")
+)
+
 type workerProcessLogger interface {
 	Info(string, ...zap.Field)
 	Warn(string, ...zap.Field)
@@ -39,7 +44,7 @@ type workerDependencies struct {
 	loadConfig func() (config.WorkerProcessConfig, error)
 	newLogger  func(config.LoggingConfig, config.AppConfig) (workerProcessLogger, error)
 	newContext func() (context.Context, context.CancelFunc)
-	newPool    func(context.Context, config.RuntimePostgresConfig) (workerProcessPool, error)
+	newPool    func(context.Context, config.WorkerPostgresConfig) (workerProcessPool, error)
 	newWorker  func(workerProcessPool, config.WorkerProcessConfig, workerProcessLogger) (workerProcess, []outbox.EventKey, error)
 }
 
@@ -52,8 +57,8 @@ func defaultWorkerDependencies() workerDependencies {
 		newContext: func() (context.Context, context.CancelFunc) {
 			return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		},
-		newPool: func(ctx context.Context, postgresConfig config.RuntimePostgresConfig) (workerProcessPool, error) {
-			return database.NewRuntime(ctx, postgresConfig)
+		newPool: func(ctx context.Context, postgresConfig config.WorkerPostgresConfig) (workerProcessPool, error) {
+			return database.NewWorker(ctx, postgresConfig)
 		},
 		newWorker: buildOutboxWorker,
 	}
@@ -72,7 +77,7 @@ func runWorker(dependencies workerDependencies) (result error) {
 	}
 	logger, err := dependencies.newLogger(cfg.Logging, cfg.App)
 	if err != nil {
-		return fmt.Errorf("initialize logger")
+		return fmt.Errorf("initialize worker logger: %w", err)
 	}
 	defer func() {
 		if closeErr := logger.Close(); closeErr != nil {
@@ -82,21 +87,21 @@ func runWorker(dependencies workerDependencies) (result error) {
 
 	ctx, stop := dependencies.newContext()
 	defer stop()
-	pool, err := dependencies.newPool(ctx, cfg.RuntimePostgres)
+	pool, err := dependencies.newPool(ctx, cfg.WorkerPostgres)
 	if err != nil {
-		return fmt.Errorf("initialize postgres pool")
+		return fmt.Errorf("initialize worker postgres pool: %w", err)
 	}
 	defer pool.Close()
 
 	version, err := pool.SchemaVersion(ctx)
 	if err != nil {
-		return fmt.Errorf("verify worker schema compatibility")
+		return fmt.Errorf("read worker schema version: %w", err)
 	}
 	if version < int64(cfg.App.MinSchemaVersion) || version > int64(cfg.App.MaxSchemaVersion) {
-		return fmt.Errorf("worker schema is incompatible")
+		return fmt.Errorf("%w: database=%d supported=%d..%d", ErrWorkerSchemaIncompatible, version, cfg.App.MinSchemaVersion, cfg.App.MaxSchemaVersion)
 	}
 	if cfg.Worker.ProtocolVersion != config.SupportedWorkerProtocol || cfg.Worker.ProtocolVersion != cfg.App.WorkerProtocol {
-		return fmt.Errorf("worker protocol is incompatible")
+		return fmt.Errorf("%w: worker=%d application=%d supported=%d", ErrWorkerProtocolIncompatible, cfg.Worker.ProtocolVersion, cfg.App.WorkerProtocol, config.SupportedWorkerProtocol)
 	}
 
 	worker, requiredProtocols, err := dependencies.newWorker(pool, cfg, logger)
@@ -146,6 +151,7 @@ func buildOutboxWorker(pool workerProcessPool, cfg config.WorkerProcessConfig, l
 	retention, err := outbox.NewRetentionService(retentionTransactor, outbox.RetentionConfig{
 		ProcessedFor: cfg.Worker.ProcessedRetention, DeadLettersFor: cfg.Worker.DeadLetterRetention,
 		Interval: cfg.Worker.RetentionInterval, BatchSize: cfg.Worker.RetentionBatchSize,
+		MaxBatchesPerCycle: cfg.Worker.RetentionMaxBatches, MaxCycleDuration: cfg.Worker.RetentionMaxDuration,
 	}, retentionObserver)
 	if err != nil {
 		return nil, nil, err
@@ -218,4 +224,8 @@ func (o *outboxRetentionObserver) BatchDeleted(_ context.Context, status string,
 func (o *outboxRetentionObserver) CycleFailed(_ context.Context, err error) {
 	o.cycleFailures.Add(1)
 	o.logger.Error("outbox.retention.cycle.failed", zap.Error(err))
+}
+
+func (o *outboxRetentionObserver) CycleCompleted(_ context.Context, stats outbox.RetentionCycleStats) {
+	o.logger.Info("outbox.retention.cycle.completed", zap.Int64("processed_deleted", stats.ProcessedDeleted), zap.Int64("dead_letter_deleted", stats.DeadLetterDeleted), zap.Int("batches", stats.Batches), zap.Bool("limited", stats.Limited), zap.Duration("duration", stats.Duration))
 }

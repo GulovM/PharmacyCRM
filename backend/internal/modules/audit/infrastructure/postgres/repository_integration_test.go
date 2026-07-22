@@ -14,6 +14,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func mustAuditWriter(t testing.TB, repository audit.Repository, policy audit.MetadataPolicy) *audit.Writer {
+	t.Helper()
+	writer, err := audit.NewWriter(repository, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return writer
+}
+
 func TestAuditWriterIntegration(t *testing.T) {
 	dsn := postgrestest.DSN(t)
 	ctx := context.Background()
@@ -30,9 +39,9 @@ func TestAuditWriterIntegration(t *testing.T) {
 		($1,$2,'hash','Before'),($3,$4,'hash','Other Actor')`, actorID, login, otherActorID, "audit-"+otherActorID.String()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO user_sessions(id,user_id,refresh_token_hash,token_family_id,expires_at) VALUES
-		($1,$2,convert_to(gen_random_uuid()::text,'UTF8'),gen_random_uuid(),now()+interval '1 day'),
-		($3,$4,convert_to(gen_random_uuid()::text,'UTF8'),gen_random_uuid(),now()+interval '1 day')`, actorSessionID, actorID, otherSessionID, otherActorID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO user_sessions(id,user_id,refresh_token_hash,token_family_id,generation,expires_at,idle_expires_at,absolute_expires_at,authentication_method,mfa_level) VALUES
+		($1,$2,convert_to(gen_random_uuid()::text,'UTF8'),gen_random_uuid(),1,now()+interval '1 day',now()+interval '1 day',now()+interval '1 day','PASSWORD','NONE'),
+		($3,$4,convert_to(gen_random_uuid()::text,'UTF8'),gen_random_uuid(),1,now()+interval '1 day',now()+interval '1 day',now()+interval '1 day','PASSWORD','NONE')`, actorSessionID, actorID, otherSessionID, otherActorID); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
@@ -46,7 +55,7 @@ func TestAuditWriterIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writer := audit.NewWriter(NewTransactionalAuditRepository(database.WrapPGXTransaction(tx)), policy)
+	writer := mustAuditWriter(t, NewTransactionalAuditRepository(database.WrapPGXTransaction(tx)), policy)
 	event := audit.Event{ID: uuid.New(), OccurredAt: time.Now(), ActorUserID: &actorID, ActorSessionID: &actorSessionID, ActorType: audit.ActorUser, Action: "test.user.changed", ObjectType: "user", ObjectID: &actorID, Result: audit.ResultSuccess, Metadata: audit.Metadata{"reason": "integration"}}
 	if err := writer.Append(ctx, event); err != nil {
 		_ = tx.Rollback(ctx)
@@ -78,7 +87,7 @@ func TestAuditWriterIntegration(t *testing.T) {
 	failing := event
 	failing.ID = uuid.New()
 	failing.ActorSessionID = &otherSessionID
-	if err := audit.NewWriter(NewTransactionalAuditRepository(database.WrapPGXTransaction(tx)), policy).Append(ctx, failing); err == nil {
+	if err := mustAuditWriter(t, NewTransactionalAuditRepository(database.WrapPGXTransaction(tx)), policy).Append(ctx, failing); err == nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal("expected mismatched audit session failure")
 	} else {

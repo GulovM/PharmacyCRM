@@ -243,7 +243,7 @@ Gate E0 закрыт 2026-07-20. Параллельные несовместим
 ### Обязательные evidence
 
 - migration from zero;
-- upgrade E1 schema `1` → current E2 schema `19` с immutable checksum history;
+- upgrade E1 schema `1` → current E2 schema `21` с immutable checksum history;
 - rollback transaction function;
 - panic внутри UoW;
 - commit failure;

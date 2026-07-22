@@ -26,7 +26,7 @@ func RunAPI() error {
 		return fmt.Errorf("initialize logger")
 	}
 	defer logger.Close()
-	pool, err := database.NewRuntime(context.Background(), cfg.RuntimePostgres)
+	pool, err := database.NewAPI(context.Background(), cfg.APIPostgres)
 	if err != nil {
 		return fmt.Errorf("initialize postgres pool")
 	}

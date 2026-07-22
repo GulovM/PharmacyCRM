@@ -41,7 +41,7 @@ func TestManualReplayAndAuditCommitAtomicallyIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pool, err := database.NewRuntime(ctx, config.RuntimePostgresConfig{
+	pool, err := database.NewWorker(ctx, config.WorkerPostgresConfig{
 		DSN: dsn,
 		PoolConfig: config.PoolConfig{
 			MinConnections: 1, MaxConnections: 2, AcquireTimeout: time.Second,

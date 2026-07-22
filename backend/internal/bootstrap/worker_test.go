@@ -19,6 +19,13 @@ func (*fakeWorkerLogger) Warn(string, ...zap.Field)  {}
 func (*fakeWorkerLogger) Error(string, ...zap.Field) {}
 func (l *fakeWorkerLogger) Close() error             { l.closed.Store(true); return nil }
 
+type closeErrorWorkerLogger struct {
+	fakeWorkerLogger
+	err error
+}
+
+func (l *closeErrorWorkerLogger) Close() error { l.closed.Store(true); return l.err }
+
 type fakeWorkerPool struct {
 	version int64
 	err     error
@@ -48,12 +55,12 @@ func validWorkerProcessConfig() config.WorkerProcessConfig {
 	}
 }
 
-func testWorkerDependencies(ctx context.Context, cancel context.CancelFunc, logger *fakeWorkerLogger, pool *fakeWorkerPool, worker workerProcess) workerDependencies {
+func testWorkerDependencies(ctx context.Context, cancel context.CancelFunc, logger workerProcessLogger, pool *fakeWorkerPool, worker workerProcess) workerDependencies {
 	return workerDependencies{
 		loadConfig: func() (config.WorkerProcessConfig, error) { return validWorkerProcessConfig(), nil },
 		newLogger:  func(config.LoggingConfig, config.AppConfig) (workerProcessLogger, error) { return logger, nil },
 		newContext: func() (context.Context, context.CancelFunc) { return ctx, cancel },
-		newPool:    func(context.Context, config.RuntimePostgresConfig) (workerProcessPool, error) { return pool, nil },
+		newPool:    func(context.Context, config.WorkerPostgresConfig) (workerProcessPool, error) { return pool, nil },
 		newWorker: func(workerProcessPool, config.WorkerProcessConfig, workerProcessLogger) (workerProcess, []outbox.EventKey, error) {
 			return worker, nil, nil
 		},
@@ -135,11 +142,53 @@ func TestWorkerBootstrapReportsUnavailablePostgresAndClosesLogger(t *testing.T) 
 	logger := &fakeWorkerLogger{}
 	poolErr := errors.New("database unavailable")
 	dependencies := testWorkerDependencies(ctx, cancel, logger, nil, nil)
-	dependencies.newPool = func(context.Context, config.RuntimePostgresConfig) (workerProcessPool, error) { return nil, poolErr }
-	if err := runWorker(dependencies); err == nil {
-		t.Fatal("expected controlled postgres startup error")
+	dependencies.newPool = func(context.Context, config.WorkerPostgresConfig) (workerProcessPool, error) { return nil, poolErr }
+	if err := runWorker(dependencies); !errors.Is(err, poolErr) {
+		t.Fatalf("expected wrapped postgres startup error, got %v", err)
 	}
 	if !logger.closed.Load() {
 		t.Fatal("logger was not closed after postgres startup failure")
+	}
+}
+
+func TestWorkerBootstrapPreservesStartupAndCompatibilityErrors(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	loggerErr := errors.New("logger unavailable")
+	pool := &fakeWorkerPool{version: 13}
+	dependencies := testWorkerDependencies(ctx, cancel, &fakeWorkerLogger{}, pool, nil)
+	dependencies.newLogger = func(config.LoggingConfig, config.AppConfig) (workerProcessLogger, error) { return nil, loggerErr }
+	if err := runWorker(dependencies); !errors.Is(err, loggerErr) {
+		t.Fatalf("logger error was not retained: %v", err)
+	}
+
+	schemaErr := errors.New("schema unavailable")
+	dependencies = testWorkerDependencies(ctx, cancel, &fakeWorkerLogger{}, &fakeWorkerPool{version: 14, err: schemaErr}, nil)
+	if err := runWorker(dependencies); !errors.Is(err, schemaErr) {
+		t.Fatalf("schema read error was not retained: %v", err)
+	}
+
+	dependencies = testWorkerDependencies(ctx, cancel, &fakeWorkerLogger{}, pool, nil)
+	if err := runWorker(dependencies); !errors.Is(err, ErrWorkerSchemaIncompatible) {
+		t.Fatalf("schema mismatch was not typed: %v", err)
+	}
+	dependencies = testWorkerDependencies(ctx, cancel, &fakeWorkerLogger{}, &fakeWorkerPool{version: 14}, nil)
+	cfg := validWorkerProcessConfig()
+	cfg.Worker.ProtocolVersion = 2
+	dependencies.loadConfig = func() (config.WorkerProcessConfig, error) { return cfg, nil }
+	if err := runWorker(dependencies); !errors.Is(err, ErrWorkerProtocolIncompatible) {
+		t.Fatalf("protocol mismatch was not typed: %v", err)
+	}
+}
+
+func TestWorkerBootstrapJoinsLoggerCloseError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	primary := errors.New("worker failed")
+	closeErr := errors.New("logger close failed")
+	logger := &closeErrorWorkerLogger{err: closeErr}
+	worker := &fakeWorkerProcess{run: func(context.Context) error { return primary }}
+	if err := runWorker(testWorkerDependencies(ctx, cancel, logger, &fakeWorkerPool{version: 14}, worker)); !errors.Is(err, primary) || !errors.Is(err, closeErr) {
+		t.Fatalf("errors were not joined: %v", err)
 	}
 }

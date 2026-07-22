@@ -195,6 +195,8 @@ backend/internal/modules/
 
 Ownership фиксирован: `pharmacy` владеет `pharmacy_assignments`; `reliability` — `idempotency_records` и `outbox_events`; catalog import находится в `catalog`; receipts, initial stock, write-offs и adjustments — в `inventory`. Отдельные module roots `import/`, `receipt/`, `adjustments/` запрещены.
 
+Handwritten production source ограничен 400 физическими строками. Один файл несёт одну связную ответственность; при 300–350 строках требуется оценить разделение. God-files и новые generic filenames (`utils.go`, `helpers.go`, `common.go`, `misc.go`, `manager.go`, `service_all.go`, `repository_all.go`) запрещены. Canonical locking разделён между repository, inventory/sale-return orchestration, SQL queries и validation; reconciliation testkit разделяет types, orchestration, individual SQL oracles, scanner и validation.
+
 Глобальные технические каталоги запрещены:
 
 ```text

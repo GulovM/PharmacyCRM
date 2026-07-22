@@ -417,7 +417,7 @@ Readiness должна быть false, если schema несовместима.
 
 Migrations выполняются отдельной one-shot command до переключения traffic на несовместимую application version.
 
-Текущая E2 application compatibility закреплена на schema version `19`. CI проверяет migration from zero и изолированный upgrade от E1 version `1`; API/worker не применяют migrations при startup.
+Текущая E2 application compatibility закреплена на schema version `21`. CI проверяет migration from zero и изолированный upgrade от E1 version `1`; API/worker не применяют migrations при startup. API, worker и migrator используют разные `POSTGRES_API_RUNTIME_DSN`, `POSTGRES_WORKER_RUNTIME_DSN` и `POSTGRES_MIGRATION_DSN`.
 
 Migration process:
 

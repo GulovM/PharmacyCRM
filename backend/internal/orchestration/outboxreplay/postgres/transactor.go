@@ -14,8 +14,9 @@ import (
 )
 
 type unitOfWork struct {
-	outbox *outboxpostgres.TransactionalOutboxRepository
-	audit  *audit.Writer
+	outbox           *outboxpostgres.TransactionalOutboxRepository
+	audit            *audit.Writer
+	configurationErr error
 }
 
 func (u *unitOfWork) ReplayDeadLetter(ctx context.Context, id uuid.UUID, at time.Time) error {
@@ -23,6 +24,9 @@ func (u *unitOfWork) ReplayDeadLetter(ctx context.Context, id uuid.UUID, at time
 }
 
 func (u *unitOfWork) AppendAudit(ctx context.Context, event audit.Event) error {
+	if u.configurationErr != nil {
+		return u.configurationErr
+	}
 	return u.audit.Append(ctx, event)
 }
 
@@ -34,9 +38,11 @@ func NewTransactor(pool *database.Pool, observer database.RollbackErrorObserver)
 	return &Transactor{runner: database.NewTransactionRunner(
 		pool,
 		func(executor database.TransactionExecutor) outboxreplay.UnitOfWork {
+			writer, err := audit.NewWriter(auditpostgres.NewTransactionalAuditRepository(executor), outboxreplay.AuditMetadataPolicy())
 			return &unitOfWork{
-				outbox: outboxpostgres.NewTransactionalOutboxRepository(executor),
-				audit:  audit.NewWriter(auditpostgres.NewTransactionalAuditRepository(executor), outboxreplay.AuditMetadataPolicy()),
+				outbox:           outboxpostgres.NewTransactionalOutboxRepository(executor),
+				audit:            writer,
+				configurationErr: err,
 			}
 		},
 		observer,

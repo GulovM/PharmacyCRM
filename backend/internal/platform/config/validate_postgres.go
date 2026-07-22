@@ -5,8 +5,11 @@ import (
 	"strings"
 )
 
-func validateRuntimePostgres(c RuntimePostgresConfig) error {
-	return validatePostgres(c.DSN, c.PoolConfig, "runtime")
+func validateAPIPostgres(c APIPostgresConfig) error {
+	return validatePostgres(c.DSN, c.PoolConfig, "api runtime")
+}
+func validateWorkerPostgres(c WorkerPostgresConfig) error {
+	return validatePostgres(c.DSN, c.PoolConfig, "worker runtime")
 }
 func validateMigrationPostgres(c MigrationPostgresConfig) error {
 	return validatePostgres(c.DSN, c.PoolConfig, "migration")

@@ -11,6 +11,7 @@ var (
 	ErrKeyReused              = errors.New("idempotency key reused")
 	ErrConcurrentModification = errors.New("concurrent modification")
 	ErrInvalidState           = errors.New("invalid idempotency state")
+	ErrDependencyMissing      = errors.New("required dependency is missing")
 )
 
 func keyRequiredError() error {

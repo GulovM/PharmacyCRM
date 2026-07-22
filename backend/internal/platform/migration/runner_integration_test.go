@@ -57,7 +57,7 @@ func TestUpgradeFromE1Integration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(loaded) != 19 || loaded[0].Version != 1 || loaded[0].Name != "schema_metadata" {
+	if len(loaded) != 21 || loaded[0].Version != 1 || loaded[0].Name != "schema_metadata" {
 		t.Fatalf("unexpected migration set: %#v", loaded)
 	}
 	rawPool, err := pgxpool.New(ctx, isolatedDSN)
@@ -97,14 +97,14 @@ func TestUpgradeFromE1Integration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.SchemaVersion != 19 || len(result.Applied) != 18 || result.Applied[0] != 2 || result.Applied[len(result.Applied)-1] != 19 {
+	if result.SchemaVersion != 21 || len(result.Applied) != 20 || result.Applied[0] != 2 || result.Applied[len(result.Applied)-1] != 21 {
 		t.Fatalf("unexpected upgrade result: %#v", result)
 	}
 	replayed, err := Run(ctx, pool, loaded)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replayed.SchemaVersion != 19 || len(replayed.Applied) != 0 {
+	if replayed.SchemaVersion != 21 || len(replayed.Applied) != 0 {
 		t.Fatalf("migrations were unexpectedly replayed: %#v", replayed)
 	}
 
@@ -113,31 +113,35 @@ func TestUpgradeFromE1Integration(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(verificationPool.Close)
-	assertVerificationFailure := func(expected string) {
+	assertVerificationFailure := func(version int64, name string) {
 		t.Helper()
 		_, err := Run(ctx, pool, loaded)
-		if err == nil || !strings.Contains(err.Error(), expected) {
-			t.Fatalf("expected %s, got %v", expected, err)
+		var verificationError *VerificationError
+		if !errors.As(err, &verificationError) {
+			t.Fatalf("expected verification error, got %v", err)
+		}
+		if verificationError.Version != version || verificationError.Name != name || !errors.Is(verificationError, ErrVerificationFailed) {
+			t.Fatalf("unexpected verification error: %#v", verificationError)
 		}
 	}
 	if _, err := verificationPool.Exec(ctx, `DROP INDEX uq_user_single_active_role`); err != nil {
 		t.Fatal(err)
 	}
-	assertVerificationFailure("verify migration 3")
+	assertVerificationFailure(3, "identity")
 	if _, err := verificationPool.Exec(ctx, `CREATE UNIQUE INDEX uq_user_single_active_role ON user_roles(user_id) WHERE revoked_at IS NULL`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := verificationPool.Exec(ctx, `ALTER TABLE outbox_events DROP CONSTRAINT chk_outbox_terminal`); err != nil {
 		t.Fatal(err)
 	}
-	assertVerificationFailure("verify migration 11")
+	assertVerificationFailure(11, "outbox")
 	if _, err := verificationPool.Exec(ctx, `ALTER TABLE outbox_events ADD CONSTRAINT chk_outbox_terminal CHECK ((status = 'PROCESSED' AND processed_at IS NOT NULL AND dead_lettered_at IS NULL) OR (status = 'DEAD_LETTER' AND dead_lettered_at IS NOT NULL AND processed_at IS NULL) OR (status IN ('PENDING', 'PROCESSING') AND processed_at IS NULL AND dead_lettered_at IS NULL))`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := verificationPool.Exec(ctx, `REVOKE INSERT ON inventory_movements FROM pharmacycrm_runtime`); err != nil {
 		t.Fatal(err)
 	}
-	assertVerificationFailure("verify migration 17")
+	assertVerificationFailure(17, "runtime_privilege_matrix")
 	if _, err := verificationPool.Exec(ctx, `GRANT INSERT ON inventory_movements TO pharmacycrm_runtime`); err != nil {
 		t.Fatal(err)
 	}

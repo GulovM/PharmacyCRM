@@ -41,8 +41,11 @@ type Service struct {
 	claimWait  time.Duration
 }
 
-func NewService(repository Repository) *Service {
-	return &Service{repository: repository, claimWait: defaultClaimWait}
+func NewService(repository Repository) (*Service, error) {
+	if repository == nil {
+		return nil, ErrDependencyMissing
+	}
+	return &Service{repository: repository, claimWait: defaultClaimWait}, nil
 }
 
 func (s *Service) Claim(ctx context.Context, claim Claim) (ClaimResult, error) {

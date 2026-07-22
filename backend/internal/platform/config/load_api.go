@@ -15,7 +15,7 @@ func LoadAPI() (APIConfig, error) {
 		struct {
 			prefix string
 			target any
-		}{"POSTGRES", &cfg.RuntimePostgres},
+		}{"POSTGRES", &cfg.APIPostgres},
 		struct {
 			prefix string
 			target any

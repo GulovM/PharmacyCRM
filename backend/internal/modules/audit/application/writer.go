@@ -10,7 +10,10 @@ import (
 	"github.com/google/uuid"
 )
 
-var ErrMetadataRejected = errors.New("audit metadata rejected")
+var (
+	ErrMetadataRejected  = errors.New("audit metadata rejected")
+	ErrDependencyMissing = errors.New("required dependency is missing")
+)
 
 type Repository interface {
 	Append(context.Context, Event) error
@@ -21,11 +24,17 @@ type Writer struct {
 	policy     MetadataPolicy
 }
 
-func NewWriter(repository Repository, policy MetadataPolicy) *Writer {
-	return &Writer{repository: repository, policy: clonePolicy(policy)}
+func NewWriter(repository Repository, policy MetadataPolicy) (*Writer, error) {
+	if repository == nil || policy == nil || len(policy) == 0 {
+		return nil, ErrDependencyMissing
+	}
+	return &Writer{repository: repository, policy: clonePolicy(policy)}, nil
 }
 
 func (w *Writer) Append(ctx context.Context, event Event) error {
+	if w == nil || w.repository == nil {
+		return ErrDependencyMissing
+	}
 	if err := validateEvent(event); err != nil {
 		return err
 	}

@@ -13,10 +13,10 @@ func DSN(t testing.TB) string {
 	return requiredDSN(t, "POSTGRES_TEST_DSN")
 }
 
-// RuntimeDSN returns the least-privilege runtime connection used by privilege
-// and direct-SQL invariant tests.
+// RuntimeDSN returns the least-privilege API connection used by direct-SQL
+// invariant tests. Worker capability checks use the dedicated CI role gate.
 func RuntimeDSN(t testing.TB) string {
-	return requiredDSN(t, "POSTGRES_RUNTIME_DSN")
+	return requiredDSN(t, "POSTGRES_API_RUNTIME_DSN")
 }
 
 func requiredDSN(t testing.TB, variable string) string {

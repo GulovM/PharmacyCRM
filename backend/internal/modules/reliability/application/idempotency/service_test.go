@@ -41,11 +41,20 @@ func validClaim() Claim {
 	return Claim{Identity: Identity{ActorID: uuid.New(), Operation: "sale.complete", Key: "key-1"}, Fingerprint: NewFingerprint([]byte(`{"quantity":1}`)), ExpiresAt: time.Now().Add(time.Hour)}
 }
 
+func mustNewService(t *testing.T, repository Repository) *Service {
+	t.Helper()
+	service, err := NewService(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service
+}
+
 func TestServiceClaimsNewIdentity(t *testing.T) {
 	claim := validClaim()
 	id := RecordID(uuid.New())
 	repository := &fakeRepository{record: Record{ID: id, Fingerprint: claim.Fingerprint, Status: StatusInProgress}, inserted: true}
-	result, err := NewService(repository).Claim(context.Background(), claim)
+	result, err := mustNewService(t, repository).Claim(context.Background(), claim)
 	if err != nil || result.State != Claimed || result.RecordID != id {
 		t.Fatalf("result=%#v err=%v", result, err)
 	}
@@ -56,7 +65,7 @@ func TestServiceReplaysCompletedIdentity(t *testing.T) {
 	id := RecordID(uuid.New())
 	stored := StoredResult{ResponseStatus: 201, ResponseBody: json.RawMessage(`{"id":"one"}`)}
 	repository := &fakeRepository{record: Record{ID: id, Fingerprint: claim.Fingerprint, Status: StatusCompleted}, result: stored}
-	result, err := NewService(repository).Claim(context.Background(), claim)
+	result, err := mustNewService(t, repository).Claim(context.Background(), claim)
 	if err != nil || result.State != ReplayAvailable || result.Replay == nil || string(result.Replay.ResponseBody) != string(stored.ResponseBody) {
 		t.Fatalf("result=%#v err=%v", result, err)
 	}
@@ -65,12 +74,12 @@ func TestServiceReplaysCompletedIdentity(t *testing.T) {
 func TestServiceRejectsFingerprintConflictAndInProgress(t *testing.T) {
 	claim := validClaim()
 	repository := &fakeRepository{record: Record{ID: RecordID(uuid.New()), Fingerprint: NewFingerprint([]byte("different")), Status: StatusCompleted}}
-	if _, err := NewService(repository).Claim(context.Background(), claim); !errors.Is(err, ErrKeyReused) || !errors.Is(err, apperror.ErrConflict) {
+	if _, err := mustNewService(t, repository).Claim(context.Background(), claim); !errors.Is(err, ErrKeyReused) || !errors.Is(err, apperror.ErrConflict) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	repository.record.Fingerprint = claim.Fingerprint
 	repository.record.Status = StatusInProgress
-	if _, err := NewService(repository).Claim(context.Background(), claim); !errors.Is(err, ErrConcurrentModification) {
+	if _, err := mustNewService(t, repository).Claim(context.Background(), claim); !errors.Is(err, ErrConcurrentModification) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -78,7 +87,7 @@ func TestServiceRejectsFingerprintConflictAndInProgress(t *testing.T) {
 func TestServiceValidatesKeyAndRetryableFailureEvidence(t *testing.T) {
 	claim := validClaim()
 	claim.Identity.Key = ""
-	service := NewService(&fakeRepository{})
+	service := mustNewService(t, &fakeRepository{})
 	if _, err := service.Claim(context.Background(), claim); !errors.Is(err, ErrKeyRequired) {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -87,13 +96,13 @@ func TestServiceValidatesKeyAndRetryableFailureEvidence(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	repository := &fakeRepository{}
-	if err := NewService(repository).MarkRetryableFailure(context.Background(), id, true); err != nil || !repository.marked {
+	if err := mustNewService(t, repository).MarkRetryableFailure(context.Background(), id, true); err != nil || !repository.marked {
 		t.Fatalf("marked=%v err=%v", repository.marked, err)
 	}
 }
 
 func TestServiceBoundsConcurrentClaimWait(t *testing.T) {
-	service := NewService(&blockingRepository{})
+	service := mustNewService(t, &blockingRepository{})
 	service.claimWait = time.Millisecond
 	if _, err := service.Claim(context.Background(), validClaim()); !errors.Is(err, ErrConcurrentModification) || !errors.Is(err, apperror.ErrConflict) {
 		t.Fatalf("unexpected error: %v", err)

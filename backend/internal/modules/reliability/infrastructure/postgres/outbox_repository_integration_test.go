@@ -52,7 +52,7 @@ func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 			OccurredAt: time.Now(), MaxAttempts: maxAttempts,
 		}
 		if err := withinOutboxTransaction(ctx, pool, func(repository *TransactionalOutboxRepository) error {
-			writer := outbox.NewWriter(repository, map[outbox.EventKey]outbox.PayloadValidator{
+			writer := mustOutboxWriter(t, repository, map[outbox.EventKey]outbox.PayloadValidator{
 				{Name: "test.outbox", Version: 1}: outbox.PayloadValidatorFunc(func(json.RawMessage) error { return nil }),
 			})
 			return writer.Append(ctx, event)

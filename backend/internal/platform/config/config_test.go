@@ -8,7 +8,8 @@ import (
 
 func setRuntimeEnvironment(t *testing.T) {
 	t.Helper()
-	t.Setenv("POSTGRES_RUNTIME_DSN", "postgres://user:password@localhost:5432/pharmacy")
+	t.Setenv("POSTGRES_API_RUNTIME_DSN", "postgres://api:password@localhost:5432/pharmacy")
+	t.Setenv("POSTGRES_WORKER_RUNTIME_DSN", "postgres://worker:password@localhost:5432/pharmacy")
 	t.Setenv("WORKER_OWNER", "worker-test-1")
 }
 
@@ -38,17 +39,18 @@ func TestLoadWorkerDoesNotRequireAuthOrMigrationCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadWorker() error = %v", err)
 	}
-	if cfg.RuntimePostgres.DSN == "" {
-		t.Fatal("runtime DSN was not loaded")
+	if cfg.WorkerPostgres.DSN == "" {
+		t.Fatal("worker runtime DSN was not loaded")
 	}
-	if cfg.RuntimePostgres.MaxConnections != 12 {
-		t.Fatalf("runtime pool configuration was not loaded: %d", cfg.RuntimePostgres.MaxConnections)
+	if cfg.WorkerPostgres.MaxConnections != 12 {
+		t.Fatalf("worker pool configuration was not loaded: %d", cfg.WorkerPostgres.MaxConnections)
 	}
 }
 
 func TestLoadMigrationDoesNotRequireRuntimeOrAuthCredentials(t *testing.T) {
 	setMigrationEnvironment(t)
-	t.Setenv("POSTGRES_RUNTIME_DSN", "not-a-runtime-dsn")
+	t.Setenv("POSTGRES_API_RUNTIME_DSN", "not-an-api-runtime-dsn")
+	t.Setenv("POSTGRES_WORKER_RUNTIME_DSN", "not-a-worker-runtime-dsn")
 	cfg, err := LoadMigration()
 	if err != nil {
 		t.Fatalf("LoadMigration() error = %v", err)
@@ -98,14 +100,14 @@ func TestLoadAPIAndWorkerRejectUnsupportedWorkerProtocols(t *testing.T) {
 func validAPIConfig() APIConfig {
 	pool := PoolConfig{MaxConnections: 1, AcquireTimeout: time.Second, MaxConnectionLife: time.Second, MaxConnectionIdle: time.Second, HealthCheckPeriod: time.Second, ConnectionCapacity: 1}
 	return APIConfig{
-		App:             AppConfig{Environment: "development", ServiceName: "pharmacycrm", MinSchemaVersion: 1, MaxSchemaVersion: 1, WorkerProtocol: 1},
-		HTTP:            HTTPConfig{Address: ":8080", TLSMode: "disabled", ReadHeaderTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: time.Second, IdleTimeout: time.Second, ShutdownTimeout: time.Second, MaxHeaderBytes: 1, MaxBodyBytes: 1},
-		RuntimePostgres: RuntimePostgresConfig{DSN: "postgres://user:password@localhost:5432/pharmacy", PoolConfig: pool},
-		Auth:            AuthConfig{JWTIssuer: "pharmacycrm", JWTAudience: "pharmacycrm-api", JWTAlgorithm: "EdDSA", JWTPrivateKey: "private-key", RefreshTokenPepper: "pepper", CookieSameSite: "strict", AccessTokenTTL: time.Second, RefreshAbsoluteTTL: 2 * time.Second, RefreshIdleTTL: time.Second},
-		Logging:         LoggingConfig{Level: "info", Format: "console", FilePath: "var/log/pharmacycrm/app.log", MaxSizeMB: 1, MaxBackups: 1, MaxAgeDays: 1},
-		Telemetry:       TelemetryConfig{MetricsAddress: ":9090", ExportTimeout: time.Second},
-		Worker:          WorkerConfig{ProtocolVersion: 1, Owner: "worker-test-1", Concurrency: 1, PollInterval: time.Second, LeaseDuration: time.Second, MaxClaim: 1, DrainTimeout: time.Second, RetentionInterval: time.Hour, RetentionBatchSize: 100, ProcessedRetention: 30 * 24 * time.Hour, DeadLetterRetention: 180 * 24 * time.Hour},
-		Storage:         StorageConfig{ImportRoot: "var/imports", MaxUploadBytes: 1, Retention: time.Second},
+		App:         AppConfig{Environment: "development", ServiceName: "pharmacycrm", MinSchemaVersion: 1, MaxSchemaVersion: 1, WorkerProtocol: 1},
+		HTTP:        HTTPConfig{Address: ":8080", TLSMode: "disabled", ReadHeaderTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: time.Second, IdleTimeout: time.Second, ShutdownTimeout: time.Second, MaxHeaderBytes: 1, MaxBodyBytes: 1},
+		APIPostgres: APIPostgresConfig{DSN: "postgres://user:password@localhost:5432/pharmacy", PoolConfig: pool},
+		Auth:        AuthConfig{JWTIssuer: "pharmacycrm", JWTAudience: "pharmacycrm-api", JWTAlgorithm: "EdDSA", JWTPrivateKey: "private-key", RefreshTokenPepper: "pepper", CookieSameSite: "strict", AccessTokenTTL: time.Second, RefreshAbsoluteTTL: 2 * time.Second, RefreshIdleTTL: time.Second},
+		Logging:     LoggingConfig{Level: "info", Format: "console", FilePath: "var/log/pharmacycrm/app.log", MaxSizeMB: 1, MaxBackups: 1, MaxAgeDays: 1},
+		Telemetry:   TelemetryConfig{MetricsAddress: ":9090", ExportTimeout: time.Second},
+		Worker:      WorkerConfig{ProtocolVersion: 1, Owner: "worker-test-1", Concurrency: 1, PollInterval: time.Second, LeaseDuration: time.Second, MaxClaim: 1, DrainTimeout: time.Second, RetentionInterval: time.Hour, RetentionBatchSize: 100, RetentionMaxBatches: 10, RetentionMaxDuration: 30 * time.Second, ProcessedRetention: 30 * 24 * time.Hour, DeadLetterRetention: 180 * 24 * time.Hour},
+		Storage:     StorageConfig{ImportRoot: "var/imports", MaxUploadBytes: 1, Retention: time.Second},
 	}
 }
 
@@ -115,10 +117,10 @@ func TestValidateAPIRejectsUnsafeConfiguration(t *testing.T) {
 		change func(*APIConfig)
 	}{
 		{"schema fail open", func(c *APIConfig) { c.App.MinSchemaVersion, c.App.MaxSchemaVersion = 0, 0 }},
-		{"invalid dsn", func(c *APIConfig) { c.RuntimePostgres.DSN = "not-a-dsn" }},
+		{"invalid dsn", func(c *APIConfig) { c.APIPostgres.DSN = "not-a-dsn" }},
 		{"unsupported direct tls", func(c *APIConfig) { c.HTTP.TLSMode = "direct" }},
 		{"cors wildcard credentials", func(c *APIConfig) { c.ProxyCORS.AllowedOrigins = CSV{"*"}; c.ProxyCORS.AllowCredentials = true }},
-		{"invalid pool", func(c *APIConfig) { c.RuntimePostgres.MinConnections = 2; c.RuntimePostgres.MaxConnections = 1 }},
+		{"invalid pool", func(c *APIConfig) { c.APIPostgres.MinConnections = 2; c.APIPostgres.MaxConnections = 1 }},
 		{"empty worker owner", func(c *APIConfig) { c.Worker.Owner = "" }},
 		{"oversized claim", func(c *APIConfig) { c.Worker.MaxClaim = 101 }},
 		{"drain exceeds process shutdown", func(c *APIConfig) { c.Worker.DrainTimeout = 21 * time.Second }},
@@ -138,8 +140,8 @@ func TestValidateAPIRejectsUnsafeConfiguration(t *testing.T) {
 
 func TestValidationDoesNotExposeSecrets(t *testing.T) {
 	cfg := validAPIConfig()
-	cfg.RuntimePostgres.DSN = "postgres://user:super-secret@localhost:5432/pharmacy"
-	cfg.RuntimePostgres.MaxConnections = 0
+	cfg.APIPostgres.DSN = "postgres://user:super-secret@localhost:5432/pharmacy"
+	cfg.APIPostgres.MaxConnections = 0
 	err := validateAPI(cfg)
 	if err == nil {
 		t.Fatal("validateAPI() error = nil")

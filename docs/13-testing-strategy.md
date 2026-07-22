@@ -622,7 +622,7 @@ Mock не заменяет PostgreSQL для UoW, locks, constraints, idempotenc
 Mandatory PostgreSQL CI gate запускает без skip:
 
 - `internal/platform/database -run Integration`;
-- `internal/platform/migration -run Integration` (включая E1 `1` → E2 `19`);
+- `internal/platform/migration -run Integration` (включая E1 `1` → E2 `21`);
 - `internal/modules/reliability/infrastructure/postgres -run Integration`;
 - `internal/modules/audit/infrastructure/postgres -run Integration`;
 - `internal/orchestration/outboxreplay/postgres -run Integration`;
