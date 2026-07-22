@@ -32,8 +32,18 @@ jobs:
       - name: Run backend static checks and tests
         working-directory: backend
         run: |
-          go vet ./...
-          go test ./...
+          set -o pipefail
+          {
+            go vet ./...
+            go test ./... -count=1
+          } 2>&1 | tee "$RUNNER_TEMP/backend-quality.log"
+      - name: Upload backend quality failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-quality-failure
+          path: ${{ runner.temp }}/backend-quality.log
+          if-no-files-found: error
       - name: Run frontend lint, type checks and tests
         working-directory: frontend
         run: |
@@ -95,7 +105,16 @@ jobs:
         with:
           go-version: '1.25.0'
       - name: Verify E1 runtime credential retirement
-        run: bash deploy/scripts/tests/test-e1-role-upgrade.sh
+        run: |
+          set -o pipefail
+          bash deploy/scripts/tests/test-e1-role-upgrade.sh 2>&1 | tee "$RUNNER_TEMP/e1-role-upgrade.log"
+      - name: Upload E1 role-upgrade failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e1-role-upgrade-failure
+          path: ${{ runner.temp }}/e1-role-upgrade.log
+          if-no-files-found: error
       - name: Provision separate runtime and migration roles
         env:
           PGPASSWORD: ci-only-password
