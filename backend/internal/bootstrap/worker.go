@@ -129,9 +129,12 @@ func buildOutboxWorker(pool workerProcessPool, cfg config.WorkerProcessConfig, l
 		return nil, nil, errors.New("postgres pool has incompatible implementation")
 	}
 	observer := &outboxProcessObserver{logger: logger}
-	transactor := reliabilitypostgres.NewOutboxTransactor(databasePool, func(_ context.Context, err error) {
+	transactor, err := reliabilitypostgres.NewOutboxTransactor(databasePool, func(_ context.Context, err error) {
 		logger.Error("outbox.transaction.rollback_failed", zap.Error(err))
 	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("create outbox transactor: %w", err)
+	}
 	// E2 intentionally has no domain consumers. An empty registry is explicit:
 	// ClaimBatch filters by registered protocols and therefore never acknowledges
 	// an unknown business event.
@@ -145,9 +148,12 @@ func buildOutboxWorker(pool workerProcessPool, cfg config.WorkerProcessConfig, l
 		return nil, nil, err
 	}
 	retentionObserver := &outboxRetentionObserver{logger: logger}
-	retentionTransactor := reliabilitypostgres.NewOutboxRetentionTransactor(databasePool, func(_ context.Context, err error) {
+	retentionTransactor, err := reliabilitypostgres.NewOutboxRetentionTransactor(databasePool, func(_ context.Context, err error) {
 		logger.Error("outbox.retention.transaction.rollback_failed", zap.Error(err))
 	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("create outbox retention transactor: %w", err)
+	}
 	retention, err := outbox.NewRetentionService(retentionTransactor, outbox.RetentionConfig{
 		ProcessedFor: cfg.Worker.ProcessedRetention, DeadLettersFor: cfg.Worker.DeadLetterRetention,
 		Interval: cfg.Worker.RetentionInterval, BatchSize: cfg.Worker.RetentionBatchSize,

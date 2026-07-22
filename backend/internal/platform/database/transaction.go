@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,6 +11,8 @@ import (
 )
 
 const rollbackTimeout = 5 * time.Second
+
+var ErrDependencyMissing = errors.New("required postgres repository dependency is missing")
 
 // DBTX is the PostgreSQL execution surface used by read-only diagnostics that
 // may run against either a pool or a transaction. Mandatory writes must accept
@@ -51,7 +54,7 @@ type beginTransaction func(context.Context, pgx.TxOptions) (transaction, error)
 
 // UnitOfWorkFactory creates one use-case-specific set of transaction-scoped
 // adapters. The returned value must never be retained after the callback.
-type UnitOfWorkFactory[T any] func(TransactionExecutor) T
+type UnitOfWorkFactory[T any] func(TransactionExecutor) (T, error)
 
 // RollbackErrorObserver records a secondary rollback failure without replacing
 // the callback error or recovered panic that caused the rollback.
@@ -66,14 +69,17 @@ type TransactionRunner[T any] struct {
 	options           pgx.TxOptions
 }
 
-func NewTransactionRunner[T any](pool *Pool, factory UnitOfWorkFactory[T], observer RollbackErrorObserver) *TransactionRunner[T] {
+func NewTransactionRunner[T any](pool *Pool, factory UnitOfWorkFactory[T], observer RollbackErrorObserver) (*TransactionRunner[T], error) {
+	if pool == nil || pool.pool == nil || factory == nil {
+		return nil, ErrDependencyMissing
+	}
 	return &TransactionRunner[T]{
 		begin: func(ctx context.Context, options pgx.TxOptions) (transaction, error) {
 			return pool.pool.BeginTx(ctx, options)
 		},
 		newUnitOfWork:     factory,
 		onRollbackFailure: observer,
-	}
+	}, nil
 }
 
 // WithinTransaction commits only after a successful callback. Callback errors,
@@ -114,7 +120,12 @@ func (r *TransactionRunner[T]) WithinTransaction(ctx context.Context, fn func(co
 	}()
 
 	executor := scopedTransactionExecutor{transaction: tx}
-	if err := fn(ctx, r.newUnitOfWork(executor)); err != nil {
+	unitOfWork, err := r.newUnitOfWork(executor)
+	if err != nil {
+		rollback()
+		return err
+	}
+	if err := fn(ctx, unitOfWork); err != nil {
 		rollback()
 		return err
 	}

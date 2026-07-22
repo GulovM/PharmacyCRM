@@ -79,17 +79,28 @@ if rg -n --glob '**/application/*.go' --glob '**/application/**/*.go' --glob '**
   fail 'application and domain packages must not import pgx'
 fi
 
+violations=()
 while IFS= read -r -d '' source; do
   if grep -Eq 'Code generated .* DO NOT EDIT\.' "$source"; then
     continue
   fi
   lines=$(wc -l < "$source")
   if (( lines > 400 )); then
-    fail "handwritten source exceeds 400 lines: $source ($lines)"
+    violations+=("$source"$'\t'"$lines")
   fi
 done < <(find backend frontend scripts \
   \( -path '*/node_modules/*' -o -path '*/vendor/*' -o -path '*/dist/*' -o -path '*/build/*' -o -path '*/coverage/*' -o -path '*/tmp/*' -o -path '*/generated/*' -o -path 'frontend/src/shared/api/generated/*' \) -prune -o \
   -type f \( -name '*.go' -o -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' -o -name '*.sql' -o -name '*.sh' -o -name '*.ps1' \) -print0)
+
+if (( ${#violations[@]} > 0 )); then
+  {
+    printf 'architecture check: handwritten source exceeds 400 lines:\n'
+    printf '%s\n' "${violations[@]}" | LC_ALL=C sort | while IFS=$'\t' read -r source lines; do
+      printf '%s — %s\n' "$source" "$lines"
+    done
+  } >&2
+  exit 1
+fi
 
 if find backend frontend scripts -type f \( -name 'utils.go' -o -name 'helpers.go' -o -name 'common.go' -o -name 'misc.go' -o -name 'manager.go' -o -name 'service_all.go' -o -name 'repository_all.go' \) -not -name '*_test.go' -print -quit | grep -q .; then
   fail 'production source must not use a generic filename'

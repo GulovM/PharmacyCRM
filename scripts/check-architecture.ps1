@@ -100,6 +100,7 @@ if (Test-RipgrepMatch @('-n', '--glob', '**/application/*.go', '--glob', '**/app
 
 $sourceExtensions = @('.go', '.ts', '.tsx', '.js', '.jsx', '.sql', '.sh', '.ps1')
 $ignoredSegments = @('node_modules', 'vendor', 'dist', 'build', 'coverage', 'tmp', 'generated')
+$violations = @()
 Get-ChildItem -Path backend, frontend, scripts -Recurse -File | Where-Object {
     $_.Extension -in $sourceExtensions -and
     $_.FullName -notmatch '[\\/]frontend[\\/]src[\\/]shared[\\/]api[\\/]generated[\\/]' -and
@@ -108,9 +109,18 @@ Get-ChildItem -Path backend, frontend, scripts -Recurse -File | Where-Object {
     if (-not (Select-String -LiteralPath $_.FullName -Pattern 'Code generated .* DO NOT EDIT\.' -Quiet)) {
         $lineCount = (Get-Content -LiteralPath $_.FullName | Measure-Object -Line).Lines
         if ($lineCount -gt 400) {
-            Fail "handwritten source exceeds 400 lines: $($_.FullName) ($lineCount)"
+            $relativePath = [System.IO.Path]::GetRelativePath($rootDirectory, $_.FullName) -replace '\\', '/'
+            $violations += [PSCustomObject]@{ Path = $relativePath; Lines = $lineCount }
         }
     }
+}
+
+if ($violations.Count -gt 0) {
+    [Console]::Error.WriteLine('architecture check: handwritten source exceeds 400 lines:')
+    foreach ($violation in $violations | Sort-Object Path) {
+        [Console]::Error.WriteLine(('{0} - {1}' -f $violation.Path, $violation.Lines))
+    }
+    exit 1
 }
 
 $genericNames = @('utils.go', 'helpers.go', 'common.go', 'misc.go', 'manager.go', 'service_all.go', 'repository_all.go')

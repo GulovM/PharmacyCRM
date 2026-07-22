@@ -41,7 +41,7 @@ func TestManualReplayAndAuditCommitAtomicallyIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pool, err := database.NewWorker(ctx, config.WorkerPostgresConfig{
+	pool, err := database.NewAPI(ctx, config.APIPostgresConfig{
 		DSN: dsn,
 		PoolConfig: config.PoolConfig{
 			MinConnections: 1, MaxConnections: 2, AcquireTimeout: time.Second,
@@ -52,7 +52,11 @@ func TestManualReplayAndAuditCommitAtomicallyIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	service := outboxreplay.NewService(NewTransactor(pool, nil))
+	transactor, err := NewTransactor(pool, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := outboxreplay.NewService(transactor)
 	if err := service.Replay(ctx, outboxreplay.Command{
 		EventID: eventID, AuditEventID: auditID, ActorUserID: actorID,
 		Reason: "operator approved replay", OccurredAt: time.Now(),

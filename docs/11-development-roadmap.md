@@ -1,5 +1,7 @@
 # PharmacyCRM — Development Roadmap
 
+> E2-FIX-022 through E2-FIX-031 complete schema `23` reliability hardening: upgrade compatibility, least privilege, verified session constraints, bounded retention and architecture gates.
+
 **Статус документа:** Draft  
 **Версия:** 1.0  
 **Дата:** 2026-07-21  

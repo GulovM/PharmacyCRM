@@ -16,7 +16,11 @@ import (
 )
 
 func testOutboxRepository(tx pgx.Tx) *TransactionalOutboxRepository {
-	return NewTransactionalOutboxRepository(database.WrapPGXTransaction(tx))
+	repository, err := NewTransactionalOutboxRepository(database.WrapPGXTransaction(tx))
+	if err != nil {
+		panic(err)
+	}
+	return repository
 }
 
 func withinOutboxTransaction(ctx context.Context, pool *pgxpool.Pool, fn func(*TransactionalOutboxRepository) error) error {

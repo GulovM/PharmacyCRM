@@ -1,5 +1,7 @@
 # PharmacyCRM — Deployment
 
+> Deploy schema `23` only after idempotent role provisioning. API, worker and migration processes require separate credentials; the legacy compatibility role has no DSN and cannot log in.
+
 **Статус документа:** Draft  
 **Версия:** 1.1  
 **Дата:** 2026-07-21  

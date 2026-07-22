@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -56,6 +57,7 @@ type RetentionService struct {
 	config     RetentionConfig
 	observer   RetentionObserver
 	now        func() time.Time
+	cycles     atomic.Uint64
 }
 
 func NewRetentionService(transactor RetentionTransactor, config RetentionConfig, observer RetentionObserver) (*RetentionService, error) {
@@ -93,23 +95,47 @@ func (s *RetentionService) Cleanup(ctx context.Context) error {
 		stats.Duration = s.now().Sub(startedAt)
 		s.observer.CycleCompleted(ctx, stats)
 	}()
-	perStatusBudget := (s.config.MaxBatchesPerCycle + 1) / 2
-	processed, limited, err := s.deleteBatches(ctx, "PROCESSED", startedAt, startedAt.Add(-s.config.ProcessedFor), perStatusBudget, func(ctx context.Context, repository RetentionRepository, before time.Time, limit int) (int64, error) {
+	cycleCtx, cancel := context.WithTimeout(ctx, s.config.MaxCycleDuration)
+	defer cancel()
+	processedBudget := (s.config.MaxBatchesPerCycle + 1) / 2
+	deadLetterBudget := s.config.MaxBatchesPerCycle - processedBudget
+	if s.config.MaxBatchesPerCycle == 1 && s.cycles.Add(1)%2 == 0 {
+		processedBudget, deadLetterBudget = 0, 1
+	}
+	processed, limited, err := s.deleteBatches(cycleCtx, "PROCESSED", startedAt.Add(-s.config.ProcessedFor), processedBudget, func(ctx context.Context, repository RetentionRepository, before time.Time, limit int) (int64, error) {
 		return repository.DeleteProcessedBefore(ctx, before, limit)
 	})
 	stats.ProcessedDeleted += processed.deleted
 	stats.Batches += processed.batches
 	stats.Limited = limited
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if errors.Is(cycleCtx.Err(), context.DeadlineExceeded) {
+			stats.Limited = true
+			return nil
+		}
 		return fmt.Errorf("delete processed outbox events: %w", err)
 	}
-	dead, limited, err := s.deleteBatches(ctx, "DEAD_LETTER", startedAt, startedAt.Add(-s.config.DeadLettersFor), perStatusBudget, func(ctx context.Context, repository RetentionRepository, before time.Time, limit int) (int64, error) {
+	if errors.Is(cycleCtx.Err(), context.DeadlineExceeded) {
+		stats.Limited = true
+		return nil
+	}
+	dead, limited, err := s.deleteBatches(cycleCtx, "DEAD_LETTER", startedAt.Add(-s.config.DeadLettersFor), deadLetterBudget, func(ctx context.Context, repository RetentionRepository, before time.Time, limit int) (int64, error) {
 		return repository.DeleteDeadLettersBefore(ctx, before, limit)
 	})
 	stats.DeadLetterDeleted += dead.deleted
 	stats.Batches += dead.batches
 	stats.Limited = stats.Limited || limited
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if errors.Is(cycleCtx.Err(), context.DeadlineExceeded) {
+			stats.Limited = true
+			return nil
+		}
 		return fmt.Errorf("delete dead-letter outbox events: %w", err)
 	}
 	return nil
@@ -122,14 +148,11 @@ type retentionBatchResult struct {
 	batches int
 }
 
-func (s *RetentionService) deleteBatches(ctx context.Context, status string, startedAt, before time.Time, budget int, deleteBatch retentionDelete) (retentionBatchResult, bool, error) {
+func (s *RetentionService) deleteBatches(ctx context.Context, status string, before time.Time, budget int, deleteBatch retentionDelete) (retentionBatchResult, bool, error) {
 	result := retentionBatchResult{}
 	for result.batches < budget {
 		if err := ctx.Err(); err != nil {
 			return result, false, err
-		}
-		if s.now().Sub(startedAt) >= s.config.MaxCycleDuration {
-			return result, true, nil
 		}
 		var deleted int64
 		err := s.transactor.WithinTransaction(ctx, func(ctx context.Context, repository RetentionRepository) error {

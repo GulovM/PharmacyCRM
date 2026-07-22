@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -12,8 +11,11 @@ import (
 
 type TransactionalOutboxRetentionRepository struct{ executor database.TransactionExecutor }
 
-func NewTransactionalOutboxRetentionRepository(executor database.TransactionExecutor) *TransactionalOutboxRetentionRepository {
-	return &TransactionalOutboxRetentionRepository{executor: executor}
+func NewTransactionalOutboxRetentionRepository(executor database.TransactionExecutor) (*TransactionalOutboxRetentionRepository, error) {
+	if executor == nil {
+		return nil, database.ErrDependencyMissing
+	}
+	return &TransactionalOutboxRetentionRepository{executor: executor}, nil
 }
 
 func (r *TransactionalOutboxRetentionRepository) DeleteProcessedBefore(ctx context.Context, before time.Time, limit int) (int64, error) {
@@ -26,7 +28,7 @@ func (r *TransactionalOutboxRetentionRepository) DeleteDeadLettersBefore(ctx con
 
 func (r *TransactionalOutboxRetentionRepository) deleteBefore(ctx context.Context, function string, before time.Time, limit int) (int64, error) {
 	if r == nil || r.executor == nil || before.IsZero() || limit < 1 || limit > outbox.MaxRetentionBatchSize {
-		return 0, errors.New("invalid outbox retention request")
+		return 0, database.ErrDependencyMissing
 	}
 	var deleted int64
 	query := "SELECT public." + function + "($1,$2)" // function is an internal constant.
@@ -40,19 +42,23 @@ type OutboxRetentionTransactor struct {
 	runner *database.TransactionRunner[outbox.RetentionRepository]
 }
 
-func NewOutboxRetentionTransactor(pool *database.Pool, observer database.RollbackErrorObserver) *OutboxRetentionTransactor {
-	return &OutboxRetentionTransactor{runner: database.NewTransactionRunner(
+func NewOutboxRetentionTransactor(pool *database.Pool, observer database.RollbackErrorObserver) (*OutboxRetentionTransactor, error) {
+	runner, err := database.NewTransactionRunner(
 		pool,
-		func(executor database.TransactionExecutor) outbox.RetentionRepository {
+		func(executor database.TransactionExecutor) (outbox.RetentionRepository, error) {
 			return NewTransactionalOutboxRetentionRepository(executor)
 		},
 		observer,
-	)}
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &OutboxRetentionTransactor{runner: runner}, nil
 }
 
 func (t *OutboxRetentionTransactor) WithinTransaction(ctx context.Context, fn func(context.Context, outbox.RetentionRepository) error) error {
 	if t == nil || t.runner == nil {
-		return errors.New("outbox retention transactor is not configured")
+		return database.ErrDependencyMissing
 	}
 	return t.runner.WithinTransaction(ctx, fn)
 }

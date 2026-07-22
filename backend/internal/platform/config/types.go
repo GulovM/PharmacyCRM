@@ -10,7 +10,7 @@ import (
 const (
 	productionEnvironment   = "production"
 	approvedJWTAlgorithm    = "EdDSA"
-	SupportedSchemaVersion  = 21
+	SupportedSchemaVersion  = 23
 	SupportedWorkerProtocol = 1
 )
 

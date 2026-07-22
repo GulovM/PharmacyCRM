@@ -56,7 +56,11 @@ func TestOutboxRetentionTerminalRowsAndPrivilegesIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		repository := NewTransactionalOutboxRetentionRepository(database.WrapPGXTransaction(tx))
+		repository, err := NewTransactionalOutboxRetentionRepository(database.WrapPGXTransaction(tx))
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatal(err)
+		}
 		deleted, err := method(repository)
 		if err != nil {
 			_ = tx.Rollback(ctx)

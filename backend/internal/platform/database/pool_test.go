@@ -1,6 +1,7 @@
 package database
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,9 @@ func TestBuildPoolConfigDoesNotLeakDSN(t *testing.T) {
 	_, err := BuildPoolConfig(postgresConfig(), "postgres://user:super-secret@%")
 	if err == nil {
 		t.Fatal("expected error")
+	}
+	if !errors.Is(err, ErrInvalidPostgresConfiguration) {
+		t.Fatalf("expected typed configuration error, got %v", err)
 	}
 	if strings.Contains(err.Error(), "super-secret") {
 		t.Fatalf("dsn leaked: %v", err)

@@ -23,6 +23,15 @@ func mustAuditWriter(t testing.TB, repository audit.Repository, policy audit.Met
 	return writer
 }
 
+func mustTransactionalAuditRepository(t testing.TB, executor database.TransactionExecutor) *TransactionalAuditRepository {
+	t.Helper()
+	repository, err := NewTransactionalAuditRepository(executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repository
+}
+
 func TestAuditWriterIntegration(t *testing.T) {
 	dsn := postgrestest.DSN(t)
 	ctx := context.Background()
@@ -55,7 +64,7 @@ func TestAuditWriterIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writer := mustAuditWriter(t, NewTransactionalAuditRepository(database.WrapPGXTransaction(tx)), policy)
+	writer := mustAuditWriter(t, mustTransactionalAuditRepository(t, database.WrapPGXTransaction(tx)), policy)
 	event := audit.Event{ID: uuid.New(), OccurredAt: time.Now(), ActorUserID: &actorID, ActorSessionID: &actorSessionID, ActorType: audit.ActorUser, Action: "test.user.changed", ObjectType: "user", ObjectID: &actorID, Result: audit.ResultSuccess, Metadata: audit.Metadata{"reason": "integration"}}
 	if err := writer.Append(ctx, event); err != nil {
 		_ = tx.Rollback(ctx)
@@ -87,7 +96,7 @@ func TestAuditWriterIntegration(t *testing.T) {
 	failing := event
 	failing.ID = uuid.New()
 	failing.ActorSessionID = &otherSessionID
-	if err := mustAuditWriter(t, NewTransactionalAuditRepository(database.WrapPGXTransaction(tx)), policy).Append(ctx, failing); err == nil {
+	if err := mustAuditWriter(t, mustTransactionalAuditRepository(t, database.WrapPGXTransaction(tx)), policy).Append(ctx, failing); err == nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal("expected mismatched audit session failure")
 	} else {

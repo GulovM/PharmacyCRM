@@ -11,11 +11,17 @@ import (
 
 type TransactionalAuditRepository struct{ executor database.TransactionExecutor }
 
-func NewTransactionalAuditRepository(executor database.TransactionExecutor) *TransactionalAuditRepository {
-	return &TransactionalAuditRepository{executor: executor}
+func NewTransactionalAuditRepository(executor database.TransactionExecutor) (*TransactionalAuditRepository, error) {
+	if executor == nil {
+		return nil, database.ErrDependencyMissing
+	}
+	return &TransactionalAuditRepository{executor: executor}, nil
 }
 
 func (r *TransactionalAuditRepository) Append(ctx context.Context, event audit.Event) error {
+	if r == nil || r.executor == nil {
+		return database.ErrDependencyMissing
+	}
 	metadata, err := json.Marshal(event.Metadata)
 	if err != nil {
 		return fmt.Errorf("encode audit metadata: %w", err)

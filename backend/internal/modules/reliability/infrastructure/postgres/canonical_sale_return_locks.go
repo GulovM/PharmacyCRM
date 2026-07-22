@@ -1,10 +1,10 @@
 package postgres
 
 import (
-    "context"
+	"context"
 
-    "github.com/GulovM/PharmacyCRM/backend/internal/modules/reliability/application/locking"
-    "github.com/google/uuid"
+	"github.com/GulovM/PharmacyCRM/backend/internal/modules/reliability/application/locking"
+	"github.com/google/uuid"
 )
 
 func (r *CanonicalLockRepository) LockSaleReturn(ctx context.Context, plan locking.SaleReturnPlan) (locking.SaleReturnLocks, error) {

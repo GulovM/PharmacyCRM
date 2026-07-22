@@ -32,24 +32,45 @@ type atomicReliabilityAdapters struct {
 	idempotency *idempotency.Service
 }
 
-func newAtomicReliabilityAdapters(executor database.TransactionExecutor) atomicReliabilityUnitOfWork {
-	auditWriter, _ := audit.NewWriter(
-		auditpostgres.NewTransactionalAuditRepository(executor),
+func newAtomicReliabilityAdapters(executor database.TransactionExecutor) (atomicReliabilityUnitOfWork, error) {
+	auditRepository, err := auditpostgres.NewTransactionalAuditRepository(executor)
+	if err != nil {
+		return nil, err
+	}
+	auditWriter, err := audit.NewWriter(
+		auditRepository,
 		audit.MetadataPolicy{"test.atomic": {"reason": audit.MetadataString}},
 	)
-	outboxWriter, _ := outbox.NewWriter(
-		NewTransactionalOutboxRepository(executor),
+	if err != nil {
+		return nil, err
+	}
+	outboxRepository, err := NewTransactionalOutboxRepository(executor)
+	if err != nil {
+		return nil, err
+	}
+	outboxWriter, err := outbox.NewWriter(
+		outboxRepository,
 		map[outbox.EventKey]outbox.PayloadValidator{
 			{Name: "test.atomic", Version: 1}: outbox.PayloadValidatorFunc(func(json.RawMessage) error { return nil }),
 		},
 	)
-	idempotencyService, _ := idempotency.NewService(NewTransactionalIdempotencyRepository(executor))
+	if err != nil {
+		return nil, err
+	}
+	idempotencyRepository, err := NewTransactionalIdempotencyRepository(executor)
+	if err != nil {
+		return nil, err
+	}
+	idempotencyService, err := idempotency.NewService(idempotencyRepository)
+	if err != nil {
+		return nil, err
+	}
 	return &atomicReliabilityAdapters{
 		executor:    executor,
 		audit:       auditWriter,
 		outbox:      outboxWriter,
 		idempotency: idempotencyService,
-	}
+	}, nil
 }
 
 func (u *atomicReliabilityAdapters) ChangeDisplayName(ctx context.Context, id uuid.UUID, name string) error {
@@ -104,7 +125,10 @@ func TestMandatoryReliabilityFailuresRollbackBusinessWriteIntegration(t *testing
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	runner := database.NewTransactionRunner(pool, newAtomicReliabilityAdapters, nil)
+	runner, err := database.NewTransactionRunner(pool, newAtomicReliabilityAdapters, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	assertRolledBack := func(name string, callback func(context.Context, atomicReliabilityUnitOfWork) error) {
 		t.Helper()

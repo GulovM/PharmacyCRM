@@ -1,5 +1,7 @@
 # PharmacyCRM — Observability
 
+> Retention observability for schema `23` reports one bounded cycle budget and a real cycle deadline; an internal deadline is recorded as limited work, not as a repository failure.
+
 **Статус документа:** Draft  
 **Версия:** 1.1  
 **Дата:** 2026-07-21  

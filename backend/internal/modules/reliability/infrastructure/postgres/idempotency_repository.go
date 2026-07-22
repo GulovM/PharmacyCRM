@@ -14,11 +14,17 @@ import (
 
 type TransactionalIdempotencyRepository struct{ executor database.TransactionExecutor }
 
-func NewTransactionalIdempotencyRepository(executor database.TransactionExecutor) *TransactionalIdempotencyRepository {
-	return &TransactionalIdempotencyRepository{executor: executor}
+func NewTransactionalIdempotencyRepository(executor database.TransactionExecutor) (*TransactionalIdempotencyRepository, error) {
+	if executor == nil {
+		return nil, database.ErrDependencyMissing
+	}
+	return &TransactionalIdempotencyRepository{executor: executor}, nil
 }
 
 func (r *TransactionalIdempotencyRepository) Claim(ctx context.Context, claim idempotency.Claim) (idempotency.Record, bool, error) {
+	if r == nil || r.executor == nil {
+		return idempotency.Record{}, false, database.ErrDependencyMissing
+	}
 	var id uuid.UUID
 	err := r.executor.QueryRow(ctx, `
 		INSERT INTO idempotency_records (
@@ -54,6 +60,9 @@ func (r *TransactionalIdempotencyRepository) Claim(ctx context.Context, claim id
 }
 
 func (r *TransactionalIdempotencyRepository) lockByIdentity(ctx context.Context, claim idempotency.Claim) (idempotency.Record, error) {
+	if r == nil || r.executor == nil {
+		return idempotency.Record{}, database.ErrDependencyMissing
+	}
 	var record idempotency.Record
 	var id uuid.UUID
 	var fingerprint []byte
@@ -87,6 +96,9 @@ func (r *TransactionalIdempotencyRepository) lockByIdentity(ctx context.Context,
 }
 
 func (r *TransactionalIdempotencyRepository) Complete(ctx context.Context, completion idempotency.Completion) error {
+	if r == nil || r.executor == nil {
+		return database.ErrDependencyMissing
+	}
 	tag, err := r.executor.Exec(ctx, `
 		UPDATE idempotency_records
 		SET status = 'COMPLETED', response_status = $2, response_body = $3::jsonb,
@@ -102,6 +114,9 @@ func (r *TransactionalIdempotencyRepository) Complete(ctx context.Context, compl
 }
 
 func (r *TransactionalIdempotencyRepository) Replay(ctx context.Context, recordID idempotency.RecordID) (idempotency.StoredResult, error) {
+	if r == nil || r.executor == nil {
+		return idempotency.StoredResult{}, database.ErrDependencyMissing
+	}
 	var result idempotency.StoredResult
 	var body []byte
 	var resourceType *string
@@ -123,6 +138,9 @@ func (r *TransactionalIdempotencyRepository) Replay(ctx context.Context, recordI
 }
 
 func (r *TransactionalIdempotencyRepository) MarkRetryableFailure(ctx context.Context, recordID idempotency.RecordID) error {
+	if r == nil || r.executor == nil {
+		return database.ErrDependencyMissing
+	}
 	tag, err := r.executor.Exec(ctx, `
 		UPDATE idempotency_records SET status = 'FAILED_RETRYABLE', completed_at = now()
 		WHERE id = $1 AND status = 'IN_PROGRESS'`, uuid.UUID(recordID))

@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -14,11 +13,17 @@ import (
 
 type TransactionalOutboxRepository struct{ executor database.TransactionExecutor }
 
-func NewTransactionalOutboxRepository(executor database.TransactionExecutor) *TransactionalOutboxRepository {
-	return &TransactionalOutboxRepository{executor: executor}
+func NewTransactionalOutboxRepository(executor database.TransactionExecutor) (*TransactionalOutboxRepository, error) {
+	if executor == nil {
+		return nil, database.ErrDependencyMissing
+	}
+	return &TransactionalOutboxRepository{executor: executor}, nil
 }
 
 func (r *TransactionalOutboxRepository) Append(ctx context.Context, event outbox.Event) error {
+	if r == nil || r.executor == nil {
+		return database.ErrDependencyMissing
+	}
 	if event.Headers == nil {
 		event.Headers = map[string]string{}
 	}
@@ -42,6 +47,9 @@ func (r *TransactionalOutboxRepository) Append(ctx context.Context, event outbox
 }
 
 func (r *TransactionalOutboxRepository) ClaimBatch(ctx context.Context, request outbox.ClaimRequest) ([]outbox.Lease, error) {
+	if r == nil || r.executor == nil {
+		return nil, database.ErrDependencyMissing
+	}
 	eventNames := make([]string, 0, len(request.Protocols))
 	eventVersions := make([]int16, 0, len(request.Protocols))
 	for _, protocol := range request.Protocols {
@@ -120,6 +128,9 @@ func (r *TransactionalOutboxRepository) ClaimBatch(ctx context.Context, request 
 }
 
 func (r *TransactionalOutboxRepository) MarkProcessed(ctx context.Context, lease outbox.Lease, completedAt time.Time) error {
+	if r == nil || r.executor == nil {
+		return database.ErrDependencyMissing
+	}
 	tag, err := r.executor.Exec(ctx, `
 		UPDATE outbox_events
 		SET status = 'PROCESSED', processed_at = $5,
@@ -137,6 +148,9 @@ func (r *TransactionalOutboxRepository) MarkProcessed(ctx context.Context, lease
 }
 
 func (r *TransactionalOutboxRepository) MarkFailed(ctx context.Context, lease outbox.Lease, failure outbox.Failure, failedAt, availableAt time.Time) error {
+	if r == nil || r.executor == nil {
+		return database.ErrDependencyMissing
+	}
 	terminal := !failure.Retryable || lease.Attempt >= lease.MaxAttempts
 	tag, err := r.executor.Exec(ctx, `
 		UPDATE outbox_events
@@ -159,16 +173,14 @@ func (r *TransactionalOutboxRepository) MarkFailed(ctx context.Context, lease ou
 }
 
 func (r *TransactionalOutboxRepository) ReplayDeadLetter(ctx context.Context, id uuid.UUID, availableAt time.Time) error {
-	tag, err := r.executor.Exec(ctx, `
-		UPDATE outbox_events
-		SET status = 'PENDING', attempt_count = 0, available_at = $2,
-			last_error_code = NULL, last_error_at = NULL, dead_lettered_at = NULL,
-			lease_token = NULL, leased_by = NULL, lease_expires_at = NULL
-		WHERE id = $1 AND status = 'DEAD_LETTER'`, id, availableAt)
-	if err != nil {
-		return fmt.Errorf("replay dead-letter event: %w", err)
+	if r == nil || r.executor == nil {
+		return database.ErrDependencyMissing
 	}
-	if tag.RowsAffected() != 1 {
+	var replayed bool
+	if err := r.executor.QueryRow(ctx, "SELECT public.replay_dead_letter_outbox_event($1, $2)", id, availableAt).Scan(&replayed); err != nil {
+		return fmt.Errorf("replay dead-letter outbox event: %w", err)
+	}
+	if !replayed {
 		return outbox.ErrNotDeadLetter
 	}
 	return nil
@@ -178,19 +190,23 @@ type OutboxTransactor struct {
 	runner *database.TransactionRunner[outbox.Repository]
 }
 
-func NewOutboxTransactor(pool *database.Pool, observer database.RollbackErrorObserver) *OutboxTransactor {
-	return &OutboxTransactor{runner: database.NewTransactionRunner(
+func NewOutboxTransactor(pool *database.Pool, observer database.RollbackErrorObserver) (*OutboxTransactor, error) {
+	runner, err := database.NewTransactionRunner(
 		pool,
-		func(executor database.TransactionExecutor) outbox.Repository {
+		func(executor database.TransactionExecutor) (outbox.Repository, error) {
 			return NewTransactionalOutboxRepository(executor)
 		},
 		observer,
-	)}
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &OutboxTransactor{runner: runner}, nil
 }
 
 func (t *OutboxTransactor) WithinTransaction(ctx context.Context, fn func(context.Context, outbox.Repository) error) error {
 	if t == nil || t.runner == nil {
-		return errors.New("outbox transactor is not configured")
+		return database.ErrDependencyMissing
 	}
 	return t.runner.WithinTransaction(ctx, fn)
 }

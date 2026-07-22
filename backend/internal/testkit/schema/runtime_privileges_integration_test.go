@@ -32,6 +32,7 @@ func TestRuntimePrivilegeMatrixIntegration(t *testing.T) {
 		"sale financial rewrite":    `UPDATE sales SET total_amount_dirams=total_amount_dirams WHERE false`,
 		"receipt ownership rewrite": `UPDATE receipts SET pharmacy_id=pharmacy_id WHERE false`,
 		"migration insert":          `INSERT INTO pharmacycrm_schema_migrations(version,name,checksum) VALUES(999999,'forbidden','forbidden')`,
+		"migration history read":    `SELECT MAX(version) FROM pharmacycrm_schema_migrations`,
 		"metadata update":           `UPDATE pharmacycrm_schema_metadata SET schema_version=schema_version WHERE singleton`,
 		"business delete":           `DELETE FROM users WHERE false`,
 	} {
@@ -116,5 +117,22 @@ func TestRuntimePrivilegeMatrixIntegration(t *testing.T) {
 	}
 	if _, err := tx.Exec(ctx, `UPDATE sales SET status=status WHERE false`); err != nil {
 		t.Fatalf("approved root lifecycle column update rejected: %v", err)
+	}
+}
+
+func TestCompatibilityRuntimeRoleExistsWithoutMembersIntegration(t *testing.T) {
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, postgrestest.DSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	var canLogin bool
+	if err := pool.QueryRow(ctx, `SELECT rolcanlogin FROM pg_roles WHERE rolname='pharmacycrm_runtime'`).Scan(&canLogin); err != nil || canLogin {
+		t.Fatalf("compatibility role login=%t err=%v", canLogin, err)
+	}
+	var members int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_auth_members membership JOIN pg_roles role ON role.oid=membership.roleid WHERE role.rolname='pharmacycrm_runtime'`).Scan(&members); err != nil || members != 0 {
+		t.Fatalf("compatibility role members=%d err=%v", members, err)
 	}
 }

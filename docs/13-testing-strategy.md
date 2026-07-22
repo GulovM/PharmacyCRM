@@ -1,5 +1,7 @@
 # PharmacyCRM — Testing Strategy
 
+> E2 schema `23` integration coverage includes E1/19 upgrades, session-security negative constraints, API/worker privilege denial and capability-based outbox replay.
+
 **Статус документа:** Draft  
 **Версия:** 1.1  
 **Дата:** 2026-07-21  

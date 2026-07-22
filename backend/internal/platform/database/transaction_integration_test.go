@@ -34,7 +34,7 @@ func TestTransactionRunnerIntegration(t *testing.T) {
 		begin: func(ctx context.Context, options pgx.TxOptions) (transaction, error) {
 			return pool.BeginTx(ctx, options)
 		},
-		newUnitOfWork: func(executor TransactionExecutor) TransactionExecutor { return executor },
+		newUnitOfWork: func(executor TransactionExecutor) (TransactionExecutor, error) { return executor, nil },
 	}
 
 	if err := runner.WithinTransaction(ctx, func(ctx context.Context, executor TransactionExecutor) error {
@@ -107,7 +107,7 @@ func TestRetryingTransactionRunnerIntegration(t *testing.T) {
 		begin: func(ctx context.Context, options pgx.TxOptions) (transaction, error) {
 			return pool.BeginTx(ctx, options)
 		},
-		newUnitOfWork: func(executor TransactionExecutor) TransactionExecutor { return executor },
+		newUnitOfWork: func(executor TransactionExecutor) (TransactionExecutor, error) { return executor, nil },
 		options:       pgx.TxOptions{IsoLevel: pgx.Serializable},
 	}
 	var attempt atomic.Int32

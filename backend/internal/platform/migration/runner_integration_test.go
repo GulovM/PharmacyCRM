@@ -57,7 +57,7 @@ func TestUpgradeFromE1Integration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(loaded) != 21 || loaded[0].Version != 1 || loaded[0].Name != "schema_metadata" {
+	if len(loaded) != 23 || loaded[0].Version != 1 || loaded[0].Name != "schema_metadata" {
 		t.Fatalf("unexpected migration set: %#v", loaded)
 	}
 	rawPool, err := pgxpool.New(ctx, isolatedDSN)
@@ -97,14 +97,14 @@ func TestUpgradeFromE1Integration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.SchemaVersion != 21 || len(result.Applied) != 20 || result.Applied[0] != 2 || result.Applied[len(result.Applied)-1] != 21 {
+	if result.SchemaVersion != 23 || len(result.Applied) != 22 || result.Applied[0] != 2 || result.Applied[len(result.Applied)-1] != 23 {
 		t.Fatalf("unexpected upgrade result: %#v", result)
 	}
 	replayed, err := Run(ctx, pool, loaded)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replayed.SchemaVersion != 21 || len(replayed.Applied) != 0 {
+	if replayed.SchemaVersion != 23 || len(replayed.Applied) != 0 {
 		t.Fatalf("migrations were unexpectedly replayed: %#v", replayed)
 	}
 
@@ -150,5 +150,65 @@ func TestUpgradeFromE1Integration(t *testing.T) {
 	corrupted[0].Checksum = strings.Repeat("0", 64)
 	if _, err := Run(ctx, pool, corrupted); !errors.Is(err, ErrChecksumMismatch) {
 		t.Fatalf("expected checksum mismatch, got %v", err)
+	}
+}
+
+func TestUpgradeFromSchema19Integration(t *testing.T) {
+	adminDSN := os.Getenv("POSTGRES_ADMIN_TEST_DSN")
+	migrationDSN := os.Getenv("POSTGRES_TEST_DSN")
+	if adminDSN == "" || migrationDSN == "" {
+		if os.Getenv("CI_INTEGRATION_REQUIRED") == "true" {
+			t.Fatal("POSTGRES_ADMIN_TEST_DSN and POSTGRES_TEST_DSN are required")
+		}
+		t.Skip("PostgreSQL admin and migration test DSNs are not set")
+	}
+	ctx := context.Background()
+	adminPool, err := pgxpool.New(ctx, adminDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(adminPool.Close)
+	parsedDSN, err := url.Parse(migrationDSN)
+	if err != nil || parsedDSN.Scheme == "" || parsedDSN.Host == "" {
+		t.Fatal("POSTGRES_TEST_DSN must be a PostgreSQL URL")
+	}
+	databaseName := "pharmacycrm_schema19_upgrade_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	parsedDSN.Path = "/" + databaseName
+	isolatedDSN := parsedDSN.String()
+	migrationConfig, err := pgxpool.ParseConfig(migrationDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adminPool.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{databaseName}.Sanitize()+" OWNER "+pgx.Identifier{migrationConfig.ConnConfig.User}.Sanitize()+" TEMPLATE template0"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = adminPool.Exec(context.Background(), "DROP DATABASE IF EXISTS "+pgx.Identifier{databaseName}.Sanitize()+" WITH (FORCE)")
+	})
+	pool, err := database.NewMigration(ctx, config.MigrationPostgresConfig{DSN: isolatedDSN, PoolConfig: config.PoolConfig{
+		MinConnections: 1, MaxConnections: 2, AcquireTimeout: 5 * time.Second,
+		MaxConnectionLife: time.Minute, MaxConnectionIdle: time.Minute, HealthCheckPeriod: time.Minute,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	loaded, err := Load(embeddedmigrations.Files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(ctx, pool, loaded[:19]); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Run(ctx, pool, loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SchemaVersion != 23 || len(result.Applied) != 4 || result.Applied[0] != 20 || result.Applied[3] != 23 {
+		t.Fatalf("unexpected schema 19 upgrade result: %#v", result)
+	}
+	replayed, err := Run(ctx, pool, loaded)
+	if err != nil || len(replayed.Applied) != 0 || replayed.SchemaVersion != 23 {
+		t.Fatalf("schema 23 replay=%#v err=%v", replayed, err)
 	}
 }

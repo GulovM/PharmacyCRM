@@ -24,8 +24,10 @@ func (f *fakeTransaction) QueryRow(context.Context, string, ...any) pgx.Row     
 
 func testTransactionRunner(tx *fakeTransaction, observer RollbackErrorObserver) *TransactionRunner[TransactionExecutor] {
 	return &TransactionRunner[TransactionExecutor]{
-		begin:             func(context.Context, pgx.TxOptions) (transaction, error) { return tx, nil },
-		newUnitOfWork:     func(executor TransactionExecutor) TransactionExecutor { return executor },
+		begin: func(context.Context, pgx.TxOptions) (transaction, error) { return tx, nil },
+		newUnitOfWork: func(executor TransactionExecutor) (TransactionExecutor, error) {
+			return executor, nil
+		},
 		onRollbackFailure: observer,
 	}
 }
@@ -99,5 +101,20 @@ func TestTransactionRunnerRejectsInvalidInvocationBeforeBegin(t *testing.T) {
 	}
 	if tx.commitCalls != 0 || tx.rollbackCalls != 0 {
 		t.Fatal("transaction unexpectedly used")
+	}
+}
+
+func TestTransactionRunnerRollsBackFactoryFailureBeforeCallback(t *testing.T) {
+	factoryErr := errors.New("factory failure")
+	tx := &fakeTransaction{}
+	runner := testTransactionRunner(tx, nil)
+	runner.newUnitOfWork = func(TransactionExecutor) (TransactionExecutor, error) { return nil, factoryErr }
+	called := false
+	err := runner.WithinTransaction(context.Background(), func(context.Context, TransactionExecutor) error {
+		called = true
+		return nil
+	})
+	if !errors.Is(err, factoryErr) || called || tx.rollbackCalls != 1 || tx.commitCalls != 0 {
+		t.Fatalf("err=%v called=%t commit=%d rollback=%d", err, called, tx.commitCalls, tx.rollbackCalls)
 	}
 }
