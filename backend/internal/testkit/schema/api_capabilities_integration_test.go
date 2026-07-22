@@ -63,7 +63,10 @@ func TestAPIRuntimeIdempotencyAndReplayCapabilitiesIntegration(t *testing.T) {
 			assertPrivilegeDenied(t, func() error { _, err := api.Exec(ctx, statement, retryRecordID); return err })
 		})
 	}
-	assertPrivilegeDenied(t, func() error { _, err := api.Exec(ctx, `DELETE FROM idempotency_records WHERE id=$1`, retryRecordID); return err })
+	assertPrivilegeDenied(t, func() error {
+		_, err := api.Exec(ctx, `DELETE FROM idempotency_records WHERE id=$1`, retryRecordID)
+		return err
+	})
 	assertPrivilegeDenied(t, func() error { _, err := api.Exec(ctx, `TRUNCATE idempotency_records`); return err })
 
 	statuses := []string{"DEAD_LETTER", "PENDING", "PROCESSING", "PROCESSED"}
@@ -120,13 +123,22 @@ func TestAPIRuntimeIdempotencyAndReplayCapabilitiesIntegration(t *testing.T) {
 		t.Fatalf("unexpected replayed event state: status=%s payload=%s headers=%s attempts=%d available=%s", status, payload, headers, attemptCount, availableAt)
 	}
 
-	assertPrivilegeDenied(t, func() error { _, err := worker.Exec(ctx, `SELECT public.replay_dead_letter_outbox_event($1,now())`, eventIDs[0]); return err })
+	assertPrivilegeDenied(t, func() error {
+		_, err := worker.Exec(ctx, `SELECT public.replay_dead_letter_outbox_event($1,now())`, eventIDs[0])
+		return err
+	})
 	var publicCanExecute bool
 	if err := owner.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_proc procedure CROSS JOIN LATERAL aclexplode(COALESCE(procedure.proacl, acldefault('f', procedure.proowner))) privilege WHERE procedure.oid='public.replay_dead_letter_outbox_event(uuid,timestamptz)'::regprocedure AND privilege.grantee=0 AND privilege.privilege_type='EXECUTE')`).Scan(&publicCanExecute); err != nil || publicCanExecute {
 		t.Fatalf("PUBLIC execute privilege=%t err=%v", publicCanExecute, err)
 	}
-	assertPrivilegeDenied(t, func() error { _, err := api.Exec(ctx, `UPDATE outbox_events SET status='PENDING' WHERE id=$1`, eventIDs[0]); return err })
-	assertPrivilegeDenied(t, func() error { _, err := api.Exec(ctx, `DELETE FROM outbox_events WHERE id=$1`, eventIDs[0]); return err })
+	assertPrivilegeDenied(t, func() error {
+		_, err := api.Exec(ctx, `UPDATE outbox_events SET status='PENDING' WHERE id=$1`, eventIDs[0])
+		return err
+	})
+	assertPrivilegeDenied(t, func() error {
+		_, err := api.Exec(ctx, `DELETE FROM outbox_events WHERE id=$1`, eventIDs[0])
+		return err
+	})
 	assertPrivilegeDenied(t, func() error { _, err := api.Exec(ctx, `TRUNCATE outbox_events`); return err })
 }
 
