@@ -128,7 +128,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE oid = target_oid AND rolcanlogin) THEN
         remaining_capabilities := array_append(remaining_capabilities, 'login');
     END IF;
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE oid = target_oid AND rolpassword IS NOT NULL) THEN
+    IF EXISTS (SELECT 1 FROM pg_authid WHERE oid = target_oid AND rolpassword IS NOT NULL) THEN
         remaining_capabilities := array_append(remaining_capabilities, 'password');
     END IF;
     IF EXISTS (SELECT 1 FROM pg_auth_members WHERE roleid = target_oid OR member = target_oid) THEN
