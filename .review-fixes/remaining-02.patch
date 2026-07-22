@@ -1,0 +1,84 @@
++Каждый provisioning pass также санитизирует существующие API и worker login roles: удаляет любые посторонние memberships и direct/default ACL, затем назначает ровно одну разрешённую `NOLOGIN` group role. `pharmacycrm_runtime` является только compatibility role для immutable migrations `000014–000019`; она нормализуется даже из существующей `LOGIN` role в `NOLOGIN`, passwordless, memberless role без memberships и direct/default privileges. Provisioning выполняется до migration и повторно после migration.
++
++Provisioning principal является контролируемым PostgreSQL administrator: он владеет target database, может создавать/изменять roles и читать `pg_authid`. Runtime credentials никогда не обладают этими возможностями.
++
+ PostgreSQL не публикуется в интернет. Production connection использует TLS, если backend и БД не находятся в одном доверенном изолированном узле.
+ 
+ Все values параметризуются. Динамические identifiers допускаются только через allowlist.
+--- a/docs/12-deployment.md
++++ b/docs/12-deployment.md
+@@ -6,7 +6,7 @@
+ 
+ **Статус документа:** Draft  
+ **Версия:** 1.1  
+-**Дата:** 2026-07-21  
++**Дата:** 2026-07-22  
+ **Связанные документы:** `03-system-context.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `06-database-design.md`, `08-project-structure.md`, `09-security-design.md`, `10-sequence-diagrams.md`, `11-development-roadmap.md`
+ 
+ ## 1. Назначение и нормативная роль
+@@ -267,18 +267,16 @@
+ 
+ Backend использует `github.com/kelseyhightower/envconfig`.
+ 
+-Configuration groups:
++Configuration groups разделяются по process ownership:
+ 
+-- application/environment;
+-- HTTP server;
+-- PostgreSQL;
+-- authentication/session;
+-- security headers/trusted proxies;
+-- logging;
+-- metrics/tracing;
+-- worker/job protocol;
+-- import limits/storage;
+-- backup/operations.
++- shared application metadata, schema compatibility и worker protocol compatibility;
++- API-only HTTP, authentication/session, security headers/trusted proxies и `POSTGRES_API_RUNTIME_DSN`;
++- worker-only owner, concurrency, polling, lease, claim, drain, retention и `POSTGRES_WORKER_RUNTIME_DSN`;
++- migration-only `POSTGRES_MIGRATION_DSN`;
++- shared logging, metrics/tracing и storage settings только там, где process действительно их использует;
++- backup/operations settings для соответствующих one-shot jobs.
++
++API process не читает и не требует `WORKER_OWNER`, `WORKER_CONCURRENCY`, `WORKER_POLL_INTERVAL`, `WORKER_LEASE_DURATION`, `WORKER_MAX_CLAIM`, `WORKER_DRAIN_TIMEOUT` или `WORKER_RETENTION_*`. Invalid worker operational environment не может сломать корректно настроенный API. Worker process по-прежнему валидирует полный worker config fail closed.
+ 
+ ### 9.1 Startup validation
+ 
+@@ -361,7 +359,11 @@
+ - backup;
+ - optional read-only diagnostics.
+ 
+-API и worker roles могут различаться. Runtime roles не имеют права создавать schema, управлять roles, выполнять unrestricted DDL или изменять immutable history вне разрешённого protocol.
++API и worker roles обязаны различаться и используют отдельные `POSTGRES_API_RUNTIME_DSN` и `POSTGRES_WORKER_RUNTIME_DSN`; migration job использует только `POSTGRES_MIGRATION_DSN`. Runtime roles не имеют права создавать schema, управлять roles, выполнять unrestricted DDL или изменять immutable history вне разрешённого protocol.
++
++Каждый запуск provisioning передаёт явный `provisioning_mode=fresh|upgrade`. `fresh` разрешён только для empty database либо schema version `23`; более старая metadata требует upgrade mode и не может быть случайно обработана как fresh install. Для E1 upgrade deployment дополнительно передаёт точный `legacy_runtime_role`. Provisioning проверяет cluster-wide ownership через `pg_shdepend`, отказывается автоматически менять role с ownership/owning membership/cross-database privileges, затем в target database отзывает default/direct ACL и memberships, устанавливает `NOLOGIN` и `PASSWORD NULL`. Legacy role не удаляется автоматически.
++
++API и worker login roles перед выдачей разрешённой group role очищаются от любых direct/default ACL и посторонних memberships. `pharmacycrm_runtime` остаётся только `NOLOGIN` compatibility role без password, members, memberships и direct/default privileges; API и worker logins её не наследуют. Из-за ссылок immutable migrations `000014–000019` provisioning выполняется до и после migration chain. Execution principal должен владеть target database, иметь role-administration capability и доступ к `pg_authid`; обычный runtime/database-owner credential недостаточен.
+ 
+ ### 11.3 Pool budget
+ 
+@@ -421,7 +423,7 @@
+ 
+ Migrations выполняются отдельной one-shot command до переключения traffic на несовместимую application version.
+ 
+-Текущая E2 application compatibility закреплена на schema version `21`. CI проверяет migration from zero и изолированный upgrade от E1 version `1`; API/worker не применяют migrations при startup. API, worker и migrator используют разные `POSTGRES_API_RUNTIME_DSN`, `POSTGRES_WORKER_RUNTIME_DSN` и `POSTGRES_MIGRATION_DSN`.
++Supported schema version: `23`. Поддерживаемые и обязательные CI paths: `0 → 23`, `1 → 23`, `19 → 23`, `21 → 23` и `23 → no-op`. API/worker не применяют migrations при startup. API, worker и migrator используют разные `POSTGRES_API_RUNTIME_DSN`, `POSTGRES_WORKER_RUNTIME_DSN` и `POSTGRES_MIGRATION_DSN`.
+ 
+ Migration process:
+ 
+@@ -437,7 +439,22 @@
+ 
+ Одновременно migration запускает только один владелец.
+ 
+-### 13.2 Expand → migrate → contract
++### 13.2 E1 → E2 credential-safe upgrade order
++
++1. остановить все E1 API и worker processes; legacy credential не используется после этого шага;
++2. создать backup или подтверждённый restore point;
++3. выполнить provisioning с `provisioning_mode=upgrade` и непустым `legacy_runtime_role`; отдельно доказать, что отсутствующий mode и `fresh` поверх E1 schema завершаются fail closed;
++4. доказать, что legacy login отключён, password очищен, memberships/direct/default privileges отсутствуют;
++5. применить immutable migrations до schema version `23` через `POSTGRES_MIGRATION_DSN`;
++6. повторно выполнить тот же idempotent provisioning в upgrade mode, чтобы удалить compatibility grants, временно созданные migrations `000014–000019`;
++7. проверить API и worker privilege matrix, а также inert `pharmacycrm_runtime NOLOGIN`;
++8. запустить новый API без `WORKER_*` operational settings и дождаться readiness;
++9. запустить новый worker, проверить protocol compatibility и heartbeat; при пустом E2 registry доказать maintenance-only polling без claim неизвестных business protocols, bounded exhausted-lease terminalization и retention;
