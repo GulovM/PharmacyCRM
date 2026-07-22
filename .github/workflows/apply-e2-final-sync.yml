@@ -20,20 +20,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Apply exact documentation and CI patches
-        run: python scripts/apply-e2-final-sync.py
+      - name: Apply exact documentation patches
+        run: |
+          python scripts/apply-e2-final-sync.py
+          git checkout -- .github/workflows/ci.yml
       - name: Verify current schema references
         run: |
           if grep -RniE 'current E2 schema `21`|application compatibility[^\n]*schema version `21`' docs deploy backend --exclude='*.sum'; then
             echo 'Found stale current-state schema 21 reference'
             exit 1
           fi
-      - name: Commit synchronized files
+      - name: Commit synchronized documentation
         run: |
-          rm scripts/apply-e2-final-sync.py .github/workflows/apply-e2-final-sync.yml
           git config user.name github-actions
           git config user.email github-actions@github.com
-          git add .github/workflows/ci.yml docs scripts .github/workflows
+          git add docs
           git diff --cached --check
           git commit -m 'Synchronize E2 final deployment and reliability contracts'
           git push origin HEAD:Database-Kernel-and-Reliability-Primitives
