@@ -1,5 +1,5 @@
 -- E2-DB-001: alerts and public projection.
--- Verification query: SELECT to_regclass('public.alerts') IS NOT NULL AND to_regclass('public.public_availability_projection') IS NOT NULL;
+-- Verification query: SELECT to_regclass('public.alerts') IS NOT NULL AND to_regclass('public.public_availability_projection') IS NOT NULL AND to_regclass('public.uq_alert_open_dedup') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname IN ('chk_alert_resolution','chk_alert_lifecycle') AND convalidated) AND to_regclass('public.idx_public_availability_search') IS NOT NULL;
 -- Lock/rewrite assessment: new baseline objects only; no existing-row rewrite.
 -- Compatibility: additive baseline; application traffic starts after the complete baseline.
 -- Forward-fix policy: destructive down migrations are prohibited.

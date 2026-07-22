@@ -1,5 +1,5 @@
 -- E2-DB-001: catalog and import staging.
--- Verification query: SELECT to_regclass('public.products') IS NOT NULL AND to_regclass('public.import_rows') IS NOT NULL;
+-- Verification query: SELECT to_regclass('public.products') IS NOT NULL AND to_regclass('public.import_rows') IS NOT NULL AND to_regclass('public.uq_product_barcodes_value_active') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname='uq_import_row_number' AND contype='u') AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname='chk_product_request_resolution' AND convalidated);
 -- Lock/rewrite assessment: new baseline objects only; no existing-row rewrite.
 -- Compatibility: additive baseline; application traffic starts after the complete baseline.
 -- Forward-fix policy: destructive down migrations are prohibited.

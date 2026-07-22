@@ -425,7 +425,7 @@ Migration process:
 4. выполняет preflight checks;
 5. проверяет backup/restore point requirement;
 6. применяет migrations по порядку;
-7. выполняет verification queries;
+7. выполняет verification queries, проверяющие critical tables, constraints, indexes, triggers/functions и least-privilege grants, а не только наличие relation;
 8. фиксирует resulting schema version и evidence;
 9. освобождает lock.
 

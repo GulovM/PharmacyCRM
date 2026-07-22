@@ -108,6 +108,40 @@ func TestUpgradeFromE1Integration(t *testing.T) {
 		t.Fatalf("migrations were unexpectedly replayed: %#v", replayed)
 	}
 
+	verificationPool, err := pgxpool.New(ctx, isolatedDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(verificationPool.Close)
+	assertVerificationFailure := func(expected string) {
+		t.Helper()
+		_, err := Run(ctx, pool, loaded)
+		if err == nil || !strings.Contains(err.Error(), expected) {
+			t.Fatalf("expected %s, got %v", expected, err)
+		}
+	}
+	if _, err := verificationPool.Exec(ctx, `DROP INDEX uq_user_single_active_role`); err != nil {
+		t.Fatal(err)
+	}
+	assertVerificationFailure("verify migration 3")
+	if _, err := verificationPool.Exec(ctx, `CREATE UNIQUE INDEX uq_user_single_active_role ON user_roles(user_id) WHERE revoked_at IS NULL`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verificationPool.Exec(ctx, `ALTER TABLE outbox_events DROP CONSTRAINT chk_outbox_terminal`); err != nil {
+		t.Fatal(err)
+	}
+	assertVerificationFailure("verify migration 11")
+	if _, err := verificationPool.Exec(ctx, `ALTER TABLE outbox_events ADD CONSTRAINT chk_outbox_terminal CHECK ((status = 'PROCESSED' AND processed_at IS NOT NULL AND dead_lettered_at IS NULL) OR (status = 'DEAD_LETTER' AND dead_lettered_at IS NOT NULL AND processed_at IS NULL) OR (status IN ('PENDING', 'PROCESSING') AND processed_at IS NULL AND dead_lettered_at IS NULL))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verificationPool.Exec(ctx, `REVOKE INSERT ON inventory_movements FROM pharmacycrm_runtime`); err != nil {
+		t.Fatal(err)
+	}
+	assertVerificationFailure("verify migration 17")
+	if _, err := verificationPool.Exec(ctx, `GRANT INSERT ON inventory_movements TO pharmacycrm_runtime`); err != nil {
+		t.Fatal(err)
+	}
+
 	corrupted := append([]Migration(nil), loaded...)
 	corrupted[0].Checksum = strings.Repeat("0", 64)
 	if _, err := Run(ctx, pool, corrupted); !errors.Is(err, ErrChecksumMismatch) {

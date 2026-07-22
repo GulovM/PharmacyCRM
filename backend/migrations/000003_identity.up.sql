@@ -1,5 +1,5 @@
 -- E2-DB-001: identity.
--- Verification query: SELECT to_regclass('public.users') IS NOT NULL AND to_regclass('public.user_sessions') IS NOT NULL;
+-- Verification query: SELECT to_regclass('public.users') IS NOT NULL AND to_regclass('public.user_sessions') IS NOT NULL AND to_regclass('public.uq_users_login_active') IS NOT NULL AND to_regclass('public.uq_user_single_active_role') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname='chk_session_expiration' AND convalidated);
 -- Lock/rewrite assessment: new baseline objects only; no existing-row rewrite.
 -- Compatibility: additive baseline; application traffic starts after the complete baseline.
 -- Forward-fix policy: destructive down migrations are prohibited.

@@ -1,5 +1,5 @@
 -- E2-DB-001: system role seeds and least-privilege database grants.
--- Verification query: SELECT count(*) = 3 FROM roles WHERE code IN ('CLIENT', 'PHARMACIST', 'ADMIN') AND is_system;
+-- Verification query: SELECT (SELECT count(*) = 3 FROM roles WHERE code IN ('CLIENT','PHARMACIST','ADMIN') AND is_system) AND has_table_privilege('pharmacycrm_runtime','users','SELECT') AND has_table_privilege('pharmacycrm_runtime','users','INSERT') AND has_table_privilege('pharmacycrm_runtime','outbox_events','SELECT') AND has_table_privilege('pharmacycrm_runtime','outbox_events','INSERT') AND NOT has_table_privilege('pharmacycrm_runtime','inventory_movements','UPDATE,DELETE,TRUNCATE') AND NOT has_table_privilege('pharmacycrm_runtime','audit_events','UPDATE,DELETE,TRUNCATE');
 -- Lock/rewrite assessment: three idempotent seed upserts and catalog privilege changes; no table rewrite.
 -- Compatibility: additive baseline; grants target the NOLOGIN group provisioned before migrations.
 -- Forward-fix policy: privilege and seed corrections use a new forward migration; destructive down is prohibited.

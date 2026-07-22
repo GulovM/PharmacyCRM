@@ -1,5 +1,5 @@
 -- E2-DB-001: outbox.
--- Verification query: SELECT to_regclass('public.outbox_events') IS NOT NULL;
+-- Verification query: SELECT to_regclass('public.outbox_events') IS NOT NULL AND (SELECT count(*)=4 FROM information_schema.columns WHERE table_schema='public' AND table_name='outbox_events' AND column_name IN ('lease_token','lease_generation','leased_by','lease_expires_at')) AND to_regclass('public.idx_outbox_claim') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.outbox_events'::regclass AND conname='chk_outbox_terminal' AND convalidated) AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.outbox_events'::regclass AND contype='u' AND pg_get_constraintdef(oid)='UNIQUE (deduplication_key)');
 -- Lock/rewrite assessment: new baseline objects only; no existing-row rewrite.
 -- Compatibility: additive baseline; application traffic starts after the complete baseline.
 -- Forward-fix policy: destructive down migrations are prohibited.

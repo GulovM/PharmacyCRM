@@ -438,7 +438,7 @@ Concurrency tests используют real PostgreSQL, independent connections 
 3. на representative data volume;
 4. с old/new application compatibility;
 5. на безопасный retry, где применимо;
-6. verification queries;
+6. verification queries и негативные tests, которые удаляют critical identity index/outbox constraint либо required runtime grant и требуют отказа migration runner;
 7. rollback/forward-fix rehearsal;
 8. runtime role permissions;
 9. readiness compatibility;

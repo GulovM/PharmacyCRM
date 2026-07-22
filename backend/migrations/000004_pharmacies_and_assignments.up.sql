@@ -1,5 +1,5 @@
 -- E2-DB-001: pharmacies and assignments.
--- Verification query: SELECT to_regclass('public.pharmacies') IS NOT NULL AND to_regclass('public.pharmacy_assignments') IS NOT NULL;
+-- Verification query: SELECT to_regclass('public.pharmacies') IS NOT NULL AND to_regclass('public.pharmacy_assignments') IS NOT NULL AND to_regclass('public.uq_pharmacy_assignment_active_user') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname='chk_assignment_end' AND convalidated);
 -- Lock/rewrite assessment: new baseline objects only; no existing-row rewrite.
 -- Compatibility: additive baseline; application traffic starts after the complete baseline.
 -- Forward-fix policy: destructive down migrations are prohibited.

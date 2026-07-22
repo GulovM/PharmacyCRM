@@ -1,5 +1,5 @@
 -- E2-DB-001: assortment.
--- Verification query: SELECT to_regclass('public.pharmacy_products') IS NOT NULL;
+-- Verification query: SELECT to_regclass('public.pharmacy_products') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname='uq_pharmacy_product' AND contype='u') AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname='chk_stock_targets' AND convalidated);
 -- Lock/rewrite assessment: new baseline objects only; no existing-row rewrite.
 -- Compatibility: additive baseline; application traffic starts after the complete baseline.
 -- Forward-fix policy: destructive down migrations are prohibited.

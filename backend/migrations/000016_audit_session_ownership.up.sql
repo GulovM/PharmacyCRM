@@ -1,5 +1,5 @@
 -- E2-FIX-006: bind an audit session to the same user recorded as actor.
--- Verification query: SELECT count(*) = 2 FROM pg_constraint WHERE conname IN ('uq_user_sessions_id_user','fk_audit_actor_session_owner') AND convalidated;
+-- Verification query: SELECT count(*) = 2 AND bool_and(convalidated) AND bool_and(CASE WHEN conname='fk_audit_actor_session_owner' THEN contype='f' ELSE contype='u' END) FROM pg_constraint WHERE conname IN ('uq_user_sessions_id_user','fk_audit_actor_session_owner');
 -- Lock/rewrite assessment: the composite unique constraint builds a small index; FK validation scans audit_events without rewriting either table.
 -- Compatibility: USER audit without a session and SYSTEM audit without actor identifiers remain valid.
 -- Forward-fix policy: published migrations remain immutable; further corrections require another forward migration.

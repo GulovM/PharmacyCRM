@@ -1,5 +1,5 @@
 -- E2-DB-001: returns.
--- Verification query: SELECT to_regclass('public.sale_returns') IS NOT NULL AND to_regclass('public.sale_return_item_allocations') IS NOT NULL;
+-- Verification query: SELECT to_regclass('public.sale_returns') IS NOT NULL AND to_regclass('public.sale_return_item_allocations') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname='uq_sale_return_item_allocation' AND contype='u') AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_stock_lot_source_return_allocation' AND contype='f' AND condeferrable);
 -- Lock/rewrite assessment: new baseline objects only; no existing-row rewrite.
 -- Compatibility: additive baseline; application traffic starts after the complete baseline.
 -- Forward-fix policy: destructive down migrations are prohibited.

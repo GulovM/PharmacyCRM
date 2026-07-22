@@ -1,5 +1,5 @@
 -- E2-DB-001: audit.
--- Verification query: SELECT to_regclass('public.audit_events') IS NOT NULL;
+-- Verification query: SELECT to_regclass('public.audit_events') IS NOT NULL AND to_regclass('public.idx_audit_events_time') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.audit_events'::regclass AND conname='chk_audit_actor' AND convalidated) AND NOT has_table_privilege('pharmacycrm_runtime','audit_events','UPDATE,DELETE,TRUNCATE');
 -- Lock/rewrite assessment: new baseline objects only; no existing-row rewrite.
 -- Compatibility: additive baseline; application traffic starts after the complete baseline.
 -- Forward-fix policy: destructive down migrations are prohibited.

@@ -1,5 +1,5 @@
 -- E2-DB-001: inventory.
--- Verification query: SELECT to_regclass('public.stock_lots') IS NOT NULL AND to_regclass('public.inventory_movements') IS NOT NULL;
+-- Verification query: SELECT to_regclass('public.stock_lots') IS NOT NULL AND to_regclass('public.inventory_movements') IS NOT NULL AND to_regclass('public.uq_inventory_reversal') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname='uq_inventory_movement_operation_lot' AND contype='u') AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname='chk_lot_origin_reference' AND convalidated);
 -- Lock/rewrite assessment: new baseline objects only; no existing-row rewrite.
 -- Compatibility: additive baseline; application traffic starts after the complete baseline.
 -- Forward-fix policy: destructive down migrations are prohibited.

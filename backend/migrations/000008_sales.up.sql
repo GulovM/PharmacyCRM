@@ -1,5 +1,5 @@
 -- E2-DB-001: sales.
--- Verification query: SELECT to_regclass('public.sales') IS NOT NULL AND to_regclass('public.sale_item_allocations') IS NOT NULL;
+-- Verification query: SELECT to_regclass('public.sales') IS NOT NULL AND to_regclass('public.sale_item_allocations') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname='uq_sale_number_per_pharmacy' AND contype='u') AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname='uq_sale_item_allocation' AND contype='u') AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname='chk_sale_item_quantity' AND convalidated);
 -- Lock/rewrite assessment: new baseline objects only; no existing-row rewrite.
 -- Compatibility: additive baseline; application traffic starts after the complete baseline.
 -- Forward-fix policy: destructive down migrations are prohibited.

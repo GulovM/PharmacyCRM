@@ -611,7 +611,7 @@ PR pipeline:
 12. alerts/public projection;
 13. role seeds и DB privileges.
 
-Каждая migration имеет verification query, lock/rewrite assessment, compatibility note и forward-fix policy. Destructive down migration по умолчанию запрещена.
+Каждая migration имеет verification query, проверяющую её critical constraints/indexes/triggers/functions/privileges, а также lock/rewrite assessment, compatibility note и forward-fix policy. Проверки только через `to_regclass` недостаточны. Destructive down migration по умолчанию запрещена.
 
 ## 10.2 E2-REL-001 — Unit of Work
 

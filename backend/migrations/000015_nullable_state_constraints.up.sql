@@ -1,5 +1,5 @@
 -- E2-FIX-005: make nullable lifecycle state constraints two-valued.
--- Verification query: SELECT count(*) = 5 FROM pg_constraint WHERE conname IN ('chk_user_role_revocation','chk_session_revocation','chk_assignment_end','chk_product_request_resolution','chk_alert_lifecycle') AND convalidated;
+-- Verification query: SELECT count(*) = 5 AND bool_and(convalidated) FROM pg_constraint WHERE conname IN ('chk_user_role_revocation','chk_session_revocation','chk_assignment_end','chk_product_request_resolution','chk_alert_lifecycle');
 -- Lock/rewrite assessment: constraint replacement takes brief ACCESS EXCLUSIVE locks; VALIDATE scans existing rows without a table rewrite.
 -- Compatibility: the accepted states match the documented domain lifecycle; only previously invalid partial states are rejected.
 -- Forward-fix policy: published migrations remain immutable; further corrections require another forward migration.
