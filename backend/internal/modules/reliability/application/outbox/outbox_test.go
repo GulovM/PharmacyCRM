@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/GulovM/PharmacyCRM/backend/internal/shared/contracts"
 	"github.com/google/uuid"
 )
 
@@ -147,6 +149,57 @@ func TestWorkerRecoversHandlerPanicAndObservesStaleLease(t *testing.T) {
 	}
 }
 
+func TestNewWorkerRejectsOwnerAndProtocolOutsideDatabaseBounds(t *testing.T) {
+	repository := &fakeRepository{}
+	base := WorkerConfig{Owner: strings.Repeat("w", contracts.MaxWorkerOwnerLength+1), Concurrency: 1, MaxClaim: 1, PollInterval: time.Second, LeaseDuration: time.Second, DrainTimeout: time.Second}
+	if _, err := NewWorker(fakeTransactor{repository}, map[EventKey]Handler{}, base, nil, ClaimErrorClassifierFunc(func(error) bool { return false })); err == nil {
+		t.Fatal("oversized owner was accepted")
+	}
+	base.Owner = "worker-1"
+	handlers := map[EventKey]Handler{{Name: " inventory.changed", Version: 1}: handlerFunc(func(context.Context, Event) error { return nil })}
+	if _, err := NewWorker(fakeTransactor{repository}, handlers, base, nil, ClaimErrorClassifierFunc(func(error) bool { return false })); err == nil {
+		t.Fatal("non-canonical protocol name was accepted")
+	}
+}
+
+func TestMaintenanceOnlyWorkerRunsUntilCancellation(t *testing.T) {
+	claimed := make(chan ClaimRequest, 1)
+	repository := &fakeRepository{claim: func(_ context.Context, request ClaimRequest) ([]Lease, error) {
+		select {
+		case claimed <- request:
+		default:
+		}
+		return nil, nil
+	}}
+	worker, err := NewWorker(fakeTransactor{repository}, map[EventKey]Handler{}, WorkerConfig{
+		Owner: "worker-maintenance", Concurrency: 1, MaxClaim: 1, PollInterval: time.Millisecond,
+		LeaseDuration: time.Minute, DrainTimeout: time.Second,
+	}, nil, ClaimErrorClassifierFunc(func(error) bool { return false }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- worker.Run(ctx) }()
+	select {
+	case request := <-claimed:
+		if !request.MaintenanceOnly || len(request.Protocols) != 0 {
+			t.Fatalf("unexpected maintenance request: %#v", request)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("maintenance worker did not poll")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("maintenance worker stopped before cancellation: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("maintenance worker shutdown failed: %v", err)
+	}
+}
+
 func TestProtocolMismatchFailsReadiness(t *testing.T) {
 	worker := testWorker(t, &fakeRepository{}, handlerFunc(func(context.Context, Event) error { return nil }), nil)
 	if err := worker.ValidateProtocols([]EventKey{{Name: "inventory.changed", Version: 2}}); err == nil {
@@ -158,7 +211,7 @@ func TestDrainTimeoutIsBounded(t *testing.T) {
 	var workers sync.WaitGroup
 	workers.Add(1)
 	started := time.Now()
-	if err := waitForDrain(&workers, func() {}, 10*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) {
+	if err := waitForDrain(&workers, func() {}, 10*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, ErrDrainCancellationIncomplete) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
@@ -232,13 +285,13 @@ func TestDrainTimeoutCancelsProcessingWithoutLeakingHandlerAndPreservesFatalErro
 	}
 	select {
 	case <-canceled:
-	case <-time.After(time.Second):
-		t.Fatal("processing context was not canceled")
+	default:
+		t.Fatal("processing context was not canceled before shutdown returned")
 	}
 	select {
 	case <-handlerReturned:
-	case <-time.After(time.Second):
-		t.Fatal("handler goroutine leaked after processing cancellation")
+	default:
+		t.Fatal("handler was still running when shutdown returned")
 	}
 }
 
