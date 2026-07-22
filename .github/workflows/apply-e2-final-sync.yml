@@ -1,6 +1,7 @@
 name: Apply E2 final sync
 
 on:
+  pull_request:
   push:
     branches:
       - Database-Kernel-and-Reliability-Primitives
