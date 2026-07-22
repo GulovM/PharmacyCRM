@@ -50,6 +50,9 @@ func (r *TransactionalOutboxRepository) ClaimBatch(ctx context.Context, request 
 	if r == nil || r.executor == nil {
 		return nil, database.ErrDependencyMissing
 	}
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
 	eventNames := make([]string, 0, len(request.Protocols))
 	eventVersions := make([]int16, 0, len(request.Protocols))
 	for _, protocol := range request.Protocols {
@@ -57,22 +60,30 @@ func (r *TransactionalOutboxRepository) ClaimBatch(ctx context.Context, request 
 		eventVersions = append(eventVersions, protocol.Version)
 	}
 	// A worker that crashed on its final permitted attempt cannot acknowledge
-	// the result. Once its lease expires, move it to the dead-letter state so
-	// the row cannot remain PROCESSING forever.
-	if _, err := r.executor.Exec(ctx, `
+	// the result. Once its lease expires, move only one bounded, deterministic
+	// batch to dead letter. With the same N for terminalization and claiming, a
+	// single transaction changes at most 2N rows.
+	terminalizationLimit := min(request.Limit, 100)
+	tag, err := r.executor.Exec(ctx, `
 		WITH exhausted AS (
 			SELECT id FROM outbox_events
 			WHERE status = 'PROCESSING' AND lease_expires_at <= $1
 			  AND attempt_count >= max_attempts
+			ORDER BY lease_expires_at, id
 			FOR UPDATE SKIP LOCKED
+			LIMIT $2
 		)
 		UPDATE outbox_events AS event
 		SET status = 'DEAD_LETTER', dead_lettered_at = $1,
 			last_error_code = 'LEASE_EXPIRED_AFTER_MAX_ATTEMPTS', last_error_at = $1,
 			lease_token = NULL, leased_by = NULL, lease_expires_at = NULL
 		FROM exhausted
-		WHERE event.id = exhausted.id`, request.Now); err != nil {
+		WHERE event.id = exhausted.id`, request.Now, terminalizationLimit)
+	if err != nil {
 		return nil, fmt.Errorf("dead-letter exhausted leases: %w", err)
+	}
+	if affected := tag.RowsAffected(); affected > int64(terminalizationLimit) {
+		return nil, fmt.Errorf("dead-letter exhausted leases changed %d rows above limit %d", affected, terminalizationLimit)
 	}
 
 	expiresAt := request.Now.Add(request.LeaseDuration)
