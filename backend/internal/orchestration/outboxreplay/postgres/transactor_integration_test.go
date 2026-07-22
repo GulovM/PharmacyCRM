@@ -2,42 +2,25 @@ package postgres
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/GulovM/PharmacyCRM/backend/internal/orchestration/outboxreplay"
 	"github.com/GulovM/PharmacyCRM/backend/internal/platform/config"
 	"github.com/GulovM/PharmacyCRM/backend/internal/platform/database"
+	"github.com/GulovM/PharmacyCRM/backend/internal/testkit/postgrestest"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestManualReplayAndAuditCommitAtomically(t *testing.T) {
-	dsn := os.Getenv("POSTGRES_TEST_DSN")
-	if dsn == "" {
-		t.Skip("POSTGRES_TEST_DSN is not set")
-	}
+func TestManualReplayAndAuditCommitAtomicallyIntegration(t *testing.T) {
+	dsn := postgrestest.DSN(t)
 	ctx := context.Background()
 	rawPool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(rawPool.Close)
-	lockConn, err := rawPool.Acquire(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := lockConn.Exec(ctx, "SELECT pg_advisory_lock(92845001)"); err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		_, _ = lockConn.Exec(context.Background(), "SELECT pg_advisory_unlock(92845001)")
-		lockConn.Release()
-	}()
-	if _, err := rawPool.Exec(ctx, "DELETE FROM outbox_events WHERE event_name IN ('test.outbox','test.replay')"); err != nil {
-		t.Fatal(err)
-	}
 
 	actorID, eventID, failedEventID, auditID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	t.Cleanup(func() {

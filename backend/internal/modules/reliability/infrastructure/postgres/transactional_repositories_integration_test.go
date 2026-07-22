@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"testing"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/GulovM/PharmacyCRM/backend/internal/modules/reliability/application/outbox"
 	"github.com/GulovM/PharmacyCRM/backend/internal/platform/config"
 	"github.com/GulovM/PharmacyCRM/backend/internal/platform/database"
+	"github.com/GulovM/PharmacyCRM/backend/internal/testkit/postgrestest"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -67,13 +67,7 @@ func (u *atomicReliabilityAdapters) CompleteIdempotency(ctx context.Context, com
 }
 
 func TestMandatoryReliabilityFailuresRollbackBusinessWriteIntegration(t *testing.T) {
-	dsn := os.Getenv("POSTGRES_TEST_DSN")
-	if dsn == "" {
-		if os.Getenv("CI_INTEGRATION_REQUIRED") == "true" {
-			t.Fatal("POSTGRES_TEST_DSN is required")
-		}
-		t.Skip("POSTGRES_TEST_DSN is not set")
-	}
+	dsn := postgrestest.DSN(t)
 	ctx := context.Background()
 	rawPool, err := pgxpool.New(ctx, dsn)
 	if err != nil {

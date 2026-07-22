@@ -2,21 +2,18 @@ package postgres
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
 	audit "github.com/GulovM/PharmacyCRM/backend/internal/modules/audit/application"
 	"github.com/GulovM/PharmacyCRM/backend/internal/platform/database"
+	"github.com/GulovM/PharmacyCRM/backend/internal/testkit/postgrestest"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestAuditWriterIntegration(t *testing.T) {
-	dsn := os.Getenv("POSTGRES_TEST_DSN")
-	if dsn == "" {
-		t.Skip("POSTGRES_TEST_DSN is not set")
-	}
+	dsn := postgrestest.DSN(t)
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {

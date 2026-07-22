@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/GulovM/PharmacyCRM/backend/internal/modules/reliability/application/outbox"
 	"github.com/GulovM/PharmacyCRM/backend/internal/platform/database"
+	"github.com/GulovM/PharmacyCRM/backend/internal/testkit/postgrestest"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -32,31 +32,13 @@ func withinOutboxTransaction(ctx context.Context, pool *pgxpool.Pool, fn func(*T
 }
 
 func TestOutboxLeaseProtocolIntegration(t *testing.T) {
-	dsn := os.Getenv("POSTGRES_TEST_DSN")
-	if dsn == "" {
-		t.Skip("POSTGRES_TEST_DSN is not set")
-	}
+	dsn := postgrestest.DSN(t)
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	lockConn, err := pool.Acquire(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := lockConn.Exec(ctx, "SELECT pg_advisory_lock(92845001)"); err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		_, _ = lockConn.Exec(context.Background(), "SELECT pg_advisory_unlock(92845001)")
-		lockConn.Release()
-	}()
-	if _, err := pool.Exec(ctx, "DELETE FROM outbox_events WHERE event_name IN ('test.outbox','test.replay')"); err != nil {
-		t.Fatal(err)
-	}
-
 	aggregateID := uuid.New()
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), "DELETE FROM outbox_events WHERE aggregate_id = $1", aggregateID)

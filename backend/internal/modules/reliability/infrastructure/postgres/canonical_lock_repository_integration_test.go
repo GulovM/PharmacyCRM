@@ -4,20 +4,17 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/GulovM/PharmacyCRM/backend/internal/modules/reliability/application/locking"
+	"github.com/GulovM/PharmacyCRM/backend/internal/testkit/postgrestest"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestCanonicalLocksSerializeAndReturnSortedProducts(t *testing.T) {
-	dsn := os.Getenv("POSTGRES_TEST_DSN")
-	if dsn == "" {
-		t.Skip("POSTGRES_TEST_DSN is not set")
-	}
+func TestCanonicalLocksSerializeAndReturnSortedProductsIntegration(t *testing.T) {
+	dsn := postgrestest.DSN(t)
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
@@ -34,8 +31,10 @@ func TestCanonicalLocksSerializeAndReturnSortedProducts(t *testing.T) {
 	receiptOperationID, saleOperationID, receiptID, saleID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	receiptItemOne, receiptItemTwo, saleItemOne, saleItemTwo := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	lotLater, lotEarlier := uuid.New(), uuid.New()
-	allocationFirst := uuid.MustParse("30000000-0000-0000-0000-000000000003")
-	allocationSecond := uuid.MustParse("40000000-0000-0000-0000-000000000004")
+	allocationFirst, allocationSecond := uuid.New(), uuid.New()
+	if bytes.Compare(allocationFirst[:], allocationSecond[:]) > 0 {
+		allocationFirst, allocationSecond = allocationSecond, allocationFirst
+	}
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), "DELETE FROM sale_item_allocations WHERE id IN ($1,$2)", allocationFirst, allocationSecond)
 		_, _ = pool.Exec(context.Background(), "DELETE FROM sale_items WHERE id IN ($1,$2)", saleItemOne, saleItemTwo)

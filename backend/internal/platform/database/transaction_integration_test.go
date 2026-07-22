@@ -3,20 +3,17 @@ package database
 import (
 	"context"
 	"errors"
-	"os"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/GulovM/PharmacyCRM/backend/internal/testkit/postgrestest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestTransactionRunnerIntegration(t *testing.T) {
-	dsn := os.Getenv("POSTGRES_TEST_DSN")
-	if dsn == "" {
-		t.Skip("POSTGRES_TEST_DSN is not set")
-	}
+	dsn := postgrestest.DSN(t)
 
 	ctx := context.Background()
 	poolConfig, err := pgxpool.ParseConfig(dsn)
@@ -86,10 +83,7 @@ func TestTransactionRunnerIntegration(t *testing.T) {
 }
 
 func TestRetryingTransactionRunnerIntegration(t *testing.T) {
-	dsn := os.Getenv("POSTGRES_TEST_DSN")
-	if dsn == "" {
-		t.Skip("POSTGRES_TEST_DSN is not set")
-	}
+	dsn := postgrestest.DSN(t)
 
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dsn)

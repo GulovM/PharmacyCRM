@@ -2,18 +2,15 @@ package reconciliation
 
 import (
 	"context"
-	"os"
 	"testing"
 
+	"github.com/GulovM/PharmacyCRM/backend/internal/testkit/postgrestest"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestCheckerDetectsInventoryDivergenceAndMissingEffects(t *testing.T) {
-	dsn := os.Getenv("POSTGRES_TEST_DSN")
-	if dsn == "" {
-		t.Skip("POSTGRES_TEST_DSN is not set")
-	}
+func TestCheckerDetectsInventoryDivergenceAndMissingEffectsIntegration(t *testing.T) {
+	dsn := postgrestest.DSN(t)
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
