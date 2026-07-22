@@ -2,12 +2,16 @@ name: Apply provisioning diagnostic
 
 on:
   pull_request:
+  push:
+    branches:
+      - Database-Kernel-and-Reliability-Primitives
 
 permissions:
   contents: write
 
 jobs:
   apply:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
