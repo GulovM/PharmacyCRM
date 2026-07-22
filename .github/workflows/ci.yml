@@ -95,6 +95,7 @@ jobs:
       POSTGRES_TEST_DSN: postgres://migration_user:migration-ci-password@localhost:5432/pharmacycrm?sslmode=disable
       POSTGRES_ADMIN_TEST_DSN: postgres://pharmacycrm:ci-only-password@localhost:5432/pharmacycrm?sslmode=disable
       CI_INTEGRATION_REQUIRED: 'true'
+      ALLOW_DESTRUCTIVE_CLUSTER_ROLE_TEST: 'true'
       AUTH_JWT_ISSUER: pharmacycrm-ci
       AUTH_JWT_AUDIENCE: pharmacycrm-ci
       AUTH_JWT_PRIVATE_KEY: ci-only-key
@@ -119,7 +120,7 @@ jobs:
         env:
           PGPASSWORD: ci-only-password
         run: |
-          psql -h localhost -U pharmacycrm -d pharmacycrm -v database_name=pharmacycrm -v api_role=api_user -v api_password=api-ci-password -v worker_role=worker_user -v worker_password=worker-ci-password -v migration_role=migration_user -v migration_password=migration-ci-password -f deploy/scripts/provision-postgres-roles.sql
+          psql -h localhost -U pharmacycrm -d pharmacycrm -v provisioning_mode=fresh -v database_name=pharmacycrm -v api_role=api_user -v api_password=api-ci-password -v worker_role=worker_user -v worker_password=worker-ci-password -v migration_role=migration_user -v migration_password=migration-ci-password -f deploy/scripts/provision-postgres-roles.sql
       - name: Verify E1 to E2 migration upgrade path
         working-directory: backend
         run: |
@@ -145,7 +146,7 @@ jobs:
         env:
           PGPASSWORD: ci-only-password
         run: |
-          psql -h localhost -U pharmacycrm -d pharmacycrm -v database_name=pharmacycrm -v api_role=api_user -v api_password=api-ci-password -v worker_role=worker_user -v worker_password=worker-ci-password -v migration_role=migration_user -v migration_password=migration-ci-password -f deploy/scripts/provision-postgres-roles.sql
+          psql -h localhost -U pharmacycrm -d pharmacycrm -v provisioning_mode=fresh -v database_name=pharmacycrm -v api_role=api_user -v api_password=api-ci-password -v worker_role=worker_user -v worker_password=worker-ci-password -v migration_role=migration_user -v migration_password=migration-ci-password -f deploy/scripts/provision-postgres-roles.sql
       - name: Run mandatory E2 PostgreSQL integration tests
         working-directory: backend
         run: |
