@@ -59,7 +59,9 @@ func TestRunMigrationPreservesInitializationErrors(t *testing.T) {
 	poolErr := errors.New("pool")
 	logger := &fakeMigrationLogger{}
 	dependencies = baseMigrationDependencies(logger, &fakeMigrationPool{})
-	dependencies.newPool = func(context.Context, config.MigrationPostgresConfig) (migrationProcessPool, error) { return nil, poolErr }
+	dependencies.newPool = func(context.Context, config.MigrationPostgresConfig) (migrationProcessPool, error) {
+		return nil, poolErr
+	}
 	if err := runMigration(dependencies); !errors.Is(err, poolErr) || logger.closeCalls != 1 {
 		t.Fatalf("pool error=%v logger closes=%d", err, logger.closeCalls)
 	}
