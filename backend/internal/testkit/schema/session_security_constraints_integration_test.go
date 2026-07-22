@@ -187,11 +187,11 @@ func insertSession(ctx context.Context, tx pgx.Tx, row sessionRow) error {
 		id,user_id,refresh_token_hash,token_family_id,generation,rotated_from_session_id,
 		rotated_from_user_id,rotated_from_token_family_id,rotated_from_generation,
 		created_at,last_used_at,expires_at,idle_expires_at,absolute_expires_at,authentication_method,mfa_level
-	) VALUES($1,$2,convert_to($1::text,'UTF8'),$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+	) VALUES($1,$2,$16,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
 		row.id, row.userID, row.familyID, row.generation, row.predecessorID,
 		row.predecessorUserID, row.predecessorFamilyID, row.predecessorGeneration,
 		row.createdAt, row.lastUsedAt, row.expiresAt, row.idleAt, row.absoluteAt,
-		row.authenticationMethod, row.mfaLevel)
+		row.authenticationMethod, row.mfaLevel, []byte(row.id.String()))
 	return err
 }
 
