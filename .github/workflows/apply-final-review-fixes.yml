@@ -1,0 +1,56 @@
+name: Apply final review fixes
+
+on:
+  push:
+    branches:
+      - Database-Kernel-and-Reliability-Primitives
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: Database-Kernel-and-Reliability-Primitives
+          fetch-depth: 0
+      - name: Apply staged CI and documentation changes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat .review-fixes/remaining-*.patch > "$RUNNER_TEMP/final-review.patch"
+          python3 - "$RUNNER_TEMP/final-review.patch" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          marker = "__GITHUB_EXPR_OPEN__"
+          text = path.read_text()
+          if marker not in text:
+              raise RuntimeError("GitHub expression placeholder is missing")
+          path.write_text(text.replace(marker, chr(36) + chr(123) + chr(123)))
+          PY
+          patch -p1 < "$RUNNER_TEMP/final-review.patch"
+          rm -rf .review-fixes
+          rm .github/workflows/apply-final-review-fixes.yml
+          gofmt -w backend/internal/shared/contracts/outbox.go \
+            backend/internal/modules/reliability/application/outbox/types.go \
+            backend/internal/modules/reliability/application/outbox/worker.go \
+            backend/internal/modules/reliability/application/outbox/claim_request_test.go \
+            backend/internal/modules/reliability/application/outbox/outbox_test.go \
+            backend/internal/modules/reliability/infrastructure/postgres/outbox_repository.go \
+            backend/internal/platform/config/validate_operations.go \
+            backend/internal/platform/config/config_test.go \
+            backend/internal/bootstrap/worker_test.go
+          bash -n deploy/scripts/tests/test-e1-role-upgrade.sh
+          bash scripts/tests/check-source-size.sh
+          bash scripts/check-architecture.sh
+          git add -A
+          git diff --cached --check
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git commit -m 'Close final E2 review findings'
+          git push origin HEAD:Database-Kernel-and-Reliability-Primitives
