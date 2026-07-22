@@ -3,8 +3,11 @@ package outbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"time"
 
+	"github.com/GulovM/PharmacyCRM/backend/internal/shared/apperror"
 	"github.com/google/uuid"
 )
 
@@ -41,6 +44,25 @@ type ClaimRequest struct {
 	LeaseDuration time.Duration
 	Now           time.Time
 	Protocols     []EventKey
+}
+
+func (request ClaimRequest) Validate() error {
+	owner := strings.TrimSpace(request.Owner)
+	if owner == "" || owner != request.Owner || len(owner) > 150 || request.Limit < 1 || request.Limit > 100 || request.LeaseDuration <= 0 || request.Now.IsZero() || len(request.Protocols) == 0 {
+		return errors.Join(ErrInvalidClaimRequest, apperror.ErrInvalidArgument)
+	}
+	seen := make(map[EventKey]struct{}, len(request.Protocols))
+	for _, protocol := range request.Protocols {
+		name := strings.TrimSpace(protocol.Name)
+		if name == "" || name != protocol.Name || len(name) > 150 || protocol.Version < 1 {
+			return errors.Join(ErrInvalidClaimRequest, apperror.ErrInvalidArgument)
+		}
+		if _, duplicate := seen[protocol]; duplicate {
+			return errors.Join(ErrInvalidClaimRequest, apperror.ErrInvalidArgument)
+		}
+		seen[protocol] = struct{}{}
+	}
+	return nil
 }
 
 type Failure struct {
