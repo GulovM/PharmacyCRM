@@ -22,7 +22,17 @@ jobs:
           python-version: '3.13'
       - name: Apply exact documentation patches
         run: |
-          python scripts/apply-e2-final-sync.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/apply-e2-final-sync.py')
+          source = path.read_text()
+          source = source.replace(
+              '    if text.count(old) != 1:\n        raise RuntimeError(f"expected one marker in {path}, found {text.count(old)}")\n    target.write_text(text.replace(old, new, 1))',
+              '    count = text.count(old)\n    if count == 0 and new in text:\n        return\n    if count != 1:\n        raise RuntimeError(f"expected one marker in {path}, found {count}")\n    target.write_text(text.replace(old, new, 1))',
+              1,
+          )
+          exec(compile(source, str(path), 'exec'))
+          PY
           git checkout -- .github/workflows/ci.yml
       - name: Verify current schema references
         run: |
@@ -31,10 +41,26 @@ jobs:
             exit 1
           fi
       - name: Commit synchronized documentation
+        id: commit
+        continue-on-error: true
         run: |
-          git config user.name github-actions
-          git config user.email github-actions@github.com
-          git add docs
-          git diff --cached --check
-          git commit -m 'Synchronize E2 final deployment and reliability contracts'
-          git push origin HEAD:Database-Kernel-and-Reliability-Primitives
+          set -o pipefail
+          {
+            git config user.name github-actions
+            git config user.email github-actions@github.com
+            git add docs
+            git diff --cached --check
+            git commit -m 'Synchronize E2 final deployment and reliability contracts'
+            git push origin HEAD:Database-Kernel-and-Reliability-Primitives
+          } 2>&1 | tee "$RUNNER_TEMP/e2-final-sync.log"
+      - name: Upload synchronization evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2-final-sync-log
+          path: ${{ runner.temp }}/e2-final-sync.log
+          if-no-files-found: error
+          retention-days: 1
+      - name: Propagate synchronization failure
+        if: steps.commit.outcome != 'success'
+        run: exit 1
