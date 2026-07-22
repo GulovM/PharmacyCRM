@@ -1,0 +1,38 @@
+name: Apply E2 final sync
+
+on:
+  push:
+    branches:
+      - Database-Kernel-and-Reliability-Primitives
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: Database-Kernel-and-Reliability-Primitives
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Apply exact documentation and CI patches
+        run: python scripts/apply-e2-final-sync.py
+      - name: Verify current schema references
+        run: |
+          if grep -RniE 'current[^\n]*schema[^\n]*21|schema version[^\n]*21' docs deploy backend --exclude='*.sum'; then
+            echo 'Found stale current-state schema 21 reference'
+            exit 1
+          fi
+      - name: Commit synchronized files
+        run: |
+          rm scripts/apply-e2-final-sync.py .github/workflows/apply-e2-final-sync.yml
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add .github/workflows/ci.yml docs scripts .github/workflows
+          git diff --cached --check
+          git commit -m 'Synchronize E2 final deployment and reliability contracts'
+          git push origin HEAD:Database-Kernel-and-Reliability-Primitives
