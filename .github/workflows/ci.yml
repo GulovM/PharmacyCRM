@@ -89,7 +89,9 @@ jobs:
         working-directory: backend
         env:
           POSTGRES_TEST_DSN: ${{ env.POSTGRES_MIGRATION_DSN }}
-        run: go test ./internal/platform/database -run 'Test(Transaction|RetryingTransaction)RunnerIntegration' -count=1
+        run: |
+          go test ./internal/platform/database -run 'Test(Transaction|RetryingTransaction)RunnerIntegration' -count=1
+          go test ./internal/modules/reliability/infrastructure/postgres -run Integration -count=1
       - name: Verify schema metadata and least-privilege runtime role
         env:
           PGPASSWORD: ci-only-password

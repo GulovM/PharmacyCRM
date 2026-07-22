@@ -25,6 +25,7 @@ type Detail struct {
 // classification uses errors.As for this type and errors.Is for its category.
 type Typed struct {
 	Category error
+	Code     string
 	Details  []Detail
 }
 

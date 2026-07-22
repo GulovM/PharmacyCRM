@@ -86,6 +86,9 @@ func classify(err error) response {
 	var typed *apperror.Typed
 	if errors.As(err, &typed) {
 		response := classify(typed.Category)
+		if typed.Code != "" {
+			response.code = typed.Code
+		}
 		if errors.Is(typed.Category, apperror.ErrInvalidArgument) {
 			response.details = make([]Detail, 0, len(typed.Details))
 			for _, detail := range typed.Details {

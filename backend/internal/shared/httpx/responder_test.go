@@ -73,6 +73,15 @@ func TestErrorMapsTypedValidationDetails(t *testing.T) {
 	}
 }
 
+func TestErrorMapsTypedStableCode(t *testing.T) {
+	r := responder(t)
+	c, recorder := contextWithID()
+	r.Error(c, &apperror.Typed{Category: apperror.ErrConflict, Code: "IDEMPOTENCY_KEY_REUSED"}, "test")
+	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "IDEMPOTENCY_KEY_REUSED") {
+		t.Fatalf("invalid typed response: %s", recorder.Body.String())
+	}
+}
+
 func FuzzResponderNeverLeaksUnknownError(f *testing.F) {
 	f.Add("password=secret SQLSTATE 23505")
 	f.Fuzz(func(t *testing.T, value string) {
