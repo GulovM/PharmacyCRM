@@ -22,17 +22,9 @@ jobs:
           python-version: '3.13'
       - name: Apply exact documentation patches
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('scripts/apply-e2-final-sync.py')
-          source = path.read_text()
-          source = source.replace(
-              '    if text.count(old) != 1:\n        raise RuntimeError(f"expected one marker in {path}, found {text.count(old)}")\n    target.write_text(text.replace(old, new, 1))',
-              '    count = text.count(old)\n    if count == 0 and new in text:\n        return\n    if count != 1:\n        raise RuntimeError(f"expected one marker in {path}, found {count}")\n    target.write_text(text.replace(old, new, 1))',
-              1,
-          )
-          exec(compile(source, str(path), 'exec'))
-          PY
+          git fetch --no-tags --depth=1 origin 063ffde10a6d7c34e971edc61d0b4e1e8cd1435d
+          git show 063ffde10a6d7c34e971edc61d0b4e1e8cd1435d:docs/04-01-backend-architecture.md > docs/04-01-backend-architecture.md
+          python scripts/apply-e2-final-sync.py
           git checkout -- .github/workflows/ci.yml
       - name: Verify current schema references
         run: |
