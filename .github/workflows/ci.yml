@@ -102,6 +102,11 @@ jobs:
           go test ./internal/orchestration/outboxreplay/postgres -run Integration -count=1
           go test ./internal/testkit/reconciliation -run Integration -count=1
           go test ./internal/testkit/schema -run Integration -count=1
+      - name: Run database and reliability race detector suites
+        working-directory: backend
+        run: |
+          go test -race ./internal/platform/database/... -count=1
+          go test -race ./internal/modules/reliability/... -count=1
       - name: Verify schema metadata and least-privilege runtime role
         env:
           PGPASSWORD: ci-only-password

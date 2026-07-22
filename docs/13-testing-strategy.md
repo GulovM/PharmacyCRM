@@ -612,6 +612,7 @@ Mock не заменяет PostgreSQL для UoW, locks, constraints, idempotenc
 - format/lint/static checks;
 - backend/frontend fast tests;
 - PostgreSQL integration;
+- race detector для database/reliability packages с обязательными PostgreSQL DSN;
 - HTTP contracts;
 - relevant migrations;
 - changed critical concurrency/security regressions;
