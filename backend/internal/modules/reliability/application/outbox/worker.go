@@ -130,6 +130,9 @@ func (w *Worker) Run(ctx context.Context) error {
 			limit := min(available, w.config.MaxClaim)
 			leases, err := w.claim(ctx, limit)
 			if err != nil {
+				if ctx.Err() != nil {
+					return w.shutdown(&workers, stopProcessing, nil)
+				}
 				if !w.claimErrors.IsTransientClaimError(err) {
 					w.observer.ClaimFailed(ctx, err, false, 0)
 					return w.shutdown(&workers, stopProcessing, err)
