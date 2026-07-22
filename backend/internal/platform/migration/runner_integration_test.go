@@ -146,6 +146,21 @@ func TestUpgradeFromE1Integration(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if _, err := verificationPool.Exec(ctx, `ALTER TABLE user_sessions DROP CONSTRAINT chk_session_generation; ALTER TABLE user_sessions ADD CONSTRAINT chk_session_generation CHECK (true)`); err != nil {
+		t.Fatal(err)
+	}
+	assertVerificationFailure(23, "session_security_verification")
+	if _, err := verificationPool.Exec(ctx, `ALTER TABLE user_sessions DROP CONSTRAINT chk_session_generation; ALTER TABLE user_sessions ADD CONSTRAINT chk_session_generation CHECK (generation > 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verificationPool.Exec(ctx, `DROP INDEX uq_user_session_rotated_from`); err != nil {
+		t.Fatal(err)
+	}
+	assertVerificationFailure(23, "session_security_verification")
+	if _, err := verificationPool.Exec(ctx, `CREATE UNIQUE INDEX uq_user_session_rotated_from ON user_sessions(rotated_from_session_id) WHERE rotated_from_session_id IS NOT NULL`); err != nil {
+		t.Fatal(err)
+	}
+
 	corrupted := append([]Migration(nil), loaded...)
 	corrupted[0].Checksum = strings.Repeat("0", 64)
 	if _, err := Run(ctx, pool, corrupted); !errors.Is(err, ErrChecksumMismatch) {
