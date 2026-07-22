@@ -79,7 +79,7 @@ if rg -n --glob '**/application/*.go' --glob '**/application/**/*.go' --glob '**
   fail 'application and domain packages must not import pgx'
 fi
 
-"$ROOT_DIR/scripts/check-source-size.sh" "$ROOT_DIR"
+bash "$ROOT_DIR/scripts/check-source-size.sh" "$ROOT_DIR"
 
 if find backend frontend scripts -type f \( -name 'utils.go' -o -name 'helpers.go' -o -name 'common.go' -o -name 'misc.go' -o -name 'manager.go' -o -name 'service_all.go' -o -name 'repository_all.go' \) -not -name '*_test.go' -print -quit | grep -q .; then
   fail 'production source must not use a generic filename'
