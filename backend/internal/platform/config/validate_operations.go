@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/GulovM/PharmacyCRM/backend/internal/shared/contracts"
 )
 
 const workerProcessShutdownTimeout = 20 * time.Second
@@ -49,7 +51,7 @@ func validateWorker(c WorkerConfig, expectedProtocol int) error {
 	if c.ProtocolVersion != expectedProtocol {
 		return invalid("worker protocol is incompatible with application protocol")
 	}
-	if strings.TrimSpace(c.Owner) == "" || c.Owner != strings.TrimSpace(c.Owner) || len(c.Owner) > 200 {
+	if strings.TrimSpace(c.Owner) == "" || c.Owner != strings.TrimSpace(c.Owner) || len(c.Owner) > contracts.MaxWorkerOwnerLength {
 		return invalid("worker owner is invalid")
 	}
 	if c.Concurrency < 1 || c.MaxClaim < 1 || c.MaxClaim > 100 || c.PollInterval <= 0 || c.LeaseDuration <= 0 || c.DrainTimeout <= 0 || c.DrainTimeout > workerProcessShutdownTimeout || c.RetentionInterval <= 0 || c.RetentionBatchSize < 1 || c.RetentionBatchSize > 1000 || c.RetentionMaxBatches < 1 || c.RetentionMaxDuration <= 0 || c.ProcessedRetention != 30*24*time.Hour || c.DeadLetterRetention != 180*24*time.Hour {
