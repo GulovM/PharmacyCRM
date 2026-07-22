@@ -417,6 +417,8 @@ Readiness должна быть false, если schema несовместима.
 
 Migrations выполняются отдельной one-shot command до переключения traffic на несовместимую application version.
 
+Текущая E2 application compatibility закреплена на schema version `19`. CI проверяет migration from zero и изолированный upgrade от E1 version `1`; API/worker не применяют migrations при startup.
+
 Migration process:
 
 1. проверяет environment и release identity;

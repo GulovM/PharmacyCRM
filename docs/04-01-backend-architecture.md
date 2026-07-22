@@ -426,16 +426,17 @@ Production reference data создаются migrations. Demo/test data не с�
 - использует at-least-once delivery и idempotent consumers;
 - повторяет максимум 8 раз с full-jitter exponential backoff 2 s → cap 15 min;
 - после exhaustion переводит event в `DEAD_LETTER`;
-- экспортирует backlog, oldest age, retries, stale completion и dead-letter metrics.
+- при transient polling errors использует bounded backoff, при fatal error прекращает polling и выполняет bounded graceful drain уже запущенных handlers;
+- запускает отдельную periodic retention task: `PROCESSED` 30 дней, `DEAD_LETTER` 180 дней, bounded batches;
+- экспортирует backlog, oldest age, retries, stale completion, dead-letter и retention metrics/logs.
 
-Worker не обновляет чужие business tables напрямую и не выполняет best-effort substitute для обязательного outbox.
+`cmd/worker` загружает worker-only config, создаёт logger и runtime pool, проверяет schema/worker protocol compatibility, регистрирует signal context, запускает polling+retention и закрывает pool/logger после drain. Worker не обновляет чужие business tables напрямую и не выполняет best-effort substitute для обязательного outbox.
 
 ## 19. Тестирование
 
 - Domain tests — рядом с domain code, без БД;
 - Application tests — рядом с use case, с fake ports/transactor;
-- PostgreSQL integration tests — `backend/test/integration`;
-- concurrency tests — `backend/test/concurrency` с реальной PostgreSQL;
+- PostgreSQL integration/concurrency tests — рядом с owning package под суффиксом `_integration_test.go`, с общей DSN policy в `internal/testkit/postgrestest`;
 - HTTP contract tests — `backend/test/contract`;
 - backend E2E — `backend/test/e2e`.
 

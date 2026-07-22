@@ -890,6 +890,8 @@ sequenceDiagram
 
 Worker использует at-least-once delivery. Обработчик обязан быть идемпотентным; crash после side effect, но до `processed_at`, не должен создавать повторный необратимый эффект.
 
+Отдельно от claim loop periodic retention удаляет bounded batches старых `PROCESSED` по `processed_at` и `DEAD_LETTER` по `dead_lettered_at`. При `SIGTERM` новые claims прекращаются, активные handlers получают bounded drain; retention не выполняется внутри claim transaction.
+
 ## 22. Канонический порядок блокировок
 
 До отдельного ADR применяется единый порядок:

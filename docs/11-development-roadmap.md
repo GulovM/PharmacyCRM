@@ -233,13 +233,17 @@ Gate E0 закрыт 2026-07-20. Параллельные несовместим
 - idempotency claim/complete/replay/conflict protocol;
 - transactional audit writer;
 - outbox writer, lease, retry и dead-letter policy;
+- real `cmd/worker` bootstrap, fatal polling classification и graceful drain;
+- deterministic `inventory_movements.lot_sequence` под lot lock;
+- explicit runtime privilege matrix и composite audit session ownership;
+- separate bounded outbox retention (`PROCESSED` 30 дней, `DEAD_LETTER` 180 дней);
 - deterministic lock helpers;
 - migration, failure-injection и concurrency harness.
 
 ### Обязательные evidence
 
 - migration from zero;
-- upgrade с предыдущей schema version;
+- upgrade E1 schema `1` → current E2 schema `19` с immutable checksum history;
 - rollback transaction function;
 - panic внутри UoW;
 - commit failure;
@@ -249,7 +253,8 @@ Gate E0 закрыт 2026-07-20. Параллельные несовместим
 - audit insert failure → rollback;
 - two-worker lease race;
 - duplicate outbox delivery без duplicate business effect;
-- runtime DB role не может изменять immutable rows штатным путём.
+- runtime DB role не может изменять immutable rows штатным путём;
+- mandatory PostgreSQL suites реально запускаются в CI без optional skip.
 
 ### Exit gate E2
 
@@ -259,6 +264,7 @@ Gate E0 закрыт 2026-07-20. Параллельные несовместим
 - обязательный audit fail-closed;
 - lock order опубликован и доказан race tests;
 - outbox допускает at-least-once delivery без повторного эффекта;
+- worker bootstrap, graceful drain, movement sequence, privilege matrix и outbox retention доказаны integration tests;
 - migration verification queries определены.
 
 ### Запрещённый переход

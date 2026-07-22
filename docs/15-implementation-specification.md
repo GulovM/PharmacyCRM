@@ -613,6 +613,8 @@ PR pipeline:
 
 Каждая migration имеет verification query, проверяющую её critical constraints/indexes/triggers/functions/privileges, а также lock/rewrite assessment, compatibility note и forward-fix policy. Проверки только через `to_regclass` недостаточны. Destructive down migration по умолчанию запрещена.
 
+Текущий результат E2 — schema version `19`; upgrade test начинает с неизменённой E1 migration `000001`, применяет `000002..000019` и повторно проверяет no-op replay/checksums.
+
 ## 10.2 E2-REL-001 — Unit of Work
 
 Реализовать use-case-specific transaction contracts. Application/Domain API не содержит `pgx.Tx`, `pgxpool.Pool` или SQL. Callback success → commit; error/panic → rollback; callback error важнее secondary rollback error; commit error возвращается caller.

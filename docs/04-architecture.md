@@ -289,6 +289,8 @@ Handler, domain entity и отдельный repository method не управл
 
 Application использует абстракцию Unit of Work, не зависящую от `pgx`.
 
+Mandatory-write adapters (`idempotency`, `audit`, `outbox` и orchestration writers) конструируются только из закрытого `TransactionExecutor`, который выдаётся callback-у transaction runner. Runtime pool не реализует этот контракт, поэтому autocommit construction запрещён на уровне типов.
+
 Концептуальный контракт:
 
 ```go

@@ -418,6 +418,8 @@ PostgreSQL не публикуется в интернет. Production connectio
 
 Критические инварианты дублируются constraints. Runtime не получает `UPDATE`/`DELETE` для append-only audit и inventory movement records, если архитектура не требует строго ограниченной технической операции.
 
+Runtime также не получает table-level `DELETE`. Outbox retention разрешён только через две `SECURITY DEFINER` functions с фиксированным terminal status, terminal timestamp и batch limit; migration metadata остаётся read-only. Composite FK `(actor_session_id, actor_user_id)` гарантирует, что audit session принадлежит указанному actor user.
+
 Прямое изменение production business data запрещено как штатная операция. Emergency SQL требует ticket, peer review, scoped script, restore point, исполнителя, причины, post-check и отдельного audit/change record.
 
 ## 16. Аудит и security logging

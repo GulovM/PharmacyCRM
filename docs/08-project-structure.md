@@ -273,16 +273,13 @@ backend/migrations/
 Backend central tests:
 
 ```text
-backend/test/
-├── integration/
-├── concurrency/
-├── contract/
-├── e2e/
-├── fixtures/
-└── testkit/
+backend/internal/testkit/
+├── postgrestest/
+├── reconciliation/
+└── schema/
 ```
 
-Domain/application unit tests размещаются рядом с кодом. Concurrency tests используют реальную PostgreSQL.
+Domain/application unit tests и owning-package PostgreSQL integration tests размещаются рядом с кодом. Общие cross-module correctness oracles находятся в `internal/testkit`; integration/concurrency tests используют реальную PostgreSQL и обязательные CI DSN.
 
 ## 11. Frontend root
 
