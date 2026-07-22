@@ -14,12 +14,12 @@ import (
 )
 
 type sessionRow struct {
-	id, userID, familyID                                      uuid.UUID
-	generation                                                int64
-	predecessorID, predecessorUserID, predecessorFamilyID     *uuid.UUID
-	predecessorGeneration                                     *int64
-	createdAt, lastUsedAt, expiresAt, idleAt, absoluteAt       time.Time
-	authenticationMethod, mfaLevel                             string
+	id, userID, familyID                                  uuid.UUID
+	generation                                            int64
+	predecessorID, predecessorUserID, predecessorFamilyID *uuid.UUID
+	predecessorGeneration                                 *int64
+	createdAt, lastUsedAt, expiresAt, idleAt, absoluteAt  time.Time
+	authenticationMethod, mfaLevel                        string
 }
 
 func TestSessionSecurityConstraintsIntegration(t *testing.T) {
