@@ -26,6 +26,18 @@ jobs:
           git show 063ffde10a6d7c34e971edc61d0b4e1e8cd1435d:docs/04-01-backend-architecture.md > docs/04-01-backend-architecture.md
           python scripts/apply-e2-final-sync.py
           git checkout -- .github/workflows/ci.yml
+          python - <<'PY'
+          from pathlib import Path
+          for name in (
+              'docs/09-security-design.md',
+              'docs/11-development-roadmap.md',
+              'docs/12-deployment.md',
+              'docs/13-testing-strategy.md',
+              'docs/14-observability.md',
+          ):
+              path = Path(name)
+              path.write_text(path.read_text().replace('**Дата:** 2026-07-22  \n', '**Дата:** 2026-07-21  \n', 1))
+          PY
       - name: Verify current schema references
         run: |
           if grep -RniE 'current E2 schema `21`|application compatibility[^\n]*schema version `21`' docs deploy backend --exclude='*.sum'; then
