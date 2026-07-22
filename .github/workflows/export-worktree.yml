@@ -1,6 +1,7 @@
 name: Export PR worktree
 
 on:
+  pull_request:
   push:
     branches:
       - Database-Kernel-and-Reliability-Primitives
