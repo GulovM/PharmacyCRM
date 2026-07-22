@@ -22,14 +22,21 @@ type InventoryPlan struct {
 	StockLotIDs        []uuid.UUID
 }
 
-// SaleReturnPlan follows the published business order: pharmacy, root sale,
-// pharmacy products, source allocations, and finally stock lots.
+// SaleReturnPlan follows the published business order. For MVP RESTOCK the
+// target lots are exactly the source lots referenced by the selected allocations.
 type SaleReturnPlan struct {
 	PharmacyID          uuid.UUID
 	SaleID              uuid.UUID
+	SourceSaleItemIDs   []uuid.UUID
 	PharmacyProductIDs  []uuid.UUID
 	SourceAllocationIDs []uuid.UUID
 	StockLotIDs         []uuid.UUID
+}
+
+type SourceSaleItem struct {
+	ID                uuid.UUID
+	SaleID            uuid.UUID
+	PharmacyProductID uuid.UUID
 }
 
 type Pharmacy struct {
@@ -84,6 +91,7 @@ type InventoryLocks struct {
 type SaleReturnLocks struct {
 	Pharmacy          Pharmacy
 	Sale              Sale
+	SourceSaleItems   []SourceSaleItem
 	PharmacyProducts  []PharmacyProduct
 	SourceAllocations []SourceAllocation
 	StockLots         []StockLot

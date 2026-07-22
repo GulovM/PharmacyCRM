@@ -681,7 +681,7 @@ Domain errors не содержат HTTP status. Централизованны�
 5. Lock selected SaleItems by ID.
 6. Lock source SaleItemAllocations by ID.
 7. Read completed non-reversed return usage and re-evaluate remaining quantity.
-8. Для physical action lock PharmacyProducts и lots в deterministic order.
+8. Для physical action lock PharmacyProducts by ID, затем исходные lots в FEFO/ID order; RESTOCK разрешает только lot исходной allocation той же pharmacy/product.
 9. Run eligibility/refund policies.
 10. Persist SaleReturn/items/allocations.
 11. Persist inventory/refund effects.

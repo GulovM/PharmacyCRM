@@ -48,7 +48,14 @@ func (r *CanonicalLockRepository) LockSaleReturn(ctx context.Context, plan locki
 	if plan.SaleID == uuid.Nil {
 		return locking.SaleReturnLocks{}, invalidPlan()
 	}
-	productIDs, lotIDs, err := validateInventoryPlan(plan.PharmacyID, plan.PharmacyProductIDs, plan.StockLotIDs, false)
+	productIDs, lotIDs, err := validateInventoryPlan(plan.PharmacyID, plan.PharmacyProductIDs, plan.StockLotIDs, true)
+	if err != nil {
+		return locking.SaleReturnLocks{}, err
+	}
+	if len(lotIDs) == 0 {
+		return locking.SaleReturnLocks{}, invalidPlan()
+	}
+	saleItemIDs, err := normalizedIDs(plan.SourceSaleItemIDs, true)
 	if err != nil {
 		return locking.SaleReturnLocks{}, err
 	}
@@ -64,11 +71,20 @@ func (r *CanonicalLockRepository) LockSaleReturn(ctx context.Context, plan locki
 	if err != nil {
 		return locking.SaleReturnLocks{}, err
 	}
-	products, err := r.lockProducts(ctx, plan.PharmacyID, productIDs)
+	saleItems, err := r.lockSaleItems(ctx, plan.SaleID, saleItemIDs)
 	if err != nil {
 		return locking.SaleReturnLocks{}, err
 	}
-	allocations, err := r.lockAllocations(ctx, plan.SaleID, allocationIDs)
+	allocations, err := r.lockAllocations(ctx, plan.SaleID, saleItemIDs, allocationIDs)
+	if err != nil {
+		return locking.SaleReturnLocks{}, err
+	}
+	if !sameIDs(saleItemIDs, allocationSaleItemIDs(allocations)) ||
+		!sameIDs(productIDs, saleItemProductIDs(saleItems)) ||
+		!sameIDs(lotIDs, allocationLotIDs(allocations)) {
+		return locking.SaleReturnLocks{}, missingTarget()
+	}
+	products, err := r.lockProducts(ctx, plan.PharmacyID, productIDs)
 	if err != nil {
 		return locking.SaleReturnLocks{}, err
 	}
@@ -78,8 +94,36 @@ func (r *CanonicalLockRepository) LockSaleReturn(ctx context.Context, plan locki
 	}
 	return locking.SaleReturnLocks{
 		Pharmacy: pharmacy, Sale: sale, PharmacyProducts: products,
-		SourceAllocations: allocations, StockLots: lots,
+		SourceSaleItems: saleItems, SourceAllocations: allocations, StockLots: lots,
 	}, nil
+}
+
+func (r *CanonicalLockRepository) lockSaleItems(ctx context.Context, saleID uuid.UUID, ids []uuid.UUID) ([]locking.SourceSaleItem, error) {
+	rows, err := r.tx.Query(ctx, `
+		SELECT id, sale_id, pharmacy_product_id
+		FROM sale_items
+		WHERE sale_id = $1 AND id = ANY($2::uuid[])
+		ORDER BY id
+		FOR UPDATE`, saleID, ids)
+	if err != nil {
+		return nil, fmt.Errorf("lock sale items: %w", err)
+	}
+	defer rows.Close()
+	values := make([]locking.SourceSaleItem, 0, len(ids))
+	for rows.Next() {
+		var value locking.SourceSaleItem
+		if err := rows.Scan(&value.ID, &value.SaleID, &value.PharmacyProductID); err != nil {
+			return nil, fmt.Errorf("scan locked sale item: %w", err)
+		}
+		values = append(values, value)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate locked sale items: %w", err)
+	}
+	if len(values) != len(ids) {
+		return nil, missingTarget()
+	}
+	return values, nil
 }
 
 func (r *CanonicalLockRepository) lockPharmacy(ctx context.Context, id uuid.UUID) (locking.Pharmacy, error) {
@@ -141,14 +185,16 @@ func (r *CanonicalLockRepository) lockProducts(ctx context.Context, pharmacyID u
 	return values, nil
 }
 
-func (r *CanonicalLockRepository) lockAllocations(ctx context.Context, saleID uuid.UUID, ids []uuid.UUID) ([]locking.SourceAllocation, error) {
+func (r *CanonicalLockRepository) lockAllocations(ctx context.Context, saleID uuid.UUID, saleItemIDs, ids []uuid.UUID) ([]locking.SourceAllocation, error) {
 	rows, err := r.tx.Query(ctx, `
 		SELECT allocation.id, allocation.sale_item_id, allocation.stock_lot_id, allocation.quantity_base_units
 		FROM sale_item_allocations AS allocation
 		JOIN sale_items AS item ON item.id = allocation.sale_item_id
-		WHERE item.sale_id = $1 AND allocation.id = ANY($2::uuid[])
+		WHERE item.sale_id = $1
+		  AND item.id = ANY($2::uuid[])
+		  AND allocation.id = ANY($3::uuid[])
 		ORDER BY allocation.id
-		FOR UPDATE OF allocation`, saleID, ids)
+		FOR UPDATE OF allocation`, saleID, saleItemIDs, ids)
 	if err != nil {
 		return nil, fmt.Errorf("lock sale allocations: %w", err)
 	}
@@ -169,6 +215,35 @@ func (r *CanonicalLockRepository) lockAllocations(ctx context.Context, saleID uu
 	}
 	return values, nil
 }
+
+func saleItemProductIDs(items []locking.SourceSaleItem) []uuid.UUID {
+	ids := make([]uuid.UUID, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.PharmacyProductID)
+	}
+	result, _ := normalizedIDs(ids, false)
+	return result
+}
+
+func allocationLotIDs(allocations []locking.SourceAllocation) []uuid.UUID {
+	ids := make([]uuid.UUID, 0, len(allocations))
+	for _, allocation := range allocations {
+		ids = append(ids, allocation.StockLotID)
+	}
+	result, _ := normalizedIDs(ids, false)
+	return result
+}
+
+func allocationSaleItemIDs(allocations []locking.SourceAllocation) []uuid.UUID {
+	ids := make([]uuid.UUID, 0, len(allocations))
+	for _, allocation := range allocations {
+		ids = append(ids, allocation.SaleItemID)
+	}
+	result, _ := normalizedIDs(ids, false)
+	return result
+}
+
+func sameIDs(left, right []uuid.UUID) bool { return slices.Equal(left, right) }
 
 func (r *CanonicalLockRepository) lockLots(ctx context.Context, productIDs, ids []uuid.UUID) ([]locking.StockLot, error) {
 	if len(ids) == 0 {

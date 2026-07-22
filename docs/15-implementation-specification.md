@@ -378,12 +378,12 @@ Authenticated critical mutation выполняется в порядке:
 ### 7.2 Canonical lock order
 
 1. idempotency scope/key;
-2. current actor user/session/role;
-3. target user, если изменяется;
-4. pharmacy;
-5. root business document;
-6. `pharmacy_products` по `id`;
-7. sale items/source allocations по `id`;
+2. current actor, session, role и pharmacy assignment;
+3. pharmacy;
+4. root business document (для возврата — source `sale`);
+5. source `sale_items` по `id`;
+6. source `sale_item_allocations` по `id`;
+7. `pharmacy_products` по `id`;
 8. stock lots по `expiration_date`, `received_at`, `id`;
 9. append-only inserts;
 10. commit.

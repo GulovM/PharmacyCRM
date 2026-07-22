@@ -290,6 +290,8 @@ PostgreSQL implementation создаёт transaction-scoped adapters один р
 6. записать business effect, mandatory audit, outbox rows и completed idempotency result;
 7. commit до возврата success.
 
+Business locks внутри шага 4 имеют единый нормативный порядок: pharmacy → root document (для возврата source sale) → source sale items по ID → source allocations по ID → pharmacy products по ID → stock lots по FEFO/ID. Ненужный уровень можно пропустить, но менять взаимный порядок нельзя; append-only inserts выполняются только после locks.
+
 Retry допускается только для PostgreSQL SQLSTATE `40001` и `40P01`. Максимум — 3 попытки на request path; повторяется вся transaction function. Backoff — full-jitter exponential, base 25 ms, cap 250 ms, с учётом `context.Context`.
 
 IDs, idempotency key и stable command values создаются до callback. Каждая попытка повторяет authorization и business revalidation. Callback не выполняет HTTP calls, email, broker publish, filesystem side effects или другие необратимые действия. Domain conflict, constraint violation из invalid command и insufficient stock автоматически не повторяются.

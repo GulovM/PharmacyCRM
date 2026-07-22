@@ -1107,13 +1107,13 @@ actor + operation + effective_scope + idempotency_key
 Для use cases, затрагивающих одинаковые ресурсы:
 
 1. idempotency scope/key;
-2. current actor user/session/role;
-3. target user, если он изменяется;
-4. pharmacy;
-5. root business document;
-6. `pharmacy_products` по `id`;
-7. sale items/source allocations по `id`;
-8. stock lots по `expiration_date`, `received_at`, `id` либо более узкому документированному порядку, совместимому с этим порядком;
+2. current actor, session, role и pharmacy assignment;
+3. pharmacy;
+4. root business document (для возврата — source `sale`);
+5. source `sale_items` по `id`;
+6. source `sale_item_allocations` по `id`;
+7. `pharmacy_products` по `id`;
+8. stock lots по `expiration_date`, `received_at`, `id`;
 9. append-only inserts: documents, allocations, movements, audit, outbox, completed idempotency result;
 10. commit.
 
