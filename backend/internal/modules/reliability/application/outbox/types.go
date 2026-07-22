@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/GulovM/PharmacyCRM/backend/internal/shared/apperror"
+	"github.com/GulovM/PharmacyCRM/backend/internal/shared/contracts"
 	"github.com/google/uuid"
 )
 
@@ -41,16 +42,26 @@ type Lease struct {
 }
 
 type ClaimRequest struct {
-	Owner         string
-	Limit         int
-	LeaseDuration time.Duration
-	Now           time.Time
-	Protocols     []EventKey
+	Owner           string
+	Limit           int
+	LeaseDuration   time.Duration
+	Now             time.Time
+	Protocols       []EventKey
+	MaintenanceOnly bool
 }
 
 func (request ClaimRequest) Validate() error {
 	owner := strings.TrimSpace(request.Owner)
-	if owner == "" || owner != request.Owner || len(owner) > 150 || request.Limit < 1 || request.Limit > 100 || request.LeaseDuration <= 0 || request.Now.IsZero() || len(request.Protocols) == 0 {
+	if owner == "" || owner != request.Owner || len(owner) > contracts.MaxWorkerOwnerLength || request.Limit < 1 || request.Limit > 100 || request.LeaseDuration <= 0 || request.Now.IsZero() {
+		return errors.Join(ErrInvalidClaimRequest, apperror.ErrInvalidArgument)
+	}
+	if request.MaintenanceOnly {
+		if len(request.Protocols) != 0 {
+			return errors.Join(ErrInvalidClaimRequest, apperror.ErrInvalidArgument)
+		}
+		return nil
+	}
+	if len(request.Protocols) == 0 {
 		return errors.Join(ErrInvalidClaimRequest, apperror.ErrInvalidArgument)
 	}
 	seen := make(map[EventKey]struct{}, len(request.Protocols))
