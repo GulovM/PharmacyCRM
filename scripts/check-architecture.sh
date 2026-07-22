@@ -62,4 +62,21 @@ if [[ -e frontend/package-lock.json || -e frontend/yarn.lock ]]; then
   fail 'frontend must use pnpm only; npm and Yarn lockfiles are forbidden'
 fi
 
+readonly mandatory_repositories=(
+  backend/internal/modules/audit/infrastructure/postgres/repository.go
+  backend/internal/modules/reliability/infrastructure/postgres/idempotency_repository.go
+  backend/internal/modules/reliability/infrastructure/postgres/outbox_repository.go
+)
+if rg -n 'database\.DBTX|NewRepository\(|NewIdempotencyRepository\(|NewOutboxRepository\(' "${mandatory_repositories[@]}" >/dev/null; then
+  fail 'mandatory reliability repositories must be transaction-only'
+fi
+
+if rg -n --glob '*.go' 'NewTransactional(Audit|Idempotency|Outbox)Repository\([^\n]*(pool|Pool)' backend >/dev/null; then
+  fail 'transactional reliability repository constructed from a pool'
+fi
+
+if rg -n --glob '**/application/*.go' --glob '**/application/**/*.go' --glob '**/domain/*.go' --glob '**/domain/**/*.go' 'github\.com/jackc/pgx' backend/internal/modules >/dev/null; then
+  fail 'application and domain packages must not import pgx'
+fi
+
 printf 'architecture check: passed\n'

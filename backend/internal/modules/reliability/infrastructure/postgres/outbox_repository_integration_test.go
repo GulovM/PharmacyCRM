@@ -9,9 +9,27 @@ import (
 	"time"
 
 	"github.com/GulovM/PharmacyCRM/backend/internal/modules/reliability/application/outbox"
+	"github.com/GulovM/PharmacyCRM/backend/internal/platform/database"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func testOutboxRepository(tx pgx.Tx) *TransactionalOutboxRepository {
+	return NewTransactionalOutboxRepository(database.WrapPGXTransaction(tx))
+}
+
+func withinOutboxTransaction(ctx context.Context, pool *pgxpool.Pool, fn func(*TransactionalOutboxRepository) error) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	if err := fn(testOutboxRepository(tx)); err != nil {
+		_ = tx.Rollback(ctx)
+		return err
+	}
+	return tx.Commit(ctx)
+}
 
 func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 	dsn := os.Getenv("POSTGRES_TEST_DSN")
@@ -43,9 +61,6 @@ func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), "DELETE FROM outbox_events WHERE aggregate_id = $1", aggregateID)
 	})
-	writer := outbox.NewWriter(NewOutboxRepository(pool), map[outbox.EventKey]outbox.PayloadValidator{
-		{Name: "test.outbox", Version: 1}: outbox.PayloadValidatorFunc(func(json.RawMessage) error { return nil }),
-	})
 	appendEvent := func(maxAttempts int16) uuid.UUID {
 		id := uuid.New()
 		event := outbox.Event{
@@ -54,7 +69,12 @@ func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 			DeduplicationKey: id.String(), Payload: []byte(`{"value":1}`),
 			OccurredAt: time.Now(), MaxAttempts: maxAttempts,
 		}
-		if err := writer.Append(ctx, event); err != nil {
+		if err := withinOutboxTransaction(ctx, pool, func(repository *TransactionalOutboxRepository) error {
+			writer := outbox.NewWriter(repository, map[outbox.EventKey]outbox.PayloadValidator{
+				{Name: "test.outbox", Version: 1}: outbox.PayloadValidatorFunc(func(json.RawMessage) error { return nil }),
+			})
+			return writer.Append(ctx, event)
+		}); err != nil {
 			t.Fatal(err)
 		}
 		return id
@@ -65,7 +85,7 @@ func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		leases, err := NewOutboxRepository(tx).ClaimBatch(ctx, outbox.ClaimRequest{
+		leases, err := testOutboxRepository(tx).ClaimBatch(ctx, outbox.ClaimRequest{
 			Owner: owner, Limit: limit, LeaseDuration: 30 * time.Second, Now: now,
 		})
 		if err != nil {
@@ -87,15 +107,21 @@ func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 	if first.ID != id || second.ID != id || second.Attempt != 2 || second.Generation <= first.Generation || second.Token == first.Token {
 		t.Fatalf("invalid reclaim: first=%#v second=%#v", first, second)
 	}
-	if err := NewOutboxRepository(pool).MarkProcessed(ctx, first, now.Add(5*time.Second)); !errors.Is(err, outbox.ErrStaleLease) {
+	if err := withinOutboxTransaction(ctx, pool, func(repository *TransactionalOutboxRepository) error {
+		return repository.MarkProcessed(ctx, first, now.Add(5*time.Second))
+	}); !errors.Is(err, outbox.ErrStaleLease) {
 		t.Fatalf("stale owner accepted: %v", err)
 	}
 	wrongOwner := second
 	wrongOwner.Owner = "worker-c"
-	if err := NewOutboxRepository(pool).MarkProcessed(ctx, wrongOwner, now.Add(time.Minute+time.Second)); !errors.Is(err, outbox.ErrStaleLease) {
+	if err := withinOutboxTransaction(ctx, pool, func(repository *TransactionalOutboxRepository) error {
+		return repository.MarkProcessed(ctx, wrongOwner, now.Add(time.Minute+time.Second))
+	}); !errors.Is(err, outbox.ErrStaleLease) {
 		t.Fatalf("wrong lease owner accepted: %v", err)
 	}
-	if err := NewOutboxRepository(pool).MarkProcessed(ctx, second, now.Add(time.Minute+time.Second)); err != nil {
+	if err := withinOutboxTransaction(ctx, pool, func(repository *TransactionalOutboxRepository) error {
+		return repository.MarkProcessed(ctx, second, now.Add(time.Minute+time.Second))
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -115,7 +141,9 @@ func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 	if duplicateDelivery.ID != duplicateID || effects[duplicateID.String()] != 1 {
 		t.Fatalf("duplicate delivery was not idempotent: lease=%#v effects=%#v", duplicateDelivery, effects)
 	}
-	if err := NewOutboxRepository(pool).MarkProcessed(ctx, duplicateDelivery, duplicateDelivery.ExpiresAt.Add(-time.Second)); err != nil {
+	if err := withinOutboxTransaction(ctx, pool, func(repository *TransactionalOutboxRepository) error {
+		return repository.MarkProcessed(ctx, duplicateDelivery, duplicateDelivery.ExpiresAt.Add(-time.Second))
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -127,10 +155,14 @@ func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 		t.Fatalf("claimed %s, want poison %s", poison.ID, poisonID)
 	}
 	failedAt := poisonClaimedAt.Add(time.Second)
-	if err := NewOutboxRepository(pool).MarkFailed(ctx, poison, outbox.Failure{Code: "POISON_EVENT", Retryable: false}, failedAt, failedAt); err != nil {
+	if err := withinOutboxTransaction(ctx, pool, func(repository *TransactionalOutboxRepository) error {
+		return repository.MarkFailed(ctx, poison, outbox.Failure{Code: "POISON_EVENT", Retryable: false}, failedAt, failedAt)
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := NewOutboxRepository(pool).ReplayDeadLetter(ctx, poisonID, failedAt.Add(time.Second)); err != nil {
+	if err := withinOutboxTransaction(ctx, pool, func(repository *TransactionalOutboxRepository) error {
+		return repository.ReplayDeadLetter(ctx, poisonID, failedAt.Add(time.Second))
+	}); err != nil {
 		t.Fatal(err)
 	}
 	replayed := claim(failedAt.Add(2*time.Second), "worker-b", 1)[0]
@@ -145,7 +177,7 @@ func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	leasingAt := now.Add(20 * time.Minute)
-	workerOne, err := NewOutboxRepository(tx1).ClaimBatch(ctx, outbox.ClaimRequest{Owner: "worker-1", Limit: 1, LeaseDuration: time.Minute, Now: leasingAt})
+	workerOne, err := testOutboxRepository(tx1).ClaimBatch(ctx, outbox.ClaimRequest{Owner: "worker-1", Limit: 1, LeaseDuration: time.Minute, Now: leasingAt})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +185,7 @@ func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workerTwo, err := NewOutboxRepository(tx2).ClaimBatch(ctx, outbox.ClaimRequest{Owner: "worker-2", Limit: 1, LeaseDuration: time.Minute, Now: leasingAt})
+	workerTwo, err := testOutboxRepository(tx2).ClaimBatch(ctx, outbox.ClaimRequest{Owner: "worker-2", Limit: 1, LeaseDuration: time.Minute, Now: leasingAt})
 	if err != nil {
 		t.Fatal(err)
 	}

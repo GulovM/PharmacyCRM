@@ -81,4 +81,21 @@ if ((Test-Path -LiteralPath 'frontend/package-lock.json') -or (Test-Path -Litera
     Fail 'frontend must use pnpm only; npm and Yarn lockfiles are forbidden'
 }
 
+$mandatoryRepositories = @(
+    'backend/internal/modules/audit/infrastructure/postgres/repository.go',
+    'backend/internal/modules/reliability/infrastructure/postgres/idempotency_repository.go',
+    'backend/internal/modules/reliability/infrastructure/postgres/outbox_repository.go'
+)
+if (Test-RipgrepMatch (@('-n', 'database\.DBTX|NewRepository\(|NewIdempotencyRepository\(|NewOutboxRepository\(') + $mandatoryRepositories)) {
+    Fail 'mandatory reliability repositories must be transaction-only'
+}
+
+if (Test-RipgrepMatch @('-n', '--glob', '*.go', 'NewTransactional(?:Audit|Idempotency|Outbox)Repository\([^\n]*(?:pool|Pool)', 'backend')) {
+    Fail 'transactional reliability repository constructed from a pool'
+}
+
+if (Test-RipgrepMatch @('-n', '--glob', '**/application/*.go', '--glob', '**/application/**/*.go', '--glob', '**/domain/*.go', '--glob', '**/domain/**/*.go', 'github\.com/jackc/pgx', 'backend/internal/modules')) {
+    Fail 'application and domain packages must not import pgx'
+}
+
 Write-Output 'architecture check: passed'

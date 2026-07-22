@@ -9,11 +9,13 @@ import (
 	"github.com/GulovM/PharmacyCRM/backend/internal/platform/database"
 )
 
-type Repository struct{ executor database.DBTX }
+type TransactionalAuditRepository struct{ executor database.TransactionExecutor }
 
-func NewRepository(executor database.DBTX) *Repository { return &Repository{executor: executor} }
+func NewTransactionalAuditRepository(executor database.TransactionExecutor) *TransactionalAuditRepository {
+	return &TransactionalAuditRepository{executor: executor}
+}
 
-func (r *Repository) Append(ctx context.Context, event audit.Event) error {
+func (r *TransactionalAuditRepository) Append(ctx context.Context, event audit.Event) error {
 	metadata, err := json.Marshal(event.Metadata)
 	if err != nil {
 		return fmt.Errorf("encode audit metadata: %w", err)

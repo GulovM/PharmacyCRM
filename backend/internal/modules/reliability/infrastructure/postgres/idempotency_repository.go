@@ -12,13 +12,13 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type IdempotencyRepository struct{ executor database.DBTX }
+type TransactionalIdempotencyRepository struct{ executor database.TransactionExecutor }
 
-func NewIdempotencyRepository(executor database.DBTX) *IdempotencyRepository {
-	return &IdempotencyRepository{executor: executor}
+func NewTransactionalIdempotencyRepository(executor database.TransactionExecutor) *TransactionalIdempotencyRepository {
+	return &TransactionalIdempotencyRepository{executor: executor}
 }
 
-func (r *IdempotencyRepository) Claim(ctx context.Context, claim idempotency.Claim) (idempotency.Record, bool, error) {
+func (r *TransactionalIdempotencyRepository) Claim(ctx context.Context, claim idempotency.Claim) (idempotency.Record, bool, error) {
 	var id uuid.UUID
 	err := r.executor.QueryRow(ctx, `
 		INSERT INTO idempotency_records (
@@ -53,7 +53,7 @@ func (r *IdempotencyRepository) Claim(ctx context.Context, claim idempotency.Cla
 	return record, false, nil
 }
 
-func (r *IdempotencyRepository) lockByIdentity(ctx context.Context, claim idempotency.Claim) (idempotency.Record, error) {
+func (r *TransactionalIdempotencyRepository) lockByIdentity(ctx context.Context, claim idempotency.Claim) (idempotency.Record, error) {
 	var record idempotency.Record
 	var id uuid.UUID
 	var fingerprint []byte
@@ -86,7 +86,7 @@ func (r *IdempotencyRepository) lockByIdentity(ctx context.Context, claim idempo
 	return record, nil
 }
 
-func (r *IdempotencyRepository) Complete(ctx context.Context, completion idempotency.Completion) error {
+func (r *TransactionalIdempotencyRepository) Complete(ctx context.Context, completion idempotency.Completion) error {
 	tag, err := r.executor.Exec(ctx, `
 		UPDATE idempotency_records
 		SET status = 'COMPLETED', response_status = $2, response_body = $3::jsonb,
@@ -101,7 +101,7 @@ func (r *IdempotencyRepository) Complete(ctx context.Context, completion idempot
 	return nil
 }
 
-func (r *IdempotencyRepository) Replay(ctx context.Context, recordID idempotency.RecordID) (idempotency.StoredResult, error) {
+func (r *TransactionalIdempotencyRepository) Replay(ctx context.Context, recordID idempotency.RecordID) (idempotency.StoredResult, error) {
 	var result idempotency.StoredResult
 	var body []byte
 	var resourceType *string
@@ -122,7 +122,7 @@ func (r *IdempotencyRepository) Replay(ctx context.Context, recordID idempotency
 	return result, nil
 }
 
-func (r *IdempotencyRepository) MarkRetryableFailure(ctx context.Context, recordID idempotency.RecordID) error {
+func (r *TransactionalIdempotencyRepository) MarkRetryableFailure(ctx context.Context, recordID idempotency.RecordID) error {
 	tag, err := r.executor.Exec(ctx, `
 		UPDATE idempotency_records SET status = 'FAILED_RETRYABLE', completed_at = now()
 		WHERE id = $1 AND status = 'IN_PROGRESS'`, uuid.UUID(recordID))

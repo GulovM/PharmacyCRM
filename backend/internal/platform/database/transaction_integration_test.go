@@ -33,14 +33,14 @@ func TestTransactionRunnerIntegration(t *testing.T) {
 	if _, err := pool.Exec(ctx, "CREATE TEMP TABLE uow_probe (value integer NOT NULL)"); err != nil {
 		t.Fatal(err)
 	}
-	runner := &TransactionRunner[DBTX]{
+	runner := &TransactionRunner[TransactionExecutor]{
 		begin: func(ctx context.Context, options pgx.TxOptions) (transaction, error) {
 			return pool.BeginTx(ctx, options)
 		},
-		newUnitOfWork: func(executor DBTX) DBTX { return executor },
+		newUnitOfWork: func(executor TransactionExecutor) TransactionExecutor { return executor },
 	}
 
-	if err := runner.WithinTransaction(ctx, func(ctx context.Context, executor DBTX) error {
+	if err := runner.WithinTransaction(ctx, func(ctx context.Context, executor TransactionExecutor) error {
 		_, err := executor.Exec(ctx, "INSERT INTO uow_probe (value) VALUES (1)")
 		return err
 	}); err != nil {
@@ -48,7 +48,7 @@ func TestTransactionRunnerIntegration(t *testing.T) {
 	}
 
 	callbackErr := errors.New("force rollback")
-	if err := runner.WithinTransaction(ctx, func(ctx context.Context, executor DBTX) error {
+	if err := runner.WithinTransaction(ctx, func(ctx context.Context, executor TransactionExecutor) error {
 		if _, err := executor.Exec(ctx, "INSERT INTO uow_probe (value) VALUES (2)"); err != nil {
 			return err
 		}
@@ -58,7 +58,7 @@ func TestTransactionRunnerIntegration(t *testing.T) {
 	}
 
 	cancelCtx, cancel := context.WithCancel(ctx)
-	if err := runner.WithinTransaction(cancelCtx, func(ctx context.Context, executor DBTX) error {
+	if err := runner.WithinTransaction(cancelCtx, func(ctx context.Context, executor TransactionExecutor) error {
 		if _, err := executor.Exec(ctx, "INSERT INTO uow_probe (value) VALUES (3)"); err != nil {
 			return err
 		}
@@ -109,18 +109,18 @@ func TestRetryingTransactionRunnerIntegration(t *testing.T) {
 		externalCommitted <- err
 	}()
 
-	inner := &TransactionRunner[DBTX]{
+	inner := &TransactionRunner[TransactionExecutor]{
 		begin: func(ctx context.Context, options pgx.TxOptions) (transaction, error) {
 			return pool.BeginTx(ctx, options)
 		},
-		newUnitOfWork: func(executor DBTX) DBTX { return executor },
+		newUnitOfWork: func(executor TransactionExecutor) TransactionExecutor { return executor },
 		options:       pgx.TxOptions{IsoLevel: pgx.Serializable},
 	}
 	var attempt atomic.Int32
-	runner := NewRetryingTransactionRunner[DBTX](inner, func(_ context.Context, current int) { attempt.Store(int32(current)) })
+	runner := NewRetryingTransactionRunner[TransactionExecutor](inner, func(_ context.Context, current int) { attempt.Store(int32(current)) })
 	runner.delay = func(int) time.Duration { return 0 }
 
-	if err := runner.WithinTransaction(ctx, func(ctx context.Context, executor DBTX) error {
+	if err := runner.WithinTransaction(ctx, func(ctx context.Context, executor TransactionExecutor) error {
 		var value int
 		if err := executor.QueryRow(ctx, "SELECT value FROM e2_retry_probe WHERE id = 1").Scan(&value); err != nil {
 			return err

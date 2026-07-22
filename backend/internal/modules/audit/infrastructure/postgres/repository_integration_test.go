@@ -7,6 +7,7 @@ import (
 	"time"
 
 	audit "github.com/GulovM/PharmacyCRM/backend/internal/modules/audit/application"
+	"github.com/GulovM/PharmacyCRM/backend/internal/platform/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -38,7 +39,7 @@ func TestAuditWriterIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writer := audit.NewWriter(NewRepository(tx), policy)
+	writer := audit.NewWriter(NewTransactionalAuditRepository(database.WrapPGXTransaction(tx)), policy)
 	event := audit.Event{ID: uuid.New(), OccurredAt: time.Now(), ActorUserID: &actorID, ActorType: audit.ActorUser, Action: "test.user.changed", ObjectType: "user", ObjectID: &actorID, Result: audit.ResultSuccess, Metadata: audit.Metadata{"reason": "integration"}}
 	if err := writer.Append(ctx, event); err != nil {
 		_ = tx.Rollback(ctx)
@@ -64,7 +65,7 @@ func TestAuditWriterIntegration(t *testing.T) {
 	failing := event
 	failing.ID = uuid.New()
 	failing.ActorSessionID = &missingSession
-	if err := audit.NewWriter(NewRepository(tx), policy).Append(ctx, failing); err == nil {
+	if err := audit.NewWriter(NewTransactionalAuditRepository(database.WrapPGXTransaction(tx)), policy).Append(ctx, failing); err == nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal("expected mandatory audit insert failure")
 	}

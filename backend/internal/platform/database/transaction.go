@@ -11,13 +11,21 @@ import (
 
 const rollbackTimeout = 5 * time.Second
 
-// DBTX is the private PostgreSQL execution surface shared by pool- and
-// transaction-backed repositories. Application and domain packages must not
-// import it.
+// DBTX is the PostgreSQL execution surface used by read-only diagnostics that
+// may run against either a pool or a transaction. Mandatory writes must accept
+// TransactionExecutor instead.
 type DBTX interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// TransactionExecutor is implemented only by the platform wrapper around a
+// PostgreSQL transaction. The private marker deliberately prevents Pool from
+// satisfying mandatory-write repository constructors.
+type TransactionExecutor interface {
+	DBTX
+	transactionScoped()
 }
 
 type transaction interface {
@@ -26,11 +34,24 @@ type transaction interface {
 	Rollback(ctx context.Context) error
 }
 
+type scopedTransactionExecutor struct{ transaction }
+
+func (scopedTransactionExecutor) transactionScoped() {}
+
+// WrapPGXTransaction adapts an explicitly opened pgx transaction for narrow
+// infrastructure repositories. It never accepts pgxpool.Pool.
+func WrapPGXTransaction(tx pgx.Tx) TransactionExecutor {
+	if tx == nil {
+		return nil
+	}
+	return scopedTransactionExecutor{transaction: tx}
+}
+
 type beginTransaction func(context.Context, pgx.TxOptions) (transaction, error)
 
 // UnitOfWorkFactory creates one use-case-specific set of transaction-scoped
 // adapters. The returned value must never be retained after the callback.
-type UnitOfWorkFactory[T any] func(DBTX) T
+type UnitOfWorkFactory[T any] func(TransactionExecutor) T
 
 // RollbackErrorObserver records a secondary rollback failure without replacing
 // the callback error or recovered panic that caused the rollback.
@@ -92,7 +113,8 @@ func (r *TransactionRunner[T]) WithinTransaction(ctx context.Context, fn func(co
 		}
 	}()
 
-	if err := fn(ctx, r.newUnitOfWork(tx)); err != nil {
+	executor := scopedTransactionExecutor{transaction: tx}
+	if err := fn(ctx, r.newUnitOfWork(executor)); err != nil {
 		rollback()
 		return err
 	}

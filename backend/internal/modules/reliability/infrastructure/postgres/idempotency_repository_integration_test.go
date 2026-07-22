@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/GulovM/PharmacyCRM/backend/internal/modules/reliability/application/idempotency"
+	"github.com/GulovM/PharmacyCRM/backend/internal/platform/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -66,7 +67,7 @@ func TestIdempotencyRepositoryIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = idempotency.NewService(NewIdempotencyRepository(tx)).Claim(ctx, conflict)
+	_, err = idempotency.NewService(NewTransactionalIdempotencyRepository(database.WrapPGXTransaction(tx))).Claim(ctx, conflict)
 	_ = tx.Rollback(ctx)
 	if !errors.Is(err, idempotency.ErrKeyReused) {
 		t.Fatalf("expected fingerprint conflict, got %v", err)
@@ -107,7 +108,7 @@ func withinIdempotencyTransaction(t *testing.T, ctx context.Context, pool *pgxpo
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if err := fn(idempotency.NewService(NewIdempotencyRepository(tx))); err != nil {
+	if err := fn(idempotency.NewService(NewTransactionalIdempotencyRepository(database.WrapPGXTransaction(tx)))); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -122,7 +123,7 @@ func testConcurrentClaimReplay(t *testing.T, ctx context.Context, pool *pgxpool.
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := idempotency.NewService(NewIdempotencyRepository(tx1)).Claim(ctx, claim)
+	first, err := idempotency.NewService(NewTransactionalIdempotencyRepository(database.WrapPGXTransaction(tx1))).Claim(ctx, claim)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +137,7 @@ func testConcurrentClaimReplay(t *testing.T, ctx context.Context, pool *pgxpool.
 			return
 		}
 		defer tx2.Rollback(ctx)
-		second, err := idempotency.NewService(NewIdempotencyRepository(tx2)).Claim(ctx, claim)
+		second, err := idempotency.NewService(NewTransactionalIdempotencyRepository(database.WrapPGXTransaction(tx2))).Claim(ctx, claim)
 		if err == nil {
 			err = tx2.Commit(ctx)
 		}
@@ -148,7 +149,7 @@ func testConcurrentClaimReplay(t *testing.T, ctx context.Context, pool *pgxpool.
 	}()
 
 	time.Sleep(50 * time.Millisecond)
-	service1 := idempotency.NewService(NewIdempotencyRepository(tx1))
+	service1 := idempotency.NewService(NewTransactionalIdempotencyRepository(database.WrapPGXTransaction(tx1)))
 	if err := service1.Complete(ctx, idempotency.Completion{RecordID: first.RecordID, Result: idempotency.StoredResult{ResponseStatus: 200, ResponseBody: json.RawMessage(`{"race":"winner"}`)}}); err != nil {
 		t.Fatal(err)
 	}

@@ -14,7 +14,7 @@ import (
 )
 
 type unitOfWork struct {
-	outbox *outboxpostgres.OutboxRepository
+	outbox *outboxpostgres.TransactionalOutboxRepository
 	audit  *audit.Writer
 }
 
@@ -33,10 +33,10 @@ type Transactor struct {
 func NewTransactor(pool *database.Pool, observer database.RollbackErrorObserver) *Transactor {
 	return &Transactor{runner: database.NewTransactionRunner(
 		pool,
-		func(executor database.DBTX) outboxreplay.UnitOfWork {
+		func(executor database.TransactionExecutor) outboxreplay.UnitOfWork {
 			return &unitOfWork{
-				outbox: outboxpostgres.NewOutboxRepository(executor),
-				audit:  audit.NewWriter(auditpostgres.NewRepository(executor), outboxreplay.AuditMetadataPolicy()),
+				outbox: outboxpostgres.NewTransactionalOutboxRepository(executor),
+				audit:  audit.NewWriter(auditpostgres.NewTransactionalAuditRepository(executor), outboxreplay.AuditMetadataPolicy()),
 			}
 		},
 		observer,

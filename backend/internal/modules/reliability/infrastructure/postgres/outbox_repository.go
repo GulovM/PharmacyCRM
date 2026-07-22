@@ -12,13 +12,13 @@ import (
 	"github.com/google/uuid"
 )
 
-type OutboxRepository struct{ executor database.DBTX }
+type TransactionalOutboxRepository struct{ executor database.TransactionExecutor }
 
-func NewOutboxRepository(executor database.DBTX) *OutboxRepository {
-	return &OutboxRepository{executor: executor}
+func NewTransactionalOutboxRepository(executor database.TransactionExecutor) *TransactionalOutboxRepository {
+	return &TransactionalOutboxRepository{executor: executor}
 }
 
-func (r *OutboxRepository) Append(ctx context.Context, event outbox.Event) error {
+func (r *TransactionalOutboxRepository) Append(ctx context.Context, event outbox.Event) error {
 	if event.Headers == nil {
 		event.Headers = map[string]string{}
 	}
@@ -41,7 +41,7 @@ func (r *OutboxRepository) Append(ctx context.Context, event outbox.Event) error
 	return nil
 }
 
-func (r *OutboxRepository) ClaimBatch(ctx context.Context, request outbox.ClaimRequest) ([]outbox.Lease, error) {
+func (r *TransactionalOutboxRepository) ClaimBatch(ctx context.Context, request outbox.ClaimRequest) ([]outbox.Lease, error) {
 	// A worker that crashed on its final permitted attempt cannot acknowledge
 	// the result. Once its lease expires, move it to the dead-letter state so
 	// the row cannot remain PROCESSING forever.
@@ -110,7 +110,7 @@ func (r *OutboxRepository) ClaimBatch(ctx context.Context, request outbox.ClaimR
 	return leases, nil
 }
 
-func (r *OutboxRepository) MarkProcessed(ctx context.Context, lease outbox.Lease, completedAt time.Time) error {
+func (r *TransactionalOutboxRepository) MarkProcessed(ctx context.Context, lease outbox.Lease, completedAt time.Time) error {
 	tag, err := r.executor.Exec(ctx, `
 		UPDATE outbox_events
 		SET status = 'PROCESSED', processed_at = $5,
@@ -127,7 +127,7 @@ func (r *OutboxRepository) MarkProcessed(ctx context.Context, lease outbox.Lease
 	return nil
 }
 
-func (r *OutboxRepository) MarkFailed(ctx context.Context, lease outbox.Lease, failure outbox.Failure, failedAt, availableAt time.Time) error {
+func (r *TransactionalOutboxRepository) MarkFailed(ctx context.Context, lease outbox.Lease, failure outbox.Failure, failedAt, availableAt time.Time) error {
 	terminal := !failure.Retryable || lease.Attempt >= lease.MaxAttempts
 	tag, err := r.executor.Exec(ctx, `
 		UPDATE outbox_events
@@ -149,7 +149,7 @@ func (r *OutboxRepository) MarkFailed(ctx context.Context, lease outbox.Lease, f
 	return nil
 }
 
-func (r *OutboxRepository) ReplayDeadLetter(ctx context.Context, id uuid.UUID, availableAt time.Time) error {
+func (r *TransactionalOutboxRepository) ReplayDeadLetter(ctx context.Context, id uuid.UUID, availableAt time.Time) error {
 	tag, err := r.executor.Exec(ctx, `
 		UPDATE outbox_events
 		SET status = 'PENDING', attempt_count = 0, available_at = $2,
@@ -172,7 +172,9 @@ type OutboxTransactor struct {
 func NewOutboxTransactor(pool *database.Pool, observer database.RollbackErrorObserver) *OutboxTransactor {
 	return &OutboxTransactor{runner: database.NewTransactionRunner(
 		pool,
-		func(executor database.DBTX) outbox.Repository { return NewOutboxRepository(executor) },
+		func(executor database.TransactionExecutor) outbox.Repository {
+			return NewTransactionalOutboxRepository(executor)
+		},
 		observer,
 	)}
 }
@@ -184,5 +186,5 @@ func (t *OutboxTransactor) WithinTransaction(ctx context.Context, fn func(contex
 	return t.runner.WithinTransaction(ctx, fn)
 }
 
-var _ outbox.Repository = (*OutboxRepository)(nil)
+var _ outbox.Repository = (*TransactionalOutboxRepository)(nil)
 var _ outbox.Transactor = (*OutboxTransactor)(nil)
