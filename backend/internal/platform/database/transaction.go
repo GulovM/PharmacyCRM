@@ -42,6 +42,7 @@ type TransactionRunner[T any] struct {
 	begin             beginTransaction
 	newUnitOfWork     UnitOfWorkFactory[T]
 	onRollbackFailure RollbackErrorObserver
+	options           pgx.TxOptions
 }
 
 func NewTransactionRunner[T any](pool *Pool, factory UnitOfWorkFactory[T], observer RollbackErrorObserver) *TransactionRunner[T] {
@@ -67,7 +68,11 @@ func (r *TransactionRunner[T]) WithinTransaction(ctx context.Context, fn func(co
 		return fmt.Errorf("unit of work factory is nil")
 	}
 
-	tx, err := r.begin(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	options := r.options
+	if options.IsoLevel == "" {
+		options.IsoLevel = pgx.ReadCommitted
+	}
+	tx, err := r.begin(ctx, options)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
