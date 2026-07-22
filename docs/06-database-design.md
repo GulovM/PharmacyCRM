@@ -881,6 +881,8 @@ CREATE INDEX idx_outbox_claim ON outbox_events (available_at, created_at, id) WH
 CREATE INDEX idx_outbox_processing_lease ON outbox_events (lease_expires_at, id) WHERE status = 'PROCESSING';
 CREATE INDEX idx_outbox_partition ON outbox_events (partition_key, occurred_at, id);
 CREATE INDEX idx_outbox_aggregate ON outbox_events (aggregate_type, aggregate_id, occurred_at, id);
+CREATE INDEX idx_outbox_processed_retention ON outbox_events (processed_at, id) WHERE status = 'PROCESSED';
+CREATE INDEX idx_outbox_dead_letter_retention ON outbox_events (dead_lettered_at, id) WHERE status = 'DEAD_LETTER';
 
 -- =====================================================================
 -- Audit
@@ -1093,7 +1095,9 @@ actor + operation + effective_scope + idempotency_key
 6. Side effect выполняется вне transaction claim-а.
 7. Consumer обязан быть idempotent; irreversible external operation использует provider idempotency key или отдельный dedup protocol.
 8. Exhausted attempts переводят event в `DEAD_LETTER` и создают operational signal.
-9. Projection имеет rebuild/reconciliation path.
+9. Отдельная periodic retention task удаляет bounded terminal batches по `processed_at`/`dead_lettered_at`; `PENDING`/`PROCESSING` не удаляются.
+10. Runtime role не имеет table-level `DELETE`: cleanup доступен только через ограниченные `SECURITY DEFINER` functions с batch `1..1000`.
+11. Projection имеет rebuild/reconciliation path.
 
 ### 6.8 Audit
 

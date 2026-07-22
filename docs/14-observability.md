@@ -529,6 +529,8 @@ Metrics не являются доказательством единичной 
 - heartbeat/readiness;
 - worker protocol mismatch;
 - projection lag.
+- retention batches/deleted rows по bounded `status` (`PROCESSED`, `DEAD_LETTER`);
+- retention cycle failures.
 
 ### 17.2 Imports
 

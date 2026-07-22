@@ -10,7 +10,7 @@ import (
 const (
 	productionEnvironment   = "production"
 	approvedJWTAlgorithm    = "EdDSA"
-	SupportedSchemaVersion  = 18
+	SupportedSchemaVersion  = 19
 	SupportedWorkerProtocol = 1
 )
 
@@ -20,8 +20,8 @@ type AppConfig struct {
 	Version          string `default:"dev"`
 	CommitSHA        string `envconfig:"COMMIT_SHA" default:"unknown"`
 	Debug            bool   `default:"false"`
-	MinSchemaVersion int    `envconfig:"MIN_SCHEMA_VERSION" default:"18"`
-	MaxSchemaVersion int    `envconfig:"MAX_SCHEMA_VERSION" default:"18"`
+	MinSchemaVersion int    `envconfig:"MIN_SCHEMA_VERSION" default:"19"`
+	MaxSchemaVersion int    `envconfig:"MAX_SCHEMA_VERSION" default:"19"`
 	WorkerProtocol   int    `envconfig:"WORKER_PROTOCOL" default:"1"`
 }
 
@@ -95,13 +95,17 @@ type TelemetryConfig struct {
 }
 
 type WorkerConfig struct {
-	ProtocolVersion int           `envconfig:"PROTOCOL_VERSION" default:"1"`
-	Owner           string        `required:"true"`
-	Concurrency     int           `default:"1"`
-	PollInterval    time.Duration `envconfig:"POLL_INTERVAL" default:"1s"`
-	LeaseDuration   time.Duration `envconfig:"LEASE_DURATION" default:"30s"`
-	MaxClaim        int           `envconfig:"MAX_CLAIM" default:"100"`
-	DrainTimeout    time.Duration `envconfig:"DRAIN_TIMEOUT" default:"20s"`
+	ProtocolVersion     int           `envconfig:"PROTOCOL_VERSION" default:"1"`
+	Owner               string        `required:"true"`
+	Concurrency         int           `default:"1"`
+	PollInterval        time.Duration `envconfig:"POLL_INTERVAL" default:"1s"`
+	LeaseDuration       time.Duration `envconfig:"LEASE_DURATION" default:"30s"`
+	MaxClaim            int           `envconfig:"MAX_CLAIM" default:"100"`
+	DrainTimeout        time.Duration `envconfig:"DRAIN_TIMEOUT" default:"20s"`
+	RetentionInterval   time.Duration `envconfig:"RETENTION_INTERVAL" default:"24h"`
+	RetentionBatchSize  int           `envconfig:"RETENTION_BATCH_SIZE" default:"100"`
+	ProcessedRetention  time.Duration `envconfig:"PROCESSED_RETENTION" default:"720h"`
+	DeadLetterRetention time.Duration `envconfig:"DEAD_LETTER_RETENTION" default:"4320h"`
 }
 
 type StorageConfig struct {

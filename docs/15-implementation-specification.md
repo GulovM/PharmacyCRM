@@ -417,6 +417,7 @@ Mandatory audit входит в business transaction. Audit failure → rollback
 - exhausted → `DEAD_LETTER`;
 - consumer idempotent;
 - processed retention 30 дней, dead letter 180 дней;
+- retention запускается отдельной periodic task, удаляет bounded terminal batches по `processed_at`/`dead_lettered_at` и не получает table-level `DELETE` для runtime role;
 - projection имеет rebuild/reconciliation path.
 
 ## 8. Общие observability и testing requirements

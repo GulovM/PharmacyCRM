@@ -569,6 +569,8 @@ PENDING/PROCESSING → DEAD_LETTER
 6. processed rows retention 30 дней, dead letters 180 дней;
 7. event payload не является копией HTTP DTO и не содержит secrets.
 
+Retention выполняется отдельной periodic worker task, не в claim transaction. Она удаляет bounded batches только по `processed_at`/`dead_lettered_at`; `PENDING` и `PROCESSING` не являются кандидатами. Runtime не имеет table-level `DELETE` и вызывает только две terminal-state `SECURITY DEFINER` функции.
+
 ## 14. Audit context
 
 `AuditEvent` — append-only record/aggregate root без команд изменения.

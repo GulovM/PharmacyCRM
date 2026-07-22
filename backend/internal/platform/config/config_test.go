@@ -104,7 +104,7 @@ func validAPIConfig() APIConfig {
 		Auth:            AuthConfig{JWTIssuer: "pharmacycrm", JWTAudience: "pharmacycrm-api", JWTAlgorithm: "EdDSA", JWTPrivateKey: "private-key", RefreshTokenPepper: "pepper", CookieSameSite: "strict", AccessTokenTTL: time.Second, RefreshAbsoluteTTL: 2 * time.Second, RefreshIdleTTL: time.Second},
 		Logging:         LoggingConfig{Level: "info", Format: "console", FilePath: "var/log/pharmacycrm/app.log", MaxSizeMB: 1, MaxBackups: 1, MaxAgeDays: 1},
 		Telemetry:       TelemetryConfig{MetricsAddress: ":9090", ExportTimeout: time.Second},
-		Worker:          WorkerConfig{ProtocolVersion: 1, Owner: "worker-test-1", Concurrency: 1, PollInterval: time.Second, LeaseDuration: time.Second, MaxClaim: 1, DrainTimeout: time.Second},
+		Worker:          WorkerConfig{ProtocolVersion: 1, Owner: "worker-test-1", Concurrency: 1, PollInterval: time.Second, LeaseDuration: time.Second, MaxClaim: 1, DrainTimeout: time.Second, RetentionInterval: time.Hour, RetentionBatchSize: 100, ProcessedRetention: 30 * 24 * time.Hour, DeadLetterRetention: 180 * 24 * time.Hour},
 		Storage:         StorageConfig{ImportRoot: "var/imports", MaxUploadBytes: 1, Retention: time.Second},
 	}
 }
@@ -122,6 +122,8 @@ func TestValidateAPIRejectsUnsafeConfiguration(t *testing.T) {
 		{"empty worker owner", func(c *APIConfig) { c.Worker.Owner = "" }},
 		{"oversized claim", func(c *APIConfig) { c.Worker.MaxClaim = 101 }},
 		{"drain exceeds process shutdown", func(c *APIConfig) { c.Worker.DrainTimeout = 21 * time.Second }},
+		{"oversized retention batch", func(c *APIConfig) { c.Worker.RetentionBatchSize = 1001 }},
+		{"short processed retention", func(c *APIConfig) { c.Worker.ProcessedRetention = 29 * 24 * time.Hour }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

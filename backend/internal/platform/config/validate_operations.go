@@ -52,7 +52,7 @@ func validateWorker(c WorkerConfig, expectedProtocol int) error {
 	if strings.TrimSpace(c.Owner) == "" || c.Owner != strings.TrimSpace(c.Owner) || len(c.Owner) > 200 {
 		return invalid("worker owner is invalid")
 	}
-	if c.Concurrency < 1 || c.MaxClaim < 1 || c.MaxClaim > 100 || c.PollInterval <= 0 || c.LeaseDuration <= 0 || c.DrainTimeout <= 0 || c.DrainTimeout > workerProcessShutdownTimeout {
+	if c.Concurrency < 1 || c.MaxClaim < 1 || c.MaxClaim > 100 || c.PollInterval <= 0 || c.LeaseDuration <= 0 || c.DrainTimeout <= 0 || c.DrainTimeout > workerProcessShutdownTimeout || c.RetentionInterval <= 0 || c.RetentionBatchSize < 1 || c.RetentionBatchSize > 1000 || c.ProcessedRetention != 30*24*time.Hour || c.DeadLetterRetention != 180*24*time.Hour {
 		return invalid("worker settings are invalid")
 	}
 	return nil

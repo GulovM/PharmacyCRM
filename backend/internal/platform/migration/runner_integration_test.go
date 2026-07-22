@@ -57,7 +57,7 @@ func TestUpgradeFromE1Integration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(loaded) != 18 || loaded[0].Version != 1 || loaded[0].Name != "schema_metadata" {
+	if len(loaded) != 19 || loaded[0].Version != 1 || loaded[0].Name != "schema_metadata" {
 		t.Fatalf("unexpected migration set: %#v", loaded)
 	}
 	rawPool, err := pgxpool.New(ctx, isolatedDSN)
@@ -97,14 +97,14 @@ func TestUpgradeFromE1Integration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.SchemaVersion != 18 || len(result.Applied) != 17 || result.Applied[0] != 2 || result.Applied[len(result.Applied)-1] != 18 {
+	if result.SchemaVersion != 19 || len(result.Applied) != 18 || result.Applied[0] != 2 || result.Applied[len(result.Applied)-1] != 19 {
 		t.Fatalf("unexpected upgrade result: %#v", result)
 	}
 	replayed, err := Run(ctx, pool, loaded)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replayed.SchemaVersion != 18 || len(replayed.Applied) != 0 {
+	if replayed.SchemaVersion != 19 || len(replayed.Applied) != 0 {
 		t.Fatalf("migrations were unexpectedly replayed: %#v", replayed)
 	}
 

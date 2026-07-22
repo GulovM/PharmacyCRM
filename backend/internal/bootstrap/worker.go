@@ -136,7 +136,42 @@ func buildOutboxWorker(pool workerProcessPool, cfg config.WorkerProcessConfig, l
 		PollInterval: cfg.Worker.PollInterval, LeaseDuration: cfg.Worker.LeaseDuration,
 		DrainTimeout: cfg.Worker.DrainTimeout,
 	}, observer, reliabilitypostgres.OutboxClaimErrorClassifier{})
-	return worker, nil, err
+	if err != nil {
+		return nil, nil, err
+	}
+	retentionObserver := &outboxRetentionObserver{logger: logger}
+	retentionTransactor := reliabilitypostgres.NewOutboxRetentionTransactor(databasePool, func(_ context.Context, err error) {
+		logger.Error("outbox.retention.transaction.rollback_failed", zap.Error(err))
+	})
+	retention, err := outbox.NewRetentionService(retentionTransactor, outbox.RetentionConfig{
+		ProcessedFor: cfg.Worker.ProcessedRetention, DeadLettersFor: cfg.Worker.DeadLetterRetention,
+		Interval: cfg.Worker.RetentionInterval, BatchSize: cfg.Worker.RetentionBatchSize,
+	}, retentionObserver)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &outboxWorkerProcess{delivery: worker, retention: retention}, nil, nil
+}
+
+type outboxWorkerProcess struct {
+	delivery  *outbox.Worker
+	retention *outbox.RetentionService
+}
+
+func (p *outboxWorkerProcess) ValidateProtocols(protocols []outbox.EventKey) error {
+	return p.delivery.ValidateProtocols(protocols)
+}
+
+func (p *outboxWorkerProcess) Run(ctx context.Context) error {
+	processContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make(chan error, 2)
+	go func() { results <- p.delivery.Run(processContext) }()
+	go func() { results <- p.retention.Run(processContext) }()
+	first := <-results
+	cancel()
+	second := <-results
+	return errors.Join(first, second)
 }
 
 type outboxProcessObserver struct {
@@ -162,4 +197,25 @@ func (o *outboxProcessObserver) StaleLease(_ context.Context, lease outbox.Lease
 func (o *outboxProcessObserver) DeadLettered(_ context.Context, lease outbox.Lease, code string) {
 	o.deadLetters.Add(1)
 	o.logger.Error("outbox.event.dead_lettered", zap.String("event_id", lease.ID.String()), zap.String("error_code", code))
+}
+
+type outboxRetentionObserver struct {
+	logger           workerProcessLogger
+	processedDeleted atomic.Uint64
+	deadDeleted      atomic.Uint64
+	cycleFailures    atomic.Uint64
+}
+
+func (o *outboxRetentionObserver) BatchDeleted(_ context.Context, status string, deleted int64) {
+	if status == "PROCESSED" {
+		o.processedDeleted.Add(uint64(deleted))
+	} else {
+		o.deadDeleted.Add(uint64(deleted))
+	}
+	o.logger.Info("outbox.retention.batch.completed", zap.String("status", status), zap.Int64("deleted", deleted))
+}
+
+func (o *outboxRetentionObserver) CycleFailed(_ context.Context, err error) {
+	o.cycleFailures.Add(1)
+	o.logger.Error("outbox.retention.cycle.failed", zap.Error(err))
 }
