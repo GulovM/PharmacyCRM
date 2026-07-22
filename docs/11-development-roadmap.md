@@ -245,7 +245,7 @@ Gate E0 закрыт 2026-07-20. Параллельные несовместим
 ### Обязательные evidence
 
 - migration from zero;
-- upgrade E1 schema `1` → current E2 schema `21` с immutable checksum history;
+- upgrades `0 → 23`, E1 `1 → 23`, `19 → 23`, `21 → 23` и `23 → no-op` с immutable checksum history;
 - rollback transaction function;
 - panic внутри UoW;
 - commit failure;
@@ -254,6 +254,9 @@ Gate E0 закрыт 2026-07-20. Параллельные несовместим
 - same-key different-payload conflict;
 - audit insert failure → rollback;
 - two-worker lease race;
+- bounded exhausted-lease terminalization with deterministic order and at most `2N` changed rows per claim transaction;
+- E1 runtime credential retirement with password/default/direct privileges removed and idempotent pre/post-migration provisioning;
+- API startup independent from all `WORKER_*` operational settings;
 - duplicate outbox delivery без duplicate business effect;
 - runtime DB role не может изменять immutable rows штатным путём;
 - mandatory PostgreSQL suites реально запускаются в CI без optional skip.

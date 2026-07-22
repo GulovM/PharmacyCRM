@@ -1,6 +1,6 @@
 # PharmacyCRM — Testing Strategy
 
-> E2 schema `23` integration coverage includes E1/19 upgrades, session-security negative constraints, API/worker privilege denial and capability-based outbox replay.
+> E2 schema `23` integration coverage includes E1/19/21 upgrades, real E1 credential retirement, process-owned configuration, bounded exhausted-lease terminalization, session-security negative constraints, API/worker privilege denial and capability-based outbox replay.
 
 The source-size architecture gate has Bash and PowerShell fixture tests; retention tests prove the shared batch budget and cycle deadline.
 
@@ -424,6 +424,10 @@ Concurrency tests используют real PostgreSQL, independent connections 
 - crash before side effect;
 - crash after side effect before acknowledge;
 - lease expiry recovery;
+- exhausted lease terminalization is deterministic by `lease_expires_at, id`, bounded by request limit `1..100`, and changes at most `2N` rows together with claim;
+- unexpired, retryable, `PENDING`, `PROCESSED` and already `DEAD_LETTER` rows are not terminalized;
+- concurrent workers do not process the same exhausted lease twice and independently respect `SKIP LOCKED` limits;
+- invalid claim owner/limit/lease/timestamp/protocol input returns a typed pre-SQL error;
 - stale fencing rejection;
 - bounded retry/backoff;
 - poison event dead-letter;
@@ -444,7 +448,7 @@ Concurrency tests используют real PostgreSQL, independent connections 
 5. на безопасный retry, где применимо;
 6. verification queries и негативные tests, которые удаляют critical identity index/outbox constraint либо required runtime grant и требуют отказа migration runner;
 7. rollback/forward-fix rehearsal;
-8. runtime role permissions;
+8. runtime role permissions, including a real isolated E1 LOGIN/password/default-ACL scenario and post-migration compatibility-role reconciliation;
 9. readiness compatibility;
 10. отсутствие truncation/overflow;
 11. duplicate/dirty input handling при backfill;
@@ -623,10 +627,11 @@ Mock не заменяет PostgreSQL для UoW, locks, constraints, idempotenc
 - architecture/docs checks;
 - secret/dependency scans.
 
-Mandatory PostgreSQL CI gate запускает без skip:
+Mandatory PostgreSQL CI gate запускает без skip при `CI_INTEGRATION_REQUIRED=true`:
 
+- `deploy/scripts/tests/test-e1-role-upgrade.sh` как отдельный шаг `Verify E1 runtime credential retirement`;
 - `internal/platform/database -run Integration`;
-- `internal/platform/migration -run Integration` (включая E1 `1` → E2 `21`);
+- `internal/platform/migration -run Integration` (пути `0 → 23`, E1 `1 → 23`, `19 → 23`, `21 → 23` и `23 → no-op`);
 - `internal/modules/reliability/infrastructure/postgres -run Integration`;
 - `internal/modules/audit/infrastructure/postgres -run Integration`;
 - `internal/orchestration/outboxreplay/postgres -run Integration`;

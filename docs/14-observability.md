@@ -527,12 +527,16 @@ Metrics не являются доказательством единичной 
 - success/failure/retry;
 - dead-letter count;
 - lease expiry/recovery;
+- exhausted leases terminalized per poll и cumulative count с reason `LEASE_EXPIRED_AFTER_MAX_ATTEMPTS`;
+- terminalization batch saturation (`rows_affected == configured_limit`) как сигнал накопленного exhausted backlog;
 - stale fencing rejection;
 - heartbeat/readiness;
 - worker protocol mismatch;
 - projection lag.
 - retention batches/deleted rows по bounded `status` (`PROCESSED`, `DEAD_LETTER`);
 - retention cycle failures.
+
+Repository получает `RowsAffected()` для exhausted-lease terminalization и проверяет, что result не превышает bounded limit. На E2 существующий observer interface не расширяется ради одного счётчика: значение доступно internal test seam и может быть выведено structured worker log/metric через существующую observability abstraction без изменения repository contract. Один poll не должен создавать unbounded WAL/lock spike; saturation и outbox oldest age рассматриваются совместно.
 
 ### 17.2 Imports
 
