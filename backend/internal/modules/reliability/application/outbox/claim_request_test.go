@@ -20,6 +20,13 @@ func TestClaimRequestValidate(t *testing.T) {
 		t.Fatalf("valid request rejected: %v", err)
 	}
 
+	maintenance := valid
+	maintenance.Protocols = nil
+	maintenance.MaintenanceOnly = true
+	if err := maintenance.Validate(); err != nil {
+		t.Fatalf("valid maintenance request rejected: %v", err)
+	}
+
 	tests := []struct {
 		name   string
 		change func(*ClaimRequest)
@@ -34,6 +41,7 @@ func TestClaimRequestValidate(t *testing.T) {
 		{"invalid protocol name", func(request *ClaimRequest) { request.Protocols[0].Name = "" }},
 		{"invalid protocol version", func(request *ClaimRequest) { request.Protocols[0].Version = 0 }},
 		{"duplicate protocol", func(request *ClaimRequest) { request.Protocols = append(request.Protocols, request.Protocols[0]) }},
+		{"maintenance with protocols", func(request *ClaimRequest) { request.MaintenanceOnly = true }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
