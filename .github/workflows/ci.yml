@@ -48,7 +48,16 @@ jobs:
       - name: Check Bash source-size fixtures
         run: bash scripts/tests/check-source-size.sh
       - name: Check PowerShell source-size fixtures
-        run: pwsh -File scripts/tests/check-source-size.ps1
+        run: |
+          set -o pipefail
+          pwsh -File scripts/tests/check-source-size.ps1 2>&1 | tee "$RUNNER_TEMP/powershell-source-size.log"
+      - name: Upload PowerShell source-size failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: powershell-source-size-failure
+          path: ${{ runner.temp }}/powershell-source-size.log
+          if-no-files-found: error
       - name: Check architecture boundaries
         run: make architecture-check
 
@@ -114,16 +123,26 @@ jobs:
       - name: Run mandatory E2 PostgreSQL integration tests
         working-directory: backend
         run: |
-          test -n "$POSTGRES_TEST_DSN"
-          test "$CI_INTEGRATION_REQUIRED" = "true"
-          go test ./internal/platform/migration -run Integration -count=1
-          go test ./internal/platform/database -run Integration -count=1
-          go test ./internal/modules/reliability/infrastructure/postgres -run Integration -count=1
-          go test ./internal/modules/audit/infrastructure/postgres -run Integration -count=1
-          go test ./internal/orchestration/outboxreplay/postgres -run Integration -count=1
-          go test ./internal/testkit/reconciliation -run Integration -count=1
-          go test ./internal/testkit/schema -run Integration -count=1
-          go test ./internal/bootstrap -count=1
+          set -o pipefail
+          {
+            test -n "$POSTGRES_TEST_DSN"
+            test "$CI_INTEGRATION_REQUIRED" = "true"
+            go test ./internal/platform/migration -run Integration -count=1
+            go test ./internal/platform/database -run Integration -count=1
+            go test ./internal/modules/reliability/infrastructure/postgres -run Integration -count=1
+            go test ./internal/modules/audit/infrastructure/postgres -run Integration -count=1
+            go test ./internal/orchestration/outboxreplay/postgres -run Integration -count=1
+            go test ./internal/testkit/reconciliation -run Integration -count=1
+            go test ./internal/testkit/schema -run Integration -count=1
+            go test ./internal/bootstrap -count=1
+          } 2>&1 | tee "$RUNNER_TEMP/postgres-integration.log"
+      - name: Upload PostgreSQL integration failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-integration-failure
+          path: ${{ runner.temp }}/postgres-integration.log
+          if-no-files-found: error
       - name: Run database and reliability race detector suites
         working-directory: backend
         run: |
