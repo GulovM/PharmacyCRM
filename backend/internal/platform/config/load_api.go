@@ -35,10 +35,6 @@ func LoadAPI() (APIConfig, error) {
 		struct {
 			prefix string
 			target any
-		}{"WORKER", &cfg.Worker},
-		struct {
-			prefix string
-			target any
 		}{"STORAGE", &cfg.Storage},
 	); err != nil {
 		return APIConfig{}, err
