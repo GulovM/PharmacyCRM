@@ -1,0 +1,86 @@
++assigns the single approved `NOLOGIN` group. Unexpected memberships, direct
++table/column/function/schema/database ACLs, and default ACLs are removed. The
++migration login remains the controlled owner/migrator identity and is never
++injected into API or worker processes.
++
++`pharmacycrm_runtime` exists only because immutable migrations reference that
++name. After the final provisioning pass it is `NOLOGIN`, has no password,
++members, memberships, default ACLs, or direct access to target database
++objects. New API and worker logins never inherit it.
++
++The E2 worker has no domain consumers yet. Its empty protocol registry runs in
++an explicit maintenance-only mode: it can terminalize expired exhausted
++leases and execute retention, but it cannot claim an unknown business event.
++
++The cluster-role integration test is destructive by design and must run only
++against a disposable PostgreSQL cluster with
++`ALLOW_DESTRUCTIVE_CLUSTER_ROLE_TEST=true`. It refuses to start when reserved
++PharmacyCRM roles already exist. CI verifies schema version `23`, the
++least-privilege matrix, real E1 credential retirement, polluted service-role
++reconciliation, and production worker maintenance wiring.
+--- a/docs/04-01-backend-architecture.md
++++ b/docs/04-01-backend-architecture.md
+@@ -2,7 +2,7 @@
+ 
+ **Статус документа:** Draft  
+ **Версия:** 2.0  
+-**Дата:** 2026-07-21  
++**Дата:** 2026-07-22  
+ **Связанные документы:** `02-srs.md`, `04-architecture.md`, `05-api-design.md`, `06-database-design.md`, `07-domain-model.md`, `08-project-structure.md`  
+ **Связанные ADR:** ADR-0013, ADR-0014, ADR-0015, ADR-0016, ADR-0017
+ 
+@@ -189,6 +189,18 @@
+ 
+ Запрещены global service locator, package-level mutable dependency registry и чтение environment из произвольных business packages.
+ 
++### 7.1 Process configuration boundaries
++
++Каждый executable загружает только принадлежащую ему operational configuration:
++
++- `APIConfig` содержит `App`, `HTTP`, `APIPostgres`, `Auth`, `ProxyCORS`, `Logging`, `Telemetry` и `Storage`;
++- API loader не читает и не валидирует `WORKER_*`; отсутствие или некорректность worker operational settings не может остановить API;
++- `WorkerProcessConfig` содержит отдельный `WorkerPostgres` и полный `WorkerConfig`; `LoadWorker()` строго проверяет owner, concurrency, polling, lease, claim, drain и retention limits;
++- `MigrationConfig` содержит только shared application metadata, migration DSN и logging;
++- protocol compatibility остаётся shared release contract через `AppConfig.WorkerProtocol`, но полный operational `WorkerConfig` никогда не возвращается API process.
++
++`POSTGRES_API_RUNTIME_DSN`, `POSTGRES_WORKER_RUNTIME_DSN` и `POSTGRES_MIGRATION_DSN` доставляются только соответствующему process. Переменная из чужой process ownership group не является скрытой startup dependency.
++
+ ## 8. Dependency Injection
+ 
+ Используется ручной constructor-based DI.
+@@ -426,11 +438,14 @@
+ - использует at-least-once delivery и idempotent consumers;
+ - повторяет максимум 8 раз с full-jitter exponential backoff 2 s → cap 15 min;
+ - после exhaustion переводит event в `DEAD_LETTER`;
+-- при transient polling errors использует bounded backoff, при fatal error прекращает polling и выполняет bounded graceful drain уже запущенных handlers;
++- перед claim переводит только bounded batch просроченных `PROCESSING` leases с исчерпанными attempts: deterministic `ORDER BY lease_expires_at, id`, `FOR UPDATE SKIP LOCKED`, limit `1..100`;
++- при request limit `N` одна claim transaction меняет не более `N` exhausted rows плюс `N` claimed rows, то есть максимум `2N`;
++- invalid owner, limit, lease duration, timestamp или protocol set отклоняются typed application error до первого SQL statement; пустой protocol set допустим только при явном `MaintenanceOnly=true` и никогда не означает claim всех event types;
++- при transient polling errors использует bounded backoff, при fatal error прекращает polling и выполняет двухфазный bounded shutdown: drain, cancellation, затем cancellation grace period до закрытия pool/logger;
+ - запускает отдельную periodic retention task: `PROCESSED` 30 дней, `DEAD_LETTER` 180 дней, bounded batches;
+ - экспортирует backlog, oldest age, retries, stale completion, dead-letter и retention metrics/logs.
+ 
+-`cmd/worker` загружает worker-only config, создаёт logger и runtime pool, проверяет schema/worker protocol compatibility, регистрирует signal context, запускает polling+retention и закрывает pool/logger после drain. Worker не обновляет чужие business tables напрямую и не выполняет best-effort substitute для обязательного outbox.
++`cmd/worker` загружает worker-only config, создаёт logger и runtime pool, проверяет schema/worker protocol compatibility, регистрирует signal context, запускает polling+retention и закрывает pool/logger только после bounded drain/cancellation phase. В E2 registry domain consumers пуст: delivery loop работает в явном maintenance-only режиме, терминализирует expired exhausted leases и не claim-ит неизвестные events; retention продолжает работать. Worker не обновляет чужие business tables напрямую и не выполняет best-effort substitute для обязательного outbox.
+ 
+ ## 19. Тестирование
+ 
+--- a/docs/09-security-design.md
++++ b/docs/09-security-design.md
+@@ -6,7 +6,7 @@
+ 
+ **Статус документа:** Draft  
+ **Версия:** 2.0  
+-**Дата:** 2026-07-21  
++**Дата:** 2026-07-22  
+ 
+ ## 1. Назначение документа
+ 
+@@ -416,6 +416,14 @@
+ 
+ Runtime role не создаёт schema/roles/extensions, не выполняет unrestricted DDL и не имеет `BYPASSRLS`/superuser privileges.
+ 
++Provisioning требует явный `provisioning_mode=fresh|upgrade`. `fresh` разрешён только для пустой БД или уже согласованной schema version `23`; обнаружение более старой metadata немедленно прекращает операцию и требует upgrade procedure. E1 → E2 upgrade дополнительно требует точный `legacy_runtime_role`. Пустой/отсутствующий mode, пустое имя, отсутствующая role, collision с API/worker/migration login или reserved E2 group role завершаются fail closed.
++
++Перед retirement cluster-wide ownership и ownership-related membership проверяются через `pg_shdepend`. Role с ownership, owning parent membership или privileges в другой database не изменяется автоматически. В target database каталоги `pg_default_acl`, ACL catalogs и `DROP OWNED` используются только после доказательства отсутствия ownership: direct table, column, sequence, function, schema/database privileges, default ACL и memberships удаляются; login отключается и password очищается. Legacy role сохраняется для audit/operational review.
++
