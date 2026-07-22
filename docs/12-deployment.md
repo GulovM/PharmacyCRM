@@ -6,7 +6,7 @@ All embedded migrations carry executable verification queries. Supported upgrade
 
 **Статус документа:** Draft  
 **Версия:** 1.1  
-**Дата:** 2026-07-21  
+**Дата:** 2026-07-22  
 **Связанные документы:** `03-system-context.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `06-database-design.md`, `08-project-structure.md`, `09-security-design.md`, `10-sequence-diagrams.md`, `11-development-roadmap.md`
 
 ## 1. Назначение и нормативная роль
@@ -361,7 +361,9 @@ Production PostgreSQL:
 
 API и worker roles обязаны различаться и используют отдельные `POSTGRES_API_RUNTIME_DSN` и `POSTGRES_WORKER_RUNTIME_DSN`; migration job использует только `POSTGRES_MIGRATION_DSN`. Runtime roles не имеют права создавать schema, управлять roles, выполнять unrestricted DDL или изменять immutable history вне разрешённого protocol.
 
-Для E1 upgrade deployment передаёт upgrade-only `legacy_runtime_role`. Provisioning обнаруживает и отзывает legacy default ACL независимо от owner, direct privileges и memberships, затем устанавливает `NOLOGIN` и `PASSWORD NULL`. Legacy role не удаляется автоматически. `pharmacycrm_runtime` остаётся только `NOLOGIN` compatibility role без password, members, memberships и direct/default privileges; API и worker logins её не наследуют. Из-за ссылок immutable migrations `000014–000019` provisioning выполняется до и после migration chain.
+Каждый запуск provisioning передаёт явный `provisioning_mode=fresh|upgrade`. `fresh` разрешён только для empty database либо schema version `23`; более старая metadata требует upgrade mode и не может быть случайно обработана как fresh install. Для E1 upgrade deployment дополнительно передаёт точный `legacy_runtime_role`. Provisioning проверяет cluster-wide ownership через `pg_shdepend`, отказывается автоматически менять role с ownership/owning membership/cross-database privileges, затем в target database отзывает default/direct ACL и memberships, устанавливает `NOLOGIN` и `PASSWORD NULL`. Legacy role не удаляется автоматически.
+
+API и worker login roles перед выдачей разрешённой group role очищаются от любых direct/default ACL и посторонних memberships. `pharmacycrm_runtime` остаётся только `NOLOGIN` compatibility role без password, members, memberships и direct/default privileges; API и worker logins её не наследуют. Из-за ссылок immutable migrations `000014–000019` provisioning выполняется до и после migration chain. Execution principal должен владеть target database, иметь role-administration capability и доступ к `pg_authid`; обычный runtime/database-owner credential недостаточен.
 
 ### 11.3 Pool budget
 
@@ -441,13 +443,13 @@ Migration process:
 
 1. остановить все E1 API и worker processes; legacy credential не используется после этого шага;
 2. создать backup или подтверждённый restore point;
-3. выполнить provisioning в upgrade mode с непустым `legacy_runtime_role` и проверить fail-closed validation;
+3. выполнить provisioning с `provisioning_mode=upgrade` и непустым `legacy_runtime_role`; отдельно доказать, что отсутствующий mode и `fresh` поверх E1 schema завершаются fail closed;
 4. доказать, что legacy login отключён, password очищен, memberships/direct/default privileges отсутствуют;
 5. применить immutable migrations до schema version `23` через `POSTGRES_MIGRATION_DSN`;
 6. повторно выполнить тот же idempotent provisioning в upgrade mode, чтобы удалить compatibility grants, временно созданные migrations `000014–000019`;
 7. проверить API и worker privilege matrix, а также inert `pharmacycrm_runtime NOLOGIN`;
 8. запустить новый API без `WORKER_*` operational settings и дождаться readiness;
-9. запустить новый worker, проверить protocol compatibility, heartbeat, bounded exhausted-lease terminalization и outbox processing;
+9. запустить новый worker, проверить protocol compatibility и heartbeat; при пустом E2 registry доказать maintenance-only polling без claim неизвестных business protocols, bounded exhausted-lease terminalization и retention;
 10. выполнить post-deploy smoke и только после этого переключить traffic.
 
 Legacy role сохраняется для audit/ownership review и не удаляется автоматически. Если role или одна из memberships владеет объектами, которые нельзя безопасно интерпретировать, provisioning прекращается до изменения ownership.

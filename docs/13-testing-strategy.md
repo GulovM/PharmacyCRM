@@ -6,7 +6,7 @@ The source-size architecture gate has Bash and PowerShell fixture tests; retenti
 
 **Статус документа:** Draft  
 **Версия:** 1.1  
-**Дата:** 2026-07-21  
+**Дата:** 2026-07-22  
 **Связанные документы:** `02-srs.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `05-api-design.md`, `06-database-design.md`, `07-domain-model.md`, `08-project-structure.md`, `09-security-design.md`, `10-sequence-diagrams.md`, `11-development-roadmap.md`, `12-deployment.md`
 
 ## 1. Назначение и нормативная роль
@@ -427,15 +427,18 @@ Concurrency tests используют real PostgreSQL, independent connections 
 - exhausted lease terminalization is deterministic by `lease_expires_at, id`, bounded by request limit `1..100`, and changes at most `2N` rows together with claim;
 - unexpired, retryable, `PENDING`, `PROCESSED` and already `DEAD_LETTER` rows are not terminalized;
 - concurrent workers do not process the same exhausted lease twice and independently respect `SKIP LOCKED` limits;
-- invalid claim owner/limit/lease/timestamp/protocol input returns a typed pre-SQL error;
+- invalid claim owner/limit/lease/timestamp/protocol input returns a typed pre-SQL error; empty protocols are accepted only with explicit maintenance-only semantics;
 - stale fencing rejection;
 - bounded retry/backoff;
 - poison event dead-letter;
 - audited manual replay;
-- graceful shutdown;
+- production worker wiring with an empty E2 registry remains alive until cancellation, terminalizes maintenance leases, never claims unknown protocols, and keeps retention active;
+- two-phase graceful shutdown waits for cooperative handlers after cancellation and reports bounded incomplete cancellation;
 - protocol mismatch readiness failure;
 - backlog/lag metrics;
 - worker version compatibility during rolling deployment.
+
+Дополнительно mandatory PostgreSQL gate проверяет explicit provisioning mode, отказ `fresh` поверх E1 schema, owning-parent fail closed, destructive-test guard, reconciliation загрязнённых API/worker logins и отсутствие direct ACL/extra memberships после повторного provisioning. Cluster-role test запускается только в disposable cluster при `ALLOW_DESTRUCTIVE_CLUSTER_ROLE_TEST=true` и отказывается работать, если reserved roles уже существуют.
 
 ## 19. Migration tests
 
