@@ -17,10 +17,11 @@ import (
 const advisoryLockKey int64 = 706515008
 
 var filename = regexp.MustCompile(`^(\d+)_([a-z0-9_]+)\.up\.sql$`)
+var verificationQuery = regexp.MustCompile(`(?m)^-- .*Verification query:\s*(SELECT .+;)\s*$`)
 
 type Migration struct {
-	Version             int64
-	Name, SQL, Checksum string
+	Version                              int64
+	Name, SQL, Checksum, VerificationSQL string
 }
 type Result struct {
 	Status        string    `json:"status"`
@@ -51,7 +52,11 @@ func Load(files fs.FS) ([]Migration, error) {
 			return nil, err
 		}
 		sum := sha256.Sum256(raw)
-		result = append(result, Migration{version, matches[2], string(raw), fmt.Sprintf("%x", sum)})
+		verification := verificationQuery.FindStringSubmatch(string(raw))
+		if verification == nil {
+			return nil, fmt.Errorf("migration %d has no verification query", version)
+		}
+		result = append(result, Migration{version, matches[2], string(raw), fmt.Sprintf("%x", sum), verification[1]})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Version < result[j].Version })
 	return result, nil
@@ -88,6 +93,10 @@ func Run(ctx context.Context, pool *database.Pool, migrations []Migration) (Resu
 		}
 		applied[version] = checksum
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return Result{}, fmt.Errorf("iterate migration history")
+	}
 	rows.Close()
 	result := Result{Status: "ok", Applied: []int64{}, FinishedAt: time.Now().UTC()}
 	for _, migration := range migrations {
@@ -101,11 +110,23 @@ func Run(ctx context.Context, pool *database.Pool, migrations []Migration) (Resu
 		if _, err := tx.Exec(ctx, migration.SQL); err != nil {
 			return Result{}, fmt.Errorf("apply migration %d", migration.Version)
 		}
+		if _, err := tx.Exec(ctx, "UPDATE pharmacycrm_schema_metadata SET schema_version = $1, updated_at = now() WHERE singleton", migration.Version); err != nil {
+			return Result{}, fmt.Errorf("update declared schema version for migration %d", migration.Version)
+		}
 		if _, err := tx.Exec(ctx, "INSERT INTO pharmacycrm_schema_migrations (version,name,checksum) VALUES ($1,$2,$3)", migration.Version, migration.Name, migration.Checksum); err != nil {
 			return Result{}, fmt.Errorf("record migration %d", migration.Version)
 		}
 		result.Applied = append(result.Applied, migration.Version)
 		result.SchemaVersion = migration.Version
+	}
+	for _, migration := range migrations {
+		var verified bool
+		if err := tx.QueryRow(ctx, migration.VerificationSQL).Scan(&verified); err != nil {
+			return Result{}, fmt.Errorf("execute verification query for migration %d", migration.Version)
+		}
+		if !verified {
+			return Result{}, fmt.Errorf("verify migration %d", migration.Version)
+		}
 	}
 	var recordedVersion int64
 	var recordedCount int

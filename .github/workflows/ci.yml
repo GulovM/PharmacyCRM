@@ -89,9 +89,12 @@ jobs:
         env:
           PGPASSWORD: ci-only-password
         run: |
-          PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc 'SELECT MAX(version) FROM pharmacycrm_schema_migrations' | grep -x '1'
-          PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc 'SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton' | grep -x '1'
+          PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc 'SELECT MAX(version) FROM pharmacycrm_schema_migrations' | grep -x '13'
+          PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc 'SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton' | grep -x '13'
+          PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc "SELECT count(*) FROM roles WHERE is_system AND code IN ('CLIENT','PHARMACIST','ADMIN')" | grep -x '3'
           PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc "SELECT has_schema_privilege(current_user, 'public', 'CREATE')" | grep -x 'f'
+          PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc "SELECT has_table_privilege(current_user, 'inventory_movements', 'UPDATE')" | grep -x 'f'
+          PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc "SELECT has_table_privilege(current_user, 'audit_events', 'DELETE')" | grep -x 'f'
 
   security-and-containers:
     name: Security and container builds
