@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 )
 
+var ErrInvalidClaimRequest = errors.New("invalid outbox claim request")
+
 type EventKey struct {
 	Name    string
 	Version int16
