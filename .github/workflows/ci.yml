@@ -85,6 +85,11 @@ jobs:
       - name: Apply migrations to an empty database
         working-directory: backend
         run: go run ./cmd/migrate
+      - name: Verify Unit of Work against PostgreSQL
+        working-directory: backend
+        env:
+          POSTGRES_TEST_DSN: ${{ env.POSTGRES_MIGRATION_DSN }}
+        run: go test ./internal/platform/database -run TestTransactionRunnerIntegration -count=1
       - name: Verify schema metadata and least-privilege runtime role
         env:
           PGPASSWORD: ci-only-password
