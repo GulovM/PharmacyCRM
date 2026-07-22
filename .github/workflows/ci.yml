@@ -94,6 +94,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.0'
+      - name: Verify E1 runtime credential retirement
+        run: bash deploy/scripts/tests/test-e1-role-upgrade.sh
       - name: Provision separate runtime and migration roles
         env:
           PGPASSWORD: ci-only-password
@@ -120,6 +122,11 @@ jobs:
       - name: Apply migrations to an empty database
         working-directory: backend
         run: go run ./cmd/migrate
+      - name: Reconcile compatibility role after immutable migrations
+        env:
+          PGPASSWORD: ci-only-password
+        run: |
+          psql -h localhost -U pharmacycrm -d pharmacycrm -v database_name=pharmacycrm -v api_role=api_user -v api_password=api-ci-password -v worker_role=worker_user -v worker_password=worker-ci-password -v migration_role=migration_user -v migration_password=migration-ci-password -f deploy/scripts/provision-postgres-roles.sql
       - name: Run mandatory E2 PostgreSQL integration tests
         working-directory: backend
         run: |
