@@ -9,14 +9,19 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/GulovM/PharmacyCRM/backend/internal/shared/contracts"
 )
 
 const (
-	workerRetryBase = 2 * time.Second
-	workerRetryCap  = 15 * time.Minute
-	claimRetryBase  = 100 * time.Millisecond
-	claimRetryCap   = 5 * time.Second
+	workerRetryBase        = 2 * time.Second
+	workerRetryCap         = 15 * time.Minute
+	claimRetryBase         = 100 * time.Millisecond
+	claimRetryCap          = 5 * time.Second
+	drainCancellationGrace = time.Second
 )
+
+var ErrDrainCancellationIncomplete = errors.New("outbox handler did not stop after cancellation")
 
 type Transactor interface {
 	WithinTransaction(context.Context, func(context.Context, Repository) error) error
@@ -41,6 +46,7 @@ type Worker struct {
 	claimErrors     ClaimErrorClassifier
 	protocols       []EventKey
 	observer        Observer
+	maintenanceOnly bool
 }
 
 type ClaimErrorClassifier interface {
@@ -66,13 +72,15 @@ func (noopObserver) StaleLease(context.Context, Lease)                       {}
 func (noopObserver) DeadLettered(context.Context, Lease, string)             {}
 
 func NewWorker(transactor Transactor, handlers map[EventKey]Handler, config WorkerConfig, observer Observer, claimErrors ClaimErrorClassifier) (*Worker, error) {
-	if transactor == nil || claimErrors == nil || strings.TrimSpace(config.Owner) == "" || config.Concurrency < 1 || config.MaxClaim < 1 || config.MaxClaim > 100 || config.PollInterval <= 0 || config.LeaseDuration <= 0 || config.DrainTimeout <= 0 {
+	owner := strings.TrimSpace(config.Owner)
+	if transactor == nil || claimErrors == nil || owner == "" || owner != config.Owner || len(owner) > contracts.MaxWorkerOwnerLength || config.Concurrency < 1 || config.MaxClaim < 1 || config.MaxClaim > 100 || config.PollInterval <= 0 || config.LeaseDuration <= 0 || config.DrainTimeout <= 0 {
 		return nil, errors.Join(ErrInvalidEvent, errors.New("invalid worker configuration"))
 	}
 	copyHandlers := make(map[EventKey]Handler, len(handlers))
 	protocols := make([]EventKey, 0, len(handlers))
 	for key, handler := range handlers {
-		if key.Name == "" || key.Version < 1 || handler == nil {
+		name := strings.TrimSpace(key.Name)
+		if name == "" || name != key.Name || len(name) > 150 || key.Version < 1 || handler == nil {
 			return nil, errors.Join(ErrInvalidEvent, errors.New("invalid handler registration"))
 		}
 		copyHandlers[key] = handler
@@ -87,7 +95,7 @@ func NewWorker(transactor Transactor, handlers map[EventKey]Handler, config Work
 	if observer == nil {
 		observer = noopObserver{}
 	}
-	return &Worker{transactor: transactor, handlers: copyHandlers, protocols: protocols, config: config, now: time.Now, retryDelay: outboxRetryDelay, claimRetryDelay: pollingRetryDelay, claimErrors: claimErrors, observer: observer}, nil
+	return &Worker{transactor: transactor, handlers: copyHandlers, protocols: protocols, config: config, now: time.Now, retryDelay: outboxRetryDelay, claimRetryDelay: pollingRetryDelay, claimErrors: claimErrors, observer: observer, maintenanceOnly: len(protocols) == 0}, nil
 }
 
 func (w *Worker) SupportsProtocol(key EventKey) bool {
@@ -164,7 +172,7 @@ func (w *Worker) claim(ctx context.Context, limit int) ([]Lease, error) {
 	var leases []Lease
 	err := w.transactor.WithinTransaction(ctx, func(ctx context.Context, repository Repository) error {
 		var err error
-		leases, err = repository.ClaimBatch(ctx, ClaimRequest{Owner: w.config.Owner, Limit: limit, LeaseDuration: w.config.LeaseDuration, Now: w.now(), Protocols: w.protocols})
+		leases, err = repository.ClaimBatch(ctx, ClaimRequest{Owner: w.config.Owner, Limit: limit, LeaseDuration: w.config.LeaseDuration, Now: w.now(), Protocols: w.protocols, MaintenanceOnly: w.maintenanceOnly})
 		return err
 	})
 	return leases, err
@@ -280,7 +288,19 @@ func waitForDrain(workers *sync.WaitGroup, cancel context.CancelFunc, timeout ti
 	case <-done:
 		return nil
 	case <-timer.C:
-		cancel()
+	}
+
+	cancel()
+	grace := drainCancellationGrace
+	if timeout < grace {
+		grace = timeout
+	}
+	graceTimer := time.NewTimer(grace)
+	defer graceTimer.Stop()
+	select {
+	case <-done:
 		return context.DeadlineExceeded
+	case <-graceTimer.C:
+		return errors.Join(context.DeadlineExceeded, ErrDrainCancellationIncomplete)
 	}
 }
