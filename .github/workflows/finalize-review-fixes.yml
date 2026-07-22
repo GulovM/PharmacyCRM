@@ -19,9 +19,9 @@ jobs:
         run: |
           set -Eeuo pipefail
           python3 .review-fixes/finalize-docs.py
+          git checkout -- .github/workflows/ci.yml
           rm -rf .review-fixes
-          rm .github/workflows/finalize-review-fixes.yml
-      - name: Commit cleaned final state
+      - name: Commit documentation and cleanup
         run: |
           set -Eeuo pipefail
           git add -A
