@@ -45,11 +45,12 @@ jobs:
         run: |
           pnpm generate:api
           git diff --exit-code -- src/shared/api/generated/schema.ts
+      - name: Check Bash source-size fixtures
+        run: bash scripts/tests/check-source-size.sh
+      - name: Check PowerShell source-size fixtures
+        run: pwsh -File scripts/tests/check-source-size.ps1
       - name: Check architecture boundaries
-        run: |
-          bash scripts/tests/check-source-size.sh
-          pwsh -File scripts/tests/check-source-size.ps1
-          make architecture-check
+        run: make architecture-check
 
   migration-smoke:
     name: Migration from zero
@@ -91,7 +92,16 @@ jobs:
           psql -h localhost -U pharmacycrm -d pharmacycrm -v database_name=pharmacycrm -v api_role=api_user -v api_password=api-ci-password -v worker_role=worker_user -v worker_password=worker-ci-password -v migration_role=migration_user -v migration_password=migration-ci-password -f deploy/scripts/provision-postgres-roles.sql
       - name: Verify E1 to E2 migration upgrade path
         working-directory: backend
-        run: go test ./internal/platform/migration -run UpgradeFromE1Integration -count=1
+        run: |
+          set -o pipefail
+          go test ./internal/platform/migration -run UpgradeFromE1Integration -count=1 -v 2>&1 | tee "$RUNNER_TEMP/e1-migration.log"
+      - name: Upload E1 migration failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e1-migration-failure
+          path: ${{ runner.temp }}/e1-migration.log
+          if-no-files-found: error
       - name: Verify schema 19 to E2 migration upgrade path
         working-directory: backend
         run: go test ./internal/platform/migration -run UpgradeFromSchema19Integration -count=1
