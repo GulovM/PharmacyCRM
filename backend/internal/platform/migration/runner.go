@@ -10,15 +10,18 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/GulovM/PharmacyCRM/backend/internal/platform/database"
+	"github.com/jackc/pgx/v5"
 )
 
 const advisoryLockKey int64 = 706515008
 
 var filename = regexp.MustCompile(`^(\d+)_([a-z0-9_]+)\.up\.sql$`)
 var verificationQuery = regexp.MustCompile(`(?m)^-- .*Verification query:\s*(SELECT .+;)\s*$`)
+var supersedesVerificationLine = regexp.MustCompile(`(?m)^-- Supersedes verification:\s*(.*?)\s*$`)
 
 var (
 	ErrChecksumMismatch   = errors.New("migration checksum mismatch")
@@ -73,6 +76,9 @@ func Load(files fs.FS) ([]Migration, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read migration %s: %w", name, err)
 		}
+		if _, err := parseSupersededVerifications(string(raw), version); err != nil {
+			return nil, err
+		}
 		sum := sha256.Sum256(raw)
 		verification := verificationQuery.FindStringSubmatch(string(raw))
 		verificationSQL := ""
@@ -88,10 +94,17 @@ func Load(files fs.FS) ([]Migration, error) {
 		result = append(result, Migration{version, matches[2], string(raw), fmt.Sprintf("%x", sum), verificationSQL})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Version < result[j].Version })
+	if _, err := supersededVerificationSet(result); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
 func Run(ctx context.Context, pool *database.Pool, migrations []Migration) (Result, error) {
+	superseded, err := supersededVerificationSet(migrations)
+	if err != nil {
+		return Result{}, err
+	}
 	conn, err := pool.AcquireConn(ctx)
 	if err != nil {
 		return Result{}, fmt.Errorf("acquire migration connection: %w", err)
@@ -127,6 +140,7 @@ func Run(ctx context.Context, pool *database.Pool, migrations []Migration) (Resu
 		return Result{}, fmt.Errorf("iterate migration history: %w", err)
 	}
 	rows.Close()
+
 	result := Result{Status: "ok", Applied: []int64{}, FinishedAt: time.Now().UTC()}
 	for _, migration := range migrations {
 		if checksum, ok := applied[migration.Version]; ok {
@@ -145,18 +159,28 @@ func Run(ctx context.Context, pool *database.Pool, migrations []Migration) (Resu
 		if _, err := tx.Exec(ctx, "INSERT INTO pharmacycrm_schema_migrations (version,name,checksum) VALUES ($1,$2,$3)", migration.Version, migration.Name, migration.Checksum); err != nil {
 			return Result{}, fmt.Errorf("record migration %d %s: %w", migration.Version, migration.Name, err)
 		}
+		// Verify the migration before any later forward migration can legally
+		// supersede part of its postcondition.
+		if err := verifyMigration(ctx, tx, migration); err != nil {
+			return Result{}, err
+		}
 		result.Applied = append(result.Applied, migration.Version)
 		result.SchemaVersion = migration.Version
 	}
+
+	// A no-op deployment and the final state of an upgrade validate every
+	// non-superseded postcondition. Later migrations must explicitly declare
+	// historical verifications they replace; checksums of old migrations remain
+	// immutable and all unrelated drift detection stays active.
 	for _, migration := range migrations {
-		var verified bool
-		if err := tx.QueryRow(ctx, migration.VerificationSQL).Scan(&verified); err != nil {
-			return Result{}, &VerificationError{Version: migration.Version, Name: migration.Name, Err: err}
+		if _, skip := superseded[migration.Version]; skip {
+			continue
 		}
-		if !verified {
-			return Result{}, &VerificationError{Version: migration.Version, Name: migration.Name, Err: ErrVerificationFailed}
+		if err := verifyMigration(ctx, tx, migration); err != nil {
+			return Result{}, err
 		}
 	}
+
 	var recordedVersion int64
 	var recordedCount int
 	if err := tx.QueryRow(ctx, "SELECT COALESCE(MAX(version), 0), COUNT(*) FROM pharmacycrm_schema_migrations").Scan(&recordedVersion, &recordedCount); err != nil {
@@ -176,4 +200,65 @@ func Run(ctx context.Context, pool *database.Pool, migrations []Migration) (Resu
 		return Result{}, fmt.Errorf("commit migrations: %w", err)
 	}
 	return result, nil
+}
+
+func verifyMigration(ctx context.Context, tx pgx.Tx, migration Migration) error {
+	var verified bool
+	if err := tx.QueryRow(ctx, migration.VerificationSQL).Scan(&verified); err != nil {
+		return &VerificationError{Version: migration.Version, Name: migration.Name, Err: err}
+	}
+	if !verified {
+		return &VerificationError{Version: migration.Version, Name: migration.Name, Err: ErrVerificationFailed}
+	}
+	return nil
+}
+
+func supersededVerificationSet(migrations []Migration) (map[int64]struct{}, error) {
+	known := make(map[int64]struct{}, len(migrations))
+	for _, migration := range migrations {
+		known[migration.Version] = struct{}{}
+	}
+	result := make(map[int64]struct{})
+	for _, migration := range migrations {
+		versions, err := parseSupersededVerifications(migration.SQL, migration.Version)
+		if err != nil {
+			return nil, err
+		}
+		for _, version := range versions {
+			if _, exists := known[version]; !exists {
+				return nil, fmt.Errorf("migration %d supersedes unknown verification %d", migration.Version, version)
+			}
+			result[version] = struct{}{}
+		}
+	}
+	return result, nil
+}
+
+func parseSupersededVerifications(sql string, migrationVersion int64) ([]int64, error) {
+	matches := supersedesVerificationLine.FindAllStringSubmatch(sql, -1)
+	if len(matches) == 0 {
+		return nil, nil
+	}
+	if len(matches) != 1 {
+		return nil, fmt.Errorf("migration %d has multiple superseded verification declarations", migrationVersion)
+	}
+	declaration := strings.TrimSpace(matches[0][1])
+	if declaration == "" {
+		return nil, fmt.Errorf("migration %d has an empty superseded verification declaration", migrationVersion)
+	}
+	seen := map[int64]struct{}{}
+	versions := make([]int64, 0)
+	for _, part := range strings.Split(declaration, ",") {
+		value := strings.TrimSpace(part)
+		version, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || version < 1 || version >= migrationVersion {
+			return nil, fmt.Errorf("migration %d has invalid superseded verification %q", migrationVersion, value)
+		}
+		if _, duplicate := seen[version]; duplicate {
+			return nil, fmt.Errorf("migration %d repeats superseded verification %d", migrationVersion, version)
+		}
+		seen[version] = struct{}{}
+		versions = append(versions, version)
+	}
+	return versions, nil
 }

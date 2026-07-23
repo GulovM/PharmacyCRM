@@ -832,3 +832,5 @@ Automated suites должны доказать:
 16. backup restore достигает RPO/RTO target на rehearsal dataset;
 17. customer-returned medicine не переходит в sellable stock;
 18. schema, fixtures и migrations не содержат скрытого дополнительного поля для инвалидирования доступа.
+
+Migration verification is version-aware: every newly applied migration is checked immediately, while final/no-op verification skips only historical postconditions explicitly declared as `Supersedes verification` by a later forward migration. Unrelated schema and privilege drift checks remain active.

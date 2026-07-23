@@ -138,11 +138,11 @@ func TestUpgradeFromE1Integration(t *testing.T) {
 	if _, err := verificationPool.Exec(ctx, `ALTER TABLE outbox_events ADD CONSTRAINT chk_outbox_terminal CHECK ((status = 'PROCESSED' AND processed_at IS NOT NULL AND dead_lettered_at IS NULL) OR (status = 'DEAD_LETTER' AND dead_lettered_at IS NOT NULL AND processed_at IS NULL) OR (status IN ('PENDING', 'PROCESSING') AND processed_at IS NULL AND dead_lettered_at IS NULL))`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := verificationPool.Exec(ctx, `REVOKE INSERT ON inventory_movements FROM pharmacycrm_runtime`); err != nil {
+	if _, err := verificationPool.Exec(ctx, `REVOKE SELECT ON outbox_events FROM pharmacycrm_worker_runtime`); err != nil {
 		t.Fatal(err)
 	}
-	assertVerificationFailure(17, "runtime_privilege_matrix")
-	if _, err := verificationPool.Exec(ctx, `GRANT INSERT ON inventory_movements TO pharmacycrm_runtime`); err != nil {
+	assertVerificationFailure(21, "runtime_role_separation")
+	if _, err := verificationPool.Exec(ctx, `GRANT SELECT ON outbox_events TO pharmacycrm_worker_runtime`); err != nil {
 		t.Fatal(err)
 	}
 

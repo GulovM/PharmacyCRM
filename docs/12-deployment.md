@@ -989,3 +989,5 @@ Gate E0 topology class, trusted-proxy model, release/migration protocol, outbox 
 Выбранный продукт не может ослабить утверждённые protocol, recovery и trust guarantees.
 
 The inert `pharmacycrm_runtime` compatibility role remains `NOLOGIN` and memberless. It retains only `EXECUTE` on the two server-guarded outbox retention functions so immutable migration `000019` can be reverified during later no-op deployments; it has no table privileges and cannot be used as a credential.
+
+Migration verification is version-aware: every newly applied migration is checked immediately, while final/no-op verification skips only historical postconditions explicitly declared as `Supersedes verification` by a later forward migration. Unrelated schema and privilege drift checks remain active.

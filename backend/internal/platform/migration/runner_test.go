@@ -43,3 +43,32 @@ func TestLoadPreservesLegacySchemaMetadataMigration(t *testing.T) {
 		t.Fatalf("unexpected legacy migration: %#v", migrations)
 	}
 }
+
+func TestLoadAcceptsKnownEarlierSupersededVerification(t *testing.T) {
+	migrations, err := Load(fstest.MapFS{
+		"000001_first.up.sql":  {Data: []byte("-- Verification query: SELECT true;\nSELECT 1;")},
+		"000002_second.up.sql": {Data: []byte("-- Supersedes verification: 1\n-- Verification query: SELECT true;\nSELECT 2;")},
+	})
+	if err != nil || len(migrations) != 2 {
+		t.Fatalf("migrations=%#v err=%v", migrations, err)
+	}
+}
+
+func TestLoadRejectsInvalidSupersededVerification(t *testing.T) {
+	for name, declaration := range map[string]string{
+		"unknown":   "1",
+		"self":      "2",
+		"future":    "3",
+		"duplicate": "1,1",
+		"malformed": "x",
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := fstest.MapFS{
+				"000002_second.up.sql": {Data: []byte("-- Supersedes verification: " + declaration + "\n-- Verification query: SELECT true;\nSELECT 2;")},
+			}
+			if _, err := Load(files); err == nil {
+				t.Fatal("expected invalid superseded verification error")
+			}
+		})
+	}
+}
