@@ -179,7 +179,7 @@ jobs:
         env:
           PGPASSWORD: ci-only-password
         run: |
-          PGPASSWORD=api-ci-password psql -h localhost -U api_user -d pharmacycrm -Atc 'SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton' | grep -x '23'
+          PGPASSWORD=api-ci-password psql -h localhost -U api_user -d pharmacycrm -Atc 'SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton' | grep -x '24'
           if PGPASSWORD=api-ci-password psql -h localhost -U api_user -d pharmacycrm -Atc 'SELECT MAX(version) FROM pharmacycrm_schema_migrations'; then
             echo 'API role unexpectedly read migration history'
             exit 1
