@@ -1,5 +1,5 @@
 -- E2-FIX-045: enforce retention windows inside SECURITY DEFINER functions.
--- Verification query: SELECT position('30 days' in pg_get_functiondef('public.delete_processed_outbox_events_before(timestamptz,integer)'::regprocedure)) > 0 AND position('180 days' in pg_get_functiondef('public.delete_dead_letter_outbox_events_before(timestamptz,integer)'::regprocedure)) > 0 AND has_function_privilege('pharmacycrm_worker_runtime','public.delete_processed_outbox_events_before(timestamptz,integer)','EXECUTE') AND NOT has_function_privilege('pharmacycrm_api_runtime','public.delete_processed_outbox_events_before(timestamptz,integer)','EXECUTE');
+-- Verification query: SELECT position('30 days' in pg_get_functiondef('public.delete_processed_outbox_events_before(timestamptz,integer)'::regprocedure)) > 0 AND position('180 days' in pg_get_functiondef('public.delete_dead_letter_outbox_events_before(timestamptz,integer)'::regprocedure)) > 0 AND has_function_privilege('pharmacycrm_worker_runtime','public.delete_processed_outbox_events_before(timestamptz,integer)','EXECUTE') AND has_function_privilege('pharmacycrm_runtime','public.delete_processed_outbox_events_before(timestamptz,integer)','EXECUTE') AND NOT has_function_privilege('pharmacycrm_api_runtime','public.delete_processed_outbox_events_before(timestamptz,integer)','EXECUTE');
 -- Lock/rewrite assessment: replaces two functions only; no table scan or rewrite.
 -- Compatibility: signatures are unchanged; unsafe caller-supplied cutoffs now fail with SQLSTATE 22023.
 -- Forward-fix policy: published migrations remain immutable; later corrections require another forward migration.
@@ -68,8 +68,8 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.delete_processed_outbox_events_before(timestamptz, integer) FROM PUBLIC, pharmacycrm_runtime, pharmacycrm_api_runtime;
-REVOKE ALL ON FUNCTION public.delete_dead_letter_outbox_events_before(timestamptz, integer) FROM PUBLIC, pharmacycrm_runtime, pharmacycrm_api_runtime;
+REVOKE ALL ON FUNCTION public.delete_processed_outbox_events_before(timestamptz, integer) FROM PUBLIC, pharmacycrm_api_runtime;
+REVOKE ALL ON FUNCTION public.delete_dead_letter_outbox_events_before(timestamptz, integer) FROM PUBLIC, pharmacycrm_api_runtime;
 GRANT EXECUTE ON FUNCTION public.delete_processed_outbox_events_before(timestamptz, integer),
     public.delete_dead_letter_outbox_events_before(timestamptz, integer)
-    TO pharmacycrm_worker_runtime;
+    TO pharmacycrm_worker_runtime, pharmacycrm_runtime;

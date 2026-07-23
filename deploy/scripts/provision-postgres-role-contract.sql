@@ -154,9 +154,11 @@ BEGIN
             TO pharmacycrm_api_runtime;
     END IF;
     IF to_regprocedure('public.delete_processed_outbox_events_before(timestamptz,integer)') IS NOT NULL THEN
+        -- pharmacycrm_runtime remains NOLOGIN and memberless, but keeps this
+        -- historical capability so immutable migration 000019 can be reverified.
         GRANT EXECUTE ON FUNCTION public.delete_processed_outbox_events_before(timestamptz,integer),
             public.delete_dead_letter_outbox_events_before(timestamptz,integer)
-            TO pharmacycrm_worker_runtime;
+            TO pharmacycrm_worker_runtime, pharmacycrm_runtime;
     END IF;
 END
 $$;

@@ -705,3 +705,5 @@ Gate E0 утвердил password hashing, access/refresh transport, session inv
 При добавлении endpoint в `05-api-design.md` должны быть указаны authentication, required role, resource scope, idempotency requirement, sensitive fields, rate limit class и audit action.
 
 Security review выполняется повторно перед production release и после каждого инцидента уровня `HIGH` или `CRITICAL`.
+
+The inert `pharmacycrm_runtime` compatibility role remains `NOLOGIN` and memberless. It retains only `EXECUTE` on the two server-guarded outbox retention functions so immutable migration `000019` can be reverified during later no-op deployments; it has no table privileges and cannot be used as a credential.

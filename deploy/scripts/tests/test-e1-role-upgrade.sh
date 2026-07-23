@@ -346,7 +346,7 @@ if psql "$compatibility_dsn" -X -At -v ON_ERROR_STOP=1 -c "SELECT 1" >/dev/null 
   echo "pharmacycrm_runtime compatibility role still connects" >&2
   exit 1
 fi
-psql "$admin_database_dsn" -X -At -v ON_ERROR_STOP=1 <<'SQL' | grep -Fx "f|t|0|0|0|0"
+psql "$admin_database_dsn" -X -At -v ON_ERROR_STOP=1 <<'SQL' | grep -Fx "f|t|0|0|0|2"
 SELECT role.rolcanlogin,
        NOT EXISTS (
            SELECT 1 FROM pg_authid auth

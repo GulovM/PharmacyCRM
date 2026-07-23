@@ -90,3 +90,5 @@ against a disposable PostgreSQL cluster with
 PharmacyCRM roles already exist. CI verifies schema version `24`, the
 least-privilege matrix, real E1 credential retirement, polluted service-role
 reconciliation, and production worker maintenance wiring.
+
+The inert `pharmacycrm_runtime` compatibility role remains `NOLOGIN` and memberless. It retains only `EXECUTE` on the two server-guarded outbox retention functions so immutable migration `000019` can be reverified during later no-op deployments; it has no table privileges and cannot be used as a credential.

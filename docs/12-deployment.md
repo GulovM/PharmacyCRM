@@ -987,3 +987,5 @@ Gate E0 topology class, trusted-proxy model, release/migration protocol, outbox 
 12. initial data cutover owner/sign-off form.
 
 Выбранный продукт не может ослабить утверждённые protocol, recovery и trust guarantees.
+
+The inert `pharmacycrm_runtime` compatibility role remains `NOLOGIN` and memberless. It retains only `EXECUTE` on the two server-guarded outbox retention functions so immutable migration `000019` can be reverified during later no-op deployments; it has no table privileges and cannot be used as a credential.
