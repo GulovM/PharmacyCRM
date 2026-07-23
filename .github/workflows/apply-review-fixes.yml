@@ -1,0 +1,40 @@
+name: Apply E2 review fixes
+
+on:
+  push:
+    branches: [Database-Kernel-and-Reliability-Primitives]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: Database-Kernel-and-Reliability-Primitives
+          fetch-depth: 0
+      - name: Apply prepared fixes
+        run: |
+          bash .review-fixes/01-provisioning.sh
+          bash .review-fixes/02-replay-retention.sh
+      - name: Validate generated change set
+        run: |
+          bash scripts/tests/check-source-size.sh
+          pwsh -File scripts/tests/check-source-size.ps1
+          make architecture-check
+          cd backend
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test ./... -count=1
+      - name: Commit fixes to current PR branch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm -r .review-fixes
+          git add backend deploy docs scripts
+          git diff --cached --check
+          git commit -m "Harden E2 security and replay contracts"
+          git push origin HEAD:Database-Kernel-and-Reliability-Primitives
