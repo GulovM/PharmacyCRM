@@ -276,7 +276,7 @@ SELECT
     has_database_privilege('pharmacycrm_api_runtime', current_database(), 'CREATE'),
     (SELECT count(*) FROM pg_default_acl acl CROSS JOIN LATERAL aclexplode(acl.defaclacl) privilege WHERE privilege.grantee='pharmacycrm_api_runtime'::regrole),
     (SELECT count(*) FROM pg_auth_members WHERE member='pharmacycrm_api_runtime'::regrole),
-    (SELECT count(*) FROM pg_auth_members WHERE roleid='pharmacycrm_api_runtime'::regrole AND member<>:'api_role'::regrole);
+    (SELECT count(*) FROM pg_auth_members WHERE roleid='pharmacycrm_api_runtime'::regrole AND member<>(SELECT oid FROM pg_roles WHERE rolname=:'api_role'));
 SQL
 
 if psql "$legacy_dsn" -X -At -v ON_ERROR_STOP=1 -c "SELECT 1" >/dev/null 2>&1; then
