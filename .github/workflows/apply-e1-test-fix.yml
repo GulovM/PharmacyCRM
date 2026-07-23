@@ -1,0 +1,34 @@
+name: Apply E1 assertion syntax fix
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: Database-Kernel-and-Reliability-Primitives
+          fetch-depth: 0
+      - name: Apply fix
+        run: bash .review-fixes/05-e1-test-syntax.sh
+      - name: Validate source and architecture checks
+        run: |
+          bash scripts/tests/check-source-size.sh
+          pwsh -File scripts/tests/check-source-size.ps1
+          make architecture-check
+      - name: Commit to current PR branch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm -r .review-fixes
+          git add deploy
+          git diff --cached --check
+          git commit -m "Fix E1 group-role assertion syntax"
+          git push origin HEAD:Database-Kernel-and-Reliability-Primitives
