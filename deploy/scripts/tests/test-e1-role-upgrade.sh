@@ -309,7 +309,7 @@ SELECT
      WHERE database.datname=current_database() AND role.rolname=:'legacy_role');
 SQL
 
-psql "$api_dsn" -X -At -v ON_ERROR_STOP=1 -c "SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton" | grep -Fx "23"
+psql "$api_dsn" -X -At -v ON_ERROR_STOP=1 -c "SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton" | grep -Fx "24"
 if psql "$api_dsn" -X -At -v ON_ERROR_STOP=1 -c "SELECT MAX(version) FROM pharmacycrm_schema_migrations" >/dev/null 2>&1; then
   echo "API role unexpectedly reads migration history" >&2
   exit 1
