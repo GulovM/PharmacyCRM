@@ -24,7 +24,7 @@ version `23`, then run the same fresh provisioning command again. The second
 run removes direct grants that immutable migrations `000014–000019`
 temporarily assign to the `pharmacycrm_runtime` compatibility role.
 
-Supported fresh and no-op paths are `0 → 23` and `23 → no-op`.
+Supported fresh and no-op paths are `0 → 24` and `23 → no-op`.
 
 ## E1 upgrade
 
@@ -58,8 +58,8 @@ automatically.
 
 Apply migrations through `POSTGRES_MIGRATION_DSN`, then run the same upgrade
 provisioning command again. Verify the retired credential cannot connect before
-starting E2 processes. Supported upgrade paths are `1 → 23`, `19 → 23`, and
-`21 → 23`.
+starting E2 processes. Supported upgrade paths are `1 → 24`, `19 → 24`, and
+`21 → 24`.
 
 ## Runtime identities
 
@@ -87,6 +87,6 @@ leases and execute retention, but it cannot claim an unknown business event.
 The cluster-role integration test is destructive by design and must run only
 against a disposable PostgreSQL cluster with
 `ALLOW_DESTRUCTIVE_CLUSTER_ROLE_TEST=true`. It refuses to start when reserved
-PharmacyCRM roles already exist. CI verifies schema version `23`, the
+PharmacyCRM roles already exist. CI verifies schema version `24`, the
 least-privilege matrix, real E1 credential retirement, polluted service-role
 reconciliation, and production worker maintenance wiring.

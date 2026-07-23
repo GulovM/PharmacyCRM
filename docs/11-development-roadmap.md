@@ -1,6 +1,6 @@
 # PharmacyCRM — Development Roadmap
 
-> E2-FIX-022 through E2-FIX-031 complete schema `23` reliability hardening: upgrade compatibility, least privilege, verified session constraints, bounded retention and architecture gates.
+> E2-FIX-022 through E2-FIX-031 complete schema `24` reliability hardening: upgrade compatibility, least privilege, verified session constraints, bounded retention and architecture gates.
 
 **Статус документа:** Draft  
 **Версия:** 1.0  
@@ -245,7 +245,7 @@ Gate E0 закрыт 2026-07-20. Параллельные несовместим
 ### Обязательные evidence
 
 - migration from zero;
-- upgrades `0 → 23`, E1 `1 → 23`, `19 → 23`, `21 → 23` и `23 → no-op` с immutable checksum history;
+- upgrades `0 → 24`, E1 `1 → 24`, `19 → 24`, `21 → 24` и `23 → no-op` с immutable checksum history;
 - rollback transaction function;
 - panic внутри UoW;
 - commit failure;

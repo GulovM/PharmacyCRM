@@ -108,6 +108,20 @@ func TestOutboxRetentionTerminalRowsAndPrivilegesIntegration(t *testing.T) {
 		t.Fatalf("survivors=%v", statuses)
 	}
 
+	for name, query := range map[string]string{
+		"processed future cutoff":   `SELECT public.delete_processed_outbox_events_before(now() + interval '1 day', 1000)`,
+		"dead-letter future cutoff": `SELECT public.delete_dead_letter_outbox_events_before(now() + interval '1 day', 1000)`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var deleted int64
+			err := worker.QueryRow(ctx, query).Scan(&deleted)
+			var postgresError *pgconn.PgError
+			if !errors.As(err, &postgresError) || postgresError.Code != "22023" {
+				t.Fatalf("expected guarded retention cutoff, deleted=%d err=%v", deleted, err)
+			}
+		})
+	}
+
 	_, err = worker.Exec(ctx, `DELETE FROM outbox_events WHERE aggregate_id=$1`, aggregateID)
 	var postgresError *pgconn.PgError
 	if !errors.As(err, &postgresError) || postgresError.Code != "42501" {

@@ -245,6 +245,11 @@ SELECT format('GRANT SELECT ON users TO %I', :'api_role') \gexec
 SELECT format('GRANT SELECT (password_hash) ON users TO %I', :'worker_role') \gexec
 SELECT format('GRANT CREATE ON DATABASE %I TO %I', current_database(), :'worker_role') \gexec
 SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT SELECT ON TABLES TO %I', :'migration_role', :'api_role') \gexec
+SELECT format('GRANT pg_read_all_data TO %I', 'pharmacycrm_worker_runtime') \gexec
+GRANT SELECT (password_hash) ON users TO pharmacycrm_worker_runtime;
+SELECT format('GRANT CREATE ON DATABASE %I TO %I', current_database(), 'pharmacycrm_api_runtime') \gexec
+SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT SELECT ON TABLES TO %I', :'migration_role', 'pharmacycrm_api_runtime') \gexec
+SELECT format('GRANT %I TO %I', :'polluted_parent', 'pharmacycrm_api_runtime') \gexec
 SQL
 
 # Immutable migrations intentionally reference pharmacycrm_runtime. Re-run the
@@ -265,12 +270,21 @@ SELECT
   (SELECT count(*) FROM pg_database database CROSS JOIN LATERAL aclexplode(database.datacl) privilege JOIN pg_roles role ON role.oid=privilege.grantee WHERE database.datname=current_database() AND role.rolname IN (:'api_role',:'worker_role'));
 SQL
 
+psql "$admin_database_dsn" -X -At -v ON_ERROR_STOP=1 <<'SQL' | grep -Fx "f|f|0|0|0"
+SELECT
+    has_column_privilege('pharmacycrm_worker_runtime', 'users', 'password_hash', 'SELECT'),
+    has_database_privilege('pharmacycrm_api_runtime', current_database(), 'CREATE'),
+    (SELECT count(*) FROM pg_default_acl acl CROSS JOIN LATERAL aclexplode(acl.defaclacl) privilege WHERE privilege.grantee='pharmacycrm_api_runtime'::regrole),
+    (SELECT count(*) FROM pg_auth_members WHERE member='pharmacycrm_api_runtime'::regrole),
+    (SELECT count(*) FROM pg_auth_members WHERE roleid='pharmacycrm_api_runtime'::regrole AND member<>:'api_role'::regrole);
+SQL
+
 if psql "$legacy_dsn" -X -At -v ON_ERROR_STOP=1 -c "SELECT 1" >/dev/null 2>&1; then
   echo "retired E1 runtime credential reconnects after migrations" >&2
   exit 1
 fi
 
-psql "$admin_database_dsn" -X -At -v ON_ERROR_STOP=1 -v legacy_role="$legacy_runtime" <<'SQL' | grep -Fx "23|f|f|f|f|f|f|f|f|f|0|0"
+psql "$admin_database_dsn" -X -At -v ON_ERROR_STOP=1 -v legacy_role="$legacy_runtime" <<'SQL' | grep -Fx "24|f|f|f|f|f|f|f|f|f|0|0"
 SELECT
     (SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton),
     has_table_privilege(:'legacy_role', 'users', 'SELECT'),

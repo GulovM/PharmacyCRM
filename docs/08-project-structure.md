@@ -1,6 +1,6 @@
 # PharmacyCRM — Project Structure
 
-> E2 schema `23`: runtime PostgreSQL composition is split into API and worker credentials; the legacy `pharmacycrm_runtime` role exists only for immutable migration compatibility.
+> E2 schema `24`: runtime PostgreSQL composition is split into API and worker credentials; the legacy `pharmacycrm_runtime` role exists only for immutable migration compatibility.
 
 **Статус документа:** Draft  
 **Версия:** 2.0  

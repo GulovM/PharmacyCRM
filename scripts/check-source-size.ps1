@@ -1,11 +1,11 @@
 param([string] $Root = (Split-Path -Parent $PSScriptRoot))
-
 $ErrorActionPreference = 'Stop'
 $Root = [IO.Path]::GetFullPath($Root).TrimEnd([char]92, [char]47, [char]58)
 $sourceExtensions = @('.go', '.ts', '.tsx', '.js', '.jsx', '.sql', '.sh', '.ps1')
 $ignoredSegments = @('node_modules', 'vendor', 'dist', 'build', 'coverage', 'tmp', 'generated')
 $violations = @()
-Get-ChildItem -Path (Join-Path $Root 'backend'), (Join-Path $Root 'frontend'), (Join-Path $Root 'scripts') -Recurse -File | ForEach-Object {
+$roots = @('backend', 'frontend', 'deploy', 'scripts') | ForEach-Object { Join-Path $Root $_ }
+Get-ChildItem -Path $roots -Recurse -File | ForEach-Object {
     $relativePath = [IO.Path]::GetRelativePath($Root, $_.FullName) -replace '\\', '/'
     $relativeSegments = $relativePath -split '/'
     $isIgnored = $relativeSegments | Where-Object { $_ -in $ignoredSegments }
@@ -13,9 +13,7 @@ Get-ChildItem -Path (Join-Path $Root 'backend'), (Join-Path $Root 'frontend'), (
     if ($_.Extension -in $sourceExtensions -and -not $isIgnored -and -not $isGeneratedAPI) {
         if (-not (Select-String -LiteralPath $_.FullName -Pattern 'Code generated .* DO NOT EDIT\.' -Quiet)) {
             $lines = (Get-Content -LiteralPath $_.FullName | Measure-Object -Line).Lines
-            if ($lines -gt 400) {
-                $violations += [PSCustomObject]@{ Path = $relativePath; Lines = $lines }
-            }
+            if ($lines -gt 400) { $violations += [PSCustomObject]@{ Path = $relativePath; Lines = $lines } }
         }
     }
 }

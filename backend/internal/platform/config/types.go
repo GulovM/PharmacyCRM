@@ -10,7 +10,7 @@ import (
 const (
 	productionEnvironment   = "production"
 	approvedJWTAlgorithm    = "EdDSA"
-	SupportedSchemaVersion  = 23
+	SupportedSchemaVersion  = 24
 	SupportedWorkerProtocol = 1
 )
 
@@ -20,8 +20,8 @@ type AppConfig struct {
 	Version          string `default:"dev"`
 	CommitSHA        string `envconfig:"COMMIT_SHA" default:"unknown"`
 	Debug            bool   `default:"false"`
-	MinSchemaVersion int    `envconfig:"MIN_SCHEMA_VERSION" default:"23"`
-	MaxSchemaVersion int    `envconfig:"MAX_SCHEMA_VERSION" default:"23"`
+	MinSchemaVersion int    `envconfig:"MIN_SCHEMA_VERSION" default:"24"`
+	MaxSchemaVersion int    `envconfig:"MAX_SCHEMA_VERSION" default:"24"`
 	WorkerProtocol   int    `envconfig:"WORKER_PROTOCOL" default:"1"`
 }
 

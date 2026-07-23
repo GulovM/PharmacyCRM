@@ -1,8 +1,8 @@
 # PharmacyCRM — Deployment
 
-> Deploy schema `23` only after idempotent role provisioning. API, worker and migration processes require separate credentials; the legacy compatibility role has no DSN and cannot log in.
+> Deploy schema `24` only after idempotent role provisioning. API, worker and migration processes require separate credentials; the legacy compatibility role has no DSN and cannot log in.
 
-All embedded migrations carry executable verification queries. Supported upgrades are `0/1/19/21 → 23`.
+All embedded migrations carry executable verification queries. Supported upgrades are `0/1/19/21 → 24`.
 
 **Статус документа:** Draft  
 **Версия:** 1.1  
@@ -361,7 +361,7 @@ Production PostgreSQL:
 
 API и worker roles обязаны различаться и используют отдельные `POSTGRES_API_RUNTIME_DSN` и `POSTGRES_WORKER_RUNTIME_DSN`; migration job использует только `POSTGRES_MIGRATION_DSN`. Runtime roles не имеют права создавать schema, управлять roles, выполнять unrestricted DDL или изменять immutable history вне разрешённого protocol.
 
-Каждый запуск provisioning передаёт явный `provisioning_mode=fresh|upgrade`. `fresh` разрешён только для empty database либо schema version `23`; более старая metadata требует upgrade mode и не может быть случайно обработана как fresh install. Для E1 upgrade deployment дополнительно передаёт точный `legacy_runtime_role`. Provisioning проверяет cluster-wide ownership через `pg_shdepend`, отказывается автоматически менять role с ownership/owning membership/cross-database privileges, затем в target database отзывает default/direct ACL и memberships, устанавливает `NOLOGIN` и `PASSWORD NULL`. Legacy role не удаляется автоматически.
+Каждый запуск provisioning передаёт явный `provisioning_mode=fresh|upgrade`. `fresh` разрешён только для empty database либо schema version `24`; более старая metadata требует upgrade mode и не может быть случайно обработана как fresh install. Для E1 upgrade deployment дополнительно передаёт точный `legacy_runtime_role`. Provisioning проверяет cluster-wide ownership через `pg_shdepend`, отказывается автоматически менять role с ownership/owning membership/cross-database privileges, затем в target database отзывает default/direct ACL и memberships, устанавливает `NOLOGIN` и `PASSWORD NULL`. Legacy role не удаляется автоматически.
 
 API и worker login roles перед выдачей разрешённой group role очищаются от любых direct/default ACL и посторонних memberships. `pharmacycrm_runtime` остаётся только `NOLOGIN` compatibility role без password, members, memberships и direct/default privileges; API и worker logins её не наследуют. Из-за ссылок immutable migrations `000014–000019` provisioning выполняется до и после migration chain. Execution principal должен владеть target database, иметь role-administration capability и доступ к `pg_authid`; обычный runtime/database-owner credential недостаточен.
 
@@ -423,7 +423,7 @@ Readiness должна быть false, если schema несовместима.
 
 Migrations выполняются отдельной one-shot command до переключения traffic на несовместимую application version.
 
-Supported schema version: `23`. Поддерживаемые и обязательные CI paths: `0 → 23`, `1 → 23`, `19 → 23`, `21 → 23` и `23 → no-op`. API/worker не применяют migrations при startup. API, worker и migrator используют разные `POSTGRES_API_RUNTIME_DSN`, `POSTGRES_WORKER_RUNTIME_DSN` и `POSTGRES_MIGRATION_DSN`.
+Supported schema version: `23`. Поддерживаемые и обязательные CI paths: `0 → 24`, `1 → 24`, `19 → 24`, `21 → 24` и `23 → no-op`. API/worker не применяют migrations при startup. API, worker и migrator используют разные `POSTGRES_API_RUNTIME_DSN`, `POSTGRES_WORKER_RUNTIME_DSN` и `POSTGRES_MIGRATION_DSN`.
 
 Migration process:
 
@@ -445,7 +445,7 @@ Migration process:
 2. создать backup или подтверждённый restore point;
 3. выполнить provisioning с `provisioning_mode=upgrade` и непустым `legacy_runtime_role`; отдельно доказать, что отсутствующий mode и `fresh` поверх E1 schema завершаются fail closed;
 4. доказать, что legacy login отключён, password очищен, memberships/direct/default privileges отсутствуют;
-5. применить immutable migrations до schema version `23` через `POSTGRES_MIGRATION_DSN`;
+5. применить immutable migrations до schema version `24` через `POSTGRES_MIGRATION_DSN`;
 6. повторно выполнить тот же idempotent provisioning в upgrade mode, чтобы удалить compatibility grants, временно созданные migrations `000014–000019`;
 7. проверить API и worker privilege matrix, а также inert `pharmacycrm_runtime NOLOGIN`;
 8. запустить новый API без `WORKER_*` operational settings и дождаться readiness;

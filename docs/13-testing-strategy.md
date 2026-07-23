@@ -1,6 +1,6 @@
 # PharmacyCRM — Testing Strategy
 
-> E2 schema `23` integration coverage includes E1/19/21 upgrades, real E1 credential retirement, process-owned configuration, bounded exhausted-lease terminalization, session-security negative constraints, API/worker privilege denial and capability-based outbox replay.
+> E2 schema `24` integration coverage includes E1/19/21 upgrades, real E1 credential retirement, process-owned configuration, bounded exhausted-lease terminalization, session-security negative constraints, API/worker privilege denial and capability-based outbox replay.
 
 The source-size architecture gate has Bash and PowerShell fixture tests; retention tests prove the shared batch budget and cycle deadline.
 
@@ -634,7 +634,7 @@ Mandatory PostgreSQL CI gate запускает без skip при `CI_INTEGRATI
 
 - `deploy/scripts/tests/test-e1-role-upgrade.sh` как отдельный шаг `Verify E1 runtime credential retirement`;
 - `internal/platform/database -run Integration`;
-- `internal/platform/migration -run Integration` (пути `0 → 23`, E1 `1 → 23`, `19 → 23`, `21 → 23` и `23 → no-op`);
+- `internal/platform/migration -run Integration` (пути `0 → 24`, E1 `1 → 24`, `19 → 24`, `21 → 24` и `23 → no-op`);
 - `internal/modules/reliability/infrastructure/postgres -run Integration`;
 - `internal/modules/audit/infrastructure/postgres -run Integration`;
 - `internal/orchestration/outboxreplay/postgres -run Integration`;

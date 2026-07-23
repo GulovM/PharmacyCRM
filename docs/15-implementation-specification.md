@@ -613,7 +613,7 @@ PR pipeline:
 
 Каждая migration имеет verification query, проверяющую её critical constraints/indexes/triggers/functions/privileges, а также lock/rewrite assessment, compatibility note и forward-fix policy. Проверки только через `to_regclass` недостаточны. Destructive down migration по умолчанию запрещена.
 
-Текущий результат E2 — schema version `23`; upgrade tests покрывают immutable E1 version `1`, schema `19`, schema `21` и fresh schema, применяют `000002..000023` и повторно проверяют no-op replay/checksums. Verification failures доступны как typed error через `errors.As`, а исходные database errors сохраняются через `%w` без раскрытия DSN secrets.
+Текущий результат E2 — schema version `24`; upgrade tests покрывают immutable E1 version `1`, schema `19`, schema `21` и fresh schema, применяют `000002..000023` и повторно проверяют no-op replay/checksums. Verification failures доступны как typed error через `errors.As`, а исходные database errors сохраняются через `%w` без раскрытия DSN secrets.
 
 ## 10.2 E2-REL-001 — Unit of Work
 

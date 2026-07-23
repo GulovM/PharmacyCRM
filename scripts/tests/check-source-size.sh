@@ -11,11 +11,12 @@ make_lines() {
   seq 1 "$count" > "$path"
 }
 
-mkdir -p "$root/backend/internal" "$root/frontend/src" "$root/scripts"
+mkdir -p "$root/backend/internal" "$root/frontend/src" "$root/deploy/scripts" "$root/scripts"
 make_lines 400 "$root/backend/internal/at_limit.go"
 make_lines 401 "$root/backend/internal/a.go"
 make_lines 450 "$root/frontend/src/b.tsx"
 make_lines 450 "$root/docs/ignored.md"
+make_lines 450 "$root/deploy/scripts/provision.sql"
 
 for ignored in node_modules vendor dist build coverage tmp generated; do
   make_lines 450 "$root/backend/$ignored/ignored.go"
@@ -31,6 +32,7 @@ if bash "$checker" "$root" >"$root/out" 2>&1; then
   exit 1
 fi
 grep -q 'backend/internal/a.go — 401' "$root/out"
+grep -q 'deploy/scripts/provision.sql — 450' "$root/out"
 grep -q 'frontend/src/b.tsx — 450' "$root/out"
 ! grep -q 'at_limit.go' "$root/out"
 ! grep -q 'ignored' "$root/out"
@@ -38,7 +40,7 @@ grep -q 'frontend/src/b.tsx — 450' "$root/out"
 [[ "$(grep -n 'backend/internal/a.go' "$root/out" | cut -d: -f1)" -lt "$(grep -n 'frontend/src/b.tsx' "$root/out" | cut -d: -f1)" ]]
 
 extensions_root=$(mktemp -d)
-mkdir -p "$extensions_root/backend" "$extensions_root/frontend" "$extensions_root/scripts"
+mkdir -p "$extensions_root/backend" "$extensions_root/frontend" "$extensions_root/deploy" "$extensions_root/scripts"
 for extension in go ts tsx js jsx sql sh ps1; do
   make_lines 401 "$extensions_root/backend/oversized.$extension"
 done

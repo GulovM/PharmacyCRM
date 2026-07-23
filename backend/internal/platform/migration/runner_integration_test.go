@@ -57,7 +57,7 @@ func TestUpgradeFromE1Integration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(loaded) != 23 || loaded[0].Version != 1 || loaded[0].Name != "schema_metadata" {
+	if len(loaded) != 24 || loaded[0].Version != 1 || loaded[0].Name != "schema_metadata" {
 		t.Fatalf("unexpected migration set: %#v", loaded)
 	}
 	rawPool, err := pgxpool.New(ctx, isolatedDSN)
@@ -97,14 +97,14 @@ func TestUpgradeFromE1Integration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.SchemaVersion != 23 || len(result.Applied) != 22 || result.Applied[0] != 2 || result.Applied[len(result.Applied)-1] != 23 {
+	if result.SchemaVersion != 24 || len(result.Applied) != 23 || result.Applied[0] != 2 || result.Applied[len(result.Applied)-1] != 24 {
 		t.Fatalf("unexpected upgrade result: %#v", result)
 	}
 	replayed, err := Run(ctx, pool, loaded)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replayed.SchemaVersion != 23 || len(replayed.Applied) != 0 {
+	if replayed.SchemaVersion != 24 || len(replayed.Applied) != 0 {
 		t.Fatalf("migrations were unexpectedly replayed: %#v", replayed)
 	}
 
@@ -219,12 +219,12 @@ func TestUpgradeFromSchema19Integration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.SchemaVersion != 23 || len(result.Applied) != 4 || result.Applied[0] != 20 || result.Applied[3] != 23 {
+	if result.SchemaVersion != 24 || len(result.Applied) != 5 || result.Applied[0] != 20 || result.Applied[4] != 24 {
 		t.Fatalf("unexpected schema 19 upgrade result: %#v", result)
 	}
 	replayed, err := Run(ctx, pool, loaded)
-	if err != nil || len(replayed.Applied) != 0 || replayed.SchemaVersion != 23 {
-		t.Fatalf("schema 23 replay=%#v err=%v", replayed, err)
+	if err != nil || len(replayed.Applied) != 0 || replayed.SchemaVersion != 24 {
+		t.Fatalf("schema 24 replay=%#v err=%v", replayed, err)
 	}
 }
 
@@ -280,11 +280,11 @@ func TestUpgradeFromSchema21Integration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.SchemaVersion != 23 || len(result.Applied) != 2 || result.Applied[0] != 22 || result.Applied[1] != 23 {
+	if result.SchemaVersion != 24 || len(result.Applied) != 3 || result.Applied[0] != 22 || result.Applied[1] != 23 || result.Applied[2] != 24 {
 		t.Fatalf("unexpected schema 21 upgrade result: %#v", result)
 	}
 	replayed, err := Run(ctx, pool, loaded)
-	if err != nil || len(replayed.Applied) != 0 || replayed.SchemaVersion != 23 {
-		t.Fatalf("schema 23 replay=%#v err=%v", replayed, err)
+	if err != nil || len(replayed.Applied) != 0 || replayed.SchemaVersion != 24 {
+		t.Fatalf("schema 24 replay=%#v err=%v", replayed, err)
 	}
 }
