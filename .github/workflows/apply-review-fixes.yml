@@ -1,8 +1,8 @@
 name: Apply E2 review fixes
 
 on:
-  push:
-    branches: [Database-Kernel-and-Reliability-Primitives]
+  pull_request:
+    types: [synchronize]
 
 permissions:
   contents: write
