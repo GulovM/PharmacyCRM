@@ -26,11 +26,12 @@ jobs:
         run: pwsh -File scripts/tests/check-source-size.ps1
       - name: Check architecture boundaries
         run: make architecture-check
-      - name: Check Go formatting and vet
+      - name: Check Go formatting
         working-directory: backend
-        run: |
-          test -z "$(gofmt -l .)"
-          go vet ./...
+        run: test -z "$(gofmt -l .)"
+      - name: Run Go vet
+        working-directory: backend
+        run: go vet ./...
       - name: Run backend tests
         working-directory: backend
         run: go test ./... -count=1
