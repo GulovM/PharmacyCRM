@@ -20,6 +20,7 @@ jobs:
         run: |
           bash .review-fixes/01-provisioning.sh
           bash .review-fixes/02-replay-retention.sh
+          bash .review-fixes/03-format.sh
       - name: Check Bash source-size fixtures
         run: bash scripts/tests/check-source-size.sh
       - name: Check PowerShell source-size fixtures
