@@ -270,7 +270,8 @@ SELECT
   (SELECT count(*) FROM pg_database database CROSS JOIN LATERAL aclexplode(database.datacl) privilege JOIN pg_roles role ON role.oid=privilege.grantee WHERE database.datname=current_database() AND role.rolname IN (:'api_role',:'worker_role'));
 SQL
 
-psql "$admin_database_dsn" -X -At -v ON_ERROR_STOP=1 <<'SQL' | grep -Fx "f|f|0|0|0"
+psql "$admin_database_dsn" -X -At -v ON_ERROR_STOP=1 \
+  -v api_role="$api_role" <<'SQL' | grep -Fx "f|f|0|0|0"
 SELECT
     has_column_privilege('pharmacycrm_worker_runtime', 'users', 'password_hash', 'SELECT'),
     has_database_privilege('pharmacycrm_api_runtime', current_database(), 'CREATE'),
