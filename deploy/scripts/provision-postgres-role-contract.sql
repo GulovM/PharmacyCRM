@@ -93,7 +93,7 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'migration_role') \gex
 
 SELECT pg_temp.sanitize_role_capabilities(:'api_role', :'database_name', false);
 SELECT pg_temp.sanitize_role_capabilities(:'worker_role', :'database_name', false);
-SELECT pg_temp.sanitize_role_capabilities(:'migration_role', :'database_name', false);
+SELECT pg_temp.revoke_all_memberships(:'migration_role', (SELECT oid FROM pg_roles WHERE rolname = :'migration_role'));
 
 ALTER ROLE pharmacycrm_api_runtime WITH NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 ALTER ROLE pharmacycrm_worker_runtime WITH NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
