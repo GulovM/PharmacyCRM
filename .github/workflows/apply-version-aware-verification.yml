@@ -1,0 +1,38 @@
+name: Apply version-aware migration verification
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: Database-Kernel-and-Reliability-Primitives
+          fetch-depth: 0
+      - name: Apply migration runner fix
+        run: bash .review-fixes/09-version-aware-verification.sh
+      - name: Validate source, architecture and backend tests
+        run: |
+          bash scripts/tests/check-source-size.sh
+          pwsh -File scripts/tests/check-source-size.ps1
+          make architecture-check
+          cd backend
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test ./... -count=1
+      - name: Commit to current PR branch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm -r .review-fixes
+          git add backend docs
+          git diff --cached --check
+          git commit -m "Make migration verification version-aware"
+          git push origin HEAD:Database-Kernel-and-Reliability-Primitives
