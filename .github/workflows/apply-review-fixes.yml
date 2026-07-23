@@ -20,15 +20,20 @@ jobs:
         run: |
           bash .review-fixes/01-provisioning.sh
           bash .review-fixes/02-replay-retention.sh
-      - name: Validate generated change set
+      - name: Check Bash source-size fixtures
+        run: bash scripts/tests/check-source-size.sh
+      - name: Check PowerShell source-size fixtures
+        run: pwsh -File scripts/tests/check-source-size.ps1
+      - name: Check architecture boundaries
+        run: make architecture-check
+      - name: Check Go formatting and vet
+        working-directory: backend
         run: |
-          bash scripts/tests/check-source-size.sh
-          pwsh -File scripts/tests/check-source-size.ps1
-          make architecture-check
-          cd backend
           test -z "$(gofmt -l .)"
           go vet ./...
-          go test ./... -count=1
+      - name: Run backend tests
+        working-directory: backend
+        run: go test ./... -count=1
       - name: Commit fixes to current PR branch
         run: |
           git config user.name github-actions[bot]
