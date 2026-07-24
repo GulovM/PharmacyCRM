@@ -1,5 +1,7 @@
 # PharmacyCRM — Development Roadmap
 
+> E2-FIX-022 through E2-FIX-031 complete schema `24` reliability hardening: upgrade compatibility, least privilege, verified session constraints, bounded retention and architecture gates.
+
 **Статус документа:** Draft  
 **Версия:** 1.0  
 **Дата:** 2026-07-21  
@@ -233,13 +235,17 @@ Gate E0 закрыт 2026-07-20. Параллельные несовместим
 - idempotency claim/complete/replay/conflict protocol;
 - transactional audit writer;
 - outbox writer, lease, retry и dead-letter policy;
+- real `cmd/worker` bootstrap, fatal polling classification и graceful drain;
+- deterministic `inventory_movements.lot_sequence` под lot lock;
+- explicit runtime privilege matrix и composite audit session ownership;
+- separate bounded outbox retention (`PROCESSED` 30 дней, `DEAD_LETTER` 180 дней);
 - deterministic lock helpers;
 - migration, failure-injection и concurrency harness.
 
 ### Обязательные evidence
 
 - migration from zero;
-- upgrade с предыдущей schema version;
+- upgrades `0 → 24`, E1 `1 → 24`, `19 → 24`, `21 → 24` и `23 → no-op` с immutable checksum history;
 - rollback transaction function;
 - panic внутри UoW;
 - commit failure;
@@ -248,8 +254,12 @@ Gate E0 закрыт 2026-07-20. Параллельные несовместим
 - same-key different-payload conflict;
 - audit insert failure → rollback;
 - two-worker lease race;
+- bounded exhausted-lease terminalization with deterministic order and at most `2N` changed rows per claim transaction;
+- E1 runtime credential retirement with password/default/direct privileges removed and idempotent pre/post-migration provisioning;
+- API startup independent from all `WORKER_*` operational settings;
 - duplicate outbox delivery без duplicate business effect;
-- runtime DB role не может изменять immutable rows штатным путём.
+- runtime DB role не может изменять immutable rows штатным путём;
+- mandatory PostgreSQL suites реально запускаются в CI без optional skip.
 
 ### Exit gate E2
 
@@ -259,6 +269,7 @@ Gate E0 закрыт 2026-07-20. Параллельные несовместим
 - обязательный audit fail-closed;
 - lock order опубликован и доказан race tests;
 - outbox допускает at-least-once delivery без повторного эффекта;
+- worker bootstrap, graceful drain, movement sequence, privilege matrix и outbox retention доказаны integration tests;
 - migration verification queries определены.
 
 ### Запрещённый переход

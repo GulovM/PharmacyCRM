@@ -1,8 +1,12 @@
 # PharmacyCRM — Testing Strategy
 
+> E2 schema `25` integration coverage includes E1/19/21/24 upgrades, real E1 credential retirement, PostgreSQL-authoritative outbox leases, session-security negative constraints, API/worker privilege denial and capability-based outbox replay.
+
+The source-size architecture gate has Bash and PowerShell fixture tests; retention tests prove the shared batch budget and cycle deadline.
+
 **Статус документа:** Draft  
 **Версия:** 1.1  
-**Дата:** 2026-07-21  
+**Дата:** 2026-07-22  
 **Связанные документы:** `02-srs.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `05-api-design.md`, `06-database-design.md`, `07-domain-model.md`, `08-project-structure.md`, `09-security-design.md`, `10-sequence-diagrams.md`, `11-development-roadmap.md`, `12-deployment.md`
 
 ## 1. Назначение и нормативная роль
@@ -420,14 +424,21 @@ Concurrency tests используют real PostgreSQL, independent connections 
 - crash before side effect;
 - crash after side effect before acknowledge;
 - lease expiry recovery;
+- exhausted lease terminalization is deterministic by `lease_expires_at, id`, bounded by request limit `1..100`, and changes at most `2N` rows together with claim;
+- unexpired, retryable, `PENDING`, `PROCESSED` and already `DEAD_LETTER` rows are not terminalized;
+- concurrent workers do not process the same exhausted lease twice and independently respect `SKIP LOCKED` limits;
+- invalid claim owner/limit/lease/timestamp/protocol input returns a typed pre-SQL error; empty protocols are accepted only with explicit maintenance-only semantics;
 - stale fencing rejection;
 - bounded retry/backoff;
 - poison event dead-letter;
 - audited manual replay;
-- graceful shutdown;
+- production worker wiring with an empty E2 registry remains alive until cancellation, terminalizes maintenance leases, never claims unknown protocols, and keeps retention active;
+- two-phase graceful shutdown waits for cooperative handlers after cancellation and reports bounded incomplete cancellation;
 - protocol mismatch readiness failure;
 - backlog/lag metrics;
 - worker version compatibility during rolling deployment.
+
+Дополнительно mandatory PostgreSQL gate проверяет explicit provisioning mode, отказ `fresh` поверх E1 schema, owning-parent fail closed, destructive-test guard, reconciliation загрязнённых API/worker logins и отсутствие direct ACL/extra memberships после повторного provisioning. Cluster-role test запускается только в disposable cluster при `ALLOW_DESTRUCTIVE_CLUSTER_ROLE_TEST=true` и отказывается работать, если reserved roles уже существуют.
 
 ## 19. Migration tests
 
@@ -438,9 +449,9 @@ Concurrency tests используют real PostgreSQL, independent connections 
 3. на representative data volume;
 4. с old/new application compatibility;
 5. на безопасный retry, где применимо;
-6. verification queries;
+6. verification queries и негативные tests, которые удаляют critical identity index/outbox constraint либо required runtime grant и требуют отказа migration runner;
 7. rollback/forward-fix rehearsal;
-8. runtime role permissions;
+8. runtime role permissions, including a real isolated E1 LOGIN/password/default-ACL scenario and post-migration compatibility-role reconciliation;
 9. readiness compatibility;
 10. отсутствие truncation/overflow;
 11. duplicate/dirty input handling при backfill;
@@ -612,11 +623,23 @@ Mock не заменяет PostgreSQL для UoW, locks, constraints, idempotenc
 - format/lint/static checks;
 - backend/frontend fast tests;
 - PostgreSQL integration;
+- race detector для database/reliability packages с обязательными PostgreSQL DSN;
 - HTTP contracts;
 - relevant migrations;
 - changed critical concurrency/security regressions;
 - architecture/docs checks;
 - secret/dependency scans.
+
+Mandatory PostgreSQL CI gate запускает без skip при `CI_INTEGRATION_REQUIRED=true`:
+
+- `deploy/scripts/tests/test-e1-role-upgrade.sh` как отдельный шаг `Verify E1 runtime credential retirement`;
+- `internal/platform/database -run Integration`;
+- `internal/platform/migration -run Integration` (пути `0 → 24`, E1 `1 → 24`, `19 → 24`, `21 → 24` и `23 → no-op`);
+- `internal/modules/reliability/infrastructure/postgres -run Integration`;
+- `internal/modules/audit/infrastructure/postgres -run Integration`;
+- `internal/orchestration/outboxreplay/postgres -run Integration`;
+- `internal/testkit/reconciliation -run Integration`;
+- `internal/testkit/schema -run Integration`.
 
 ### 29.2 Main/nightly
 
@@ -809,3 +832,5 @@ Automated suites должны доказать:
 16. backup restore достигает RPO/RTO target на rehearsal dataset;
 17. customer-returned medicine не переходит в sellable stock;
 18. schema, fixtures и migrations не содержат скрытого дополнительного поля для инвалидирования доступа.
+
+Migration verification is version-aware: every newly applied migration is checked immediately, while final/no-op verification skips only historical postconditions explicitly declared as `Supersedes verification` by a later forward migration. Unrelated schema and privilege drift checks remain active.

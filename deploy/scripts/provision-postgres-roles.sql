@@ -1,15 +1,29 @@
 \set ON_ERROR_STOP on
+-- Required psql variables: provisioning_mode=fresh|upgrade, database_name,
+-- api_role, api_password, worker_role, worker_password, migration_role and
+-- migration_password. Upgrade mode additionally requires legacy_runtime_role.
+\if :{?provisioning_mode}
+\else
+\set provisioning_mode ''
+\endif
+\if :{?legacy_runtime_role}
+\else
+\set legacy_runtime_role ''
+\endif
 
--- Execute as the database owner before cmd/migrate. The psql variables make
--- identities explicit and avoid placing passwords in repository files.
-CREATE ROLE :"runtime_role" LOGIN PASSWORD :'runtime_password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
-CREATE ROLE :"migration_role" LOGIN PASSWORD :'migration_password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+BEGIN;
+CREATE TEMP TABLE pharmacycrm_role_provisioning_config (
+    provisioning_mode text NOT NULL,
+    database_name text NOT NULL,
+    api_role text NOT NULL,
+    worker_role text NOT NULL,
+    migration_role text NOT NULL,
+    legacy_runtime_role text NOT NULL
+) ON COMMIT PRESERVE ROWS;
+INSERT INTO pharmacycrm_role_provisioning_config
+VALUES (:'provisioning_mode', :'database_name', :'api_role', :'worker_role',
+        :'migration_role', :'legacy_runtime_role');
 
-GRANT CONNECT ON DATABASE :"database_name" TO :"runtime_role", :"migration_role";
-GRANT USAGE ON SCHEMA public TO :"runtime_role", :"migration_role";
-GRANT CREATE ON SCHEMA public TO :"migration_role";
-REVOKE CREATE ON SCHEMA public FROM :"runtime_role";
-
--- Tables are owned by migration_role. Runtime receives read-only access to
--- current and future migration-created tables, including schema metadata.
-ALTER DEFAULT PRIVILEGES FOR ROLE :"migration_role" IN SCHEMA public GRANT SELECT ON TABLES TO :"runtime_role";
+\ir provision-postgres-role-helpers.sql
+\ir provision-postgres-role-contract.sql
+COMMIT;

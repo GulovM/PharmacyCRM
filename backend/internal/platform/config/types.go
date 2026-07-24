@@ -10,7 +10,7 @@ import (
 const (
 	productionEnvironment   = "production"
 	approvedJWTAlgorithm    = "EdDSA"
-	SupportedSchemaVersion  = 1
+	SupportedSchemaVersion  = 25
 	SupportedWorkerProtocol = 1
 )
 
@@ -20,8 +20,8 @@ type AppConfig struct {
 	Version          string `default:"dev"`
 	CommitSHA        string `envconfig:"COMMIT_SHA" default:"unknown"`
 	Debug            bool   `default:"false"`
-	MinSchemaVersion int    `envconfig:"MIN_SCHEMA_VERSION" default:"1"`
-	MaxSchemaVersion int    `envconfig:"MAX_SCHEMA_VERSION" default:"1"`
+	MinSchemaVersion int    `envconfig:"MIN_SCHEMA_VERSION" default:"25"`
+	MaxSchemaVersion int    `envconfig:"MAX_SCHEMA_VERSION" default:"25"`
 	WorkerProtocol   int    `envconfig:"WORKER_PROTOCOL" default:"1"`
 }
 
@@ -32,7 +32,7 @@ type HTTPConfig struct {
 	ReadTimeout       time.Duration `envconfig:"READ_TIMEOUT" default:"15s"`
 	WriteTimeout      time.Duration `envconfig:"WRITE_TIMEOUT" default:"30s"`
 	IdleTimeout       time.Duration `envconfig:"IDLE_TIMEOUT" default:"60s"`
-	ShutdownTimeout   time.Duration `envconfig:"SHUTDOWN_TIMEOUT" default:"20s"`
+	ShutdownTimeout   time.Duration `envconfig:"SHUTDOWN_TIMEOUT" default:"15s"`
 	MaxHeaderBytes    int           `envconfig:"MAX_HEADER_BYTES" default:"1048576"`
 	MaxBodyBytes      int64         `envconfig:"MAX_BODY_BYTES" default:"1048576"`
 }
@@ -47,8 +47,13 @@ type PoolConfig struct {
 	ConnectionCapacity int32         `envconfig:"CONNECTION_CAPACITY" default:"20"`
 }
 
-type RuntimePostgresConfig struct {
-	DSN string `envconfig:"RUNTIME_DSN" required:"true"`
+type APIPostgresConfig struct {
+	DSN string `envconfig:"API_RUNTIME_DSN" required:"true"`
+	PoolConfig
+}
+
+type WorkerPostgresConfig struct {
+	DSN string `envconfig:"WORKER_RUNTIME_DSN" required:"true"`
 	PoolConfig
 }
 
@@ -95,11 +100,19 @@ type TelemetryConfig struct {
 }
 
 type WorkerConfig struct {
-	ProtocolVersion int           `envconfig:"PROTOCOL_VERSION" default:"1"`
-	Concurrency     int           `default:"1"`
-	PollInterval    time.Duration `envconfig:"POLL_INTERVAL" default:"1s"`
-	LeaseDuration   time.Duration `envconfig:"LEASE_DURATION" default:"30s"`
-	MaxClaim        int           `envconfig:"MAX_CLAIM" default:"100"`
+	ProtocolVersion      int           `envconfig:"PROTOCOL_VERSION" default:"1"`
+	Owner                string        `required:"true"`
+	Concurrency          int           `default:"1"`
+	PollInterval         time.Duration `envconfig:"POLL_INTERVAL" default:"1s"`
+	LeaseDuration        time.Duration `envconfig:"LEASE_DURATION" default:"30s"`
+	MaxClaim             int           `envconfig:"MAX_CLAIM" default:"100"`
+	DrainTimeout         time.Duration `envconfig:"DRAIN_TIMEOUT" default:"20s"`
+	RetentionInterval    time.Duration `envconfig:"RETENTION_INTERVAL" default:"24h"`
+	RetentionBatchSize   int           `envconfig:"RETENTION_BATCH_SIZE" default:"100"`
+	RetentionMaxBatches  int           `envconfig:"RETENTION_MAX_BATCHES_PER_CYCLE" default:"10"`
+	RetentionMaxDuration time.Duration `envconfig:"RETENTION_MAX_CYCLE_DURATION" default:"30s"`
+	ProcessedRetention   time.Duration `envconfig:"PROCESSED_RETENTION" default:"720h"`
+	DeadLetterRetention  time.Duration `envconfig:"DEAD_LETTER_RETENTION" default:"4320h"`
 }
 
 type StorageConfig struct {
@@ -108,27 +121,26 @@ type StorageConfig struct {
 	Retention      time.Duration `envconfig:"RETENTION" default:"720h"`
 }
 
-// APIConfig deliberately has no migration credentials.
+// APIConfig deliberately has no migration credentials or worker operational settings.
 type APIConfig struct {
-	App             AppConfig
-	HTTP            HTTPConfig
-	RuntimePostgres RuntimePostgresConfig
-	Auth            AuthConfig
-	ProxyCORS       ProxyCORSConfig
-	Logging         LoggingConfig
-	Telemetry       TelemetryConfig
-	Worker          WorkerConfig
-	Storage         StorageConfig
+	App         AppConfig
+	HTTP        HTTPConfig
+	APIPostgres APIPostgresConfig
+	Auth        AuthConfig
+	ProxyCORS   ProxyCORSConfig
+	Logging     LoggingConfig
+	Telemetry   TelemetryConfig
+	Storage     StorageConfig
 }
 
 // WorkerProcessConfig deliberately has neither migration nor auth credentials.
 type WorkerProcessConfig struct {
-	App             AppConfig
-	RuntimePostgres RuntimePostgresConfig
-	Logging         LoggingConfig
-	Telemetry       TelemetryConfig
-	Worker          WorkerConfig
-	Storage         StorageConfig
+	App            AppConfig
+	WorkerPostgres WorkerPostgresConfig
+	Logging        LoggingConfig
+	Telemetry      TelemetryConfig
+	Worker         WorkerConfig
+	Storage        StorageConfig
 }
 
 // MigrationConfig deliberately has neither runtime database nor auth credentials.

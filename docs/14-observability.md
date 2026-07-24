@@ -1,8 +1,10 @@
 # PharmacyCRM — Observability
 
+> Retention observability for schema `25` reports one bounded cycle budget and a real cycle deadline; HTTP error diagnostics retain only allowlisted fields and never raw error text.
+
 **Статус документа:** Draft  
 **Версия:** 1.1  
-**Дата:** 2026-07-21  
+**Дата:** 2026-07-22  
 **Связанные документы:** `02-srs.md`, `03-system-context.md`, `04-architecture.md`, `04-01-backend-architecture.md`, `05-api-design.md`, `06-database-design.md`, `07-domain-model.md`, `08-project-structure.md`, `09-security-design.md`, `10-sequence-diagrams.md`, `11-development-roadmap.md`, `12-deployment.md`, `13-testing-strategy.md`
 
 ## 1. Назначение и нормативная роль
@@ -525,10 +527,18 @@ Metrics не являются доказательством единичной 
 - success/failure/retry;
 - dead-letter count;
 - lease expiry/recovery;
+- exhausted leases terminalized per poll и cumulative count с reason `LEASE_EXPIRED_AFTER_MAX_ATTEMPTS`;
+- terminalization batch saturation (`rows_affected == configured_limit`) как сигнал накопленного exhausted backlog;
 - stale fencing rejection;
 - heartbeat/readiness;
 - worker protocol mismatch;
+- worker mode (`delivery` или `maintenance_only`) и unexpected early process exit;
+- drain timeout и cancellation-grace exhaustion;
 - projection lag.
+- retention batches/deleted rows по bounded `status` (`PROCESSED`, `DEAD_LETTER`);
+- retention cycle failures.
+
+При пустом E2 protocol registry worker публикует mode `maintenance_only`: claim неизвестных protocols отсутствует, но terminalization и retention heartbeat остаются наблюдаемыми. Repository получает `RowsAffected()` для exhausted-lease terminalization и проверяет, что result не превышает bounded limit. На E2 существующий observer interface не расширяется ради одного счётчика: значение доступно internal test seam и может быть выведено structured worker log/metric через существующую observability abstraction без изменения repository contract. Один poll не должен создавать unbounded WAL/lock spike; saturation и outbox oldest age рассматриваются совместно.
 
 ### 17.2 Imports
 

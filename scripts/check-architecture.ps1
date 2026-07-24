@@ -81,4 +81,30 @@ if ((Test-Path -LiteralPath 'frontend/package-lock.json') -or (Test-Path -Litera
     Fail 'frontend must use pnpm only; npm and Yarn lockfiles are forbidden'
 }
 
+$mandatoryRepositories = @(
+    'backend/internal/modules/audit/infrastructure/postgres/repository.go',
+    'backend/internal/modules/reliability/infrastructure/postgres/idempotency_repository.go',
+    'backend/internal/modules/reliability/infrastructure/postgres/outbox_repository.go'
+)
+if (Test-RipgrepMatch (@('-n', 'database\.DBTX|NewRepository\(|NewIdempotencyRepository\(|NewOutboxRepository\(') + $mandatoryRepositories)) {
+    Fail 'mandatory reliability repositories must be transaction-only'
+}
+
+if (Test-RipgrepMatch @('-n', '--glob', '*.go', 'NewTransactional(?:Audit|Idempotency|Outbox)Repository\([^\n]*(?:pool|Pool)', 'backend')) {
+    Fail 'transactional reliability repository constructed from a pool'
+}
+
+if (Test-RipgrepMatch @('-n', '--glob', '**/application/*.go', '--glob', '**/application/**/*.go', '--glob', '**/domain/*.go', '--glob', '**/domain/**/*.go', 'github\.com/jackc/pgx', 'backend/internal/modules')) {
+    Fail 'application and domain packages must not import pgx'
+}
+
+$pwshExecutable = (Get-Process -Id $PID).Path
+& $pwshExecutable -NoProfile -File "$PSScriptRoot/check-source-size.ps1" -Root $rootDirectory
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+$genericNames = @('utils.go', 'helpers.go', 'common.go', 'misc.go', 'manager.go', 'service_all.go', 'repository_all.go')
+if (Get-ChildItem -Path backend, frontend, scripts -Recurse -File | Where-Object { $_.Name -in $genericNames -and $_.Name -notlike '*_test.go' } | Select-Object -First 1) {
+    Fail 'production source must not use a generic filename'
+}
+
 Write-Output 'architecture check: passed'

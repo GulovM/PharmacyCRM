@@ -77,7 +77,7 @@ sequenceDiagram
         HTTP-->>Client: Stable 4xx error
     else new command
         UC->>Repo: Lock roots in canonical order
-        Repo->>DB: pharmacy → root → pharmacy_products → source allocations → FEFO lots
+        Repo->>DB: pharmacy → root → source items → source allocations → pharmacy_products → FEFO lots
         UC->>UC: Recompute mutable eligibility, quantities, prices and limits
         UC->>Repo: Persist document, allocations, balances and movements
         Repo->>DB: INSERT/UPDATE
@@ -547,6 +547,8 @@ sequenceDiagram
         HTTP-->>Pharmacist: 422 RETURN_NOT_LEGALLY_ALLOWED
     else permitted QUARANTINE, WRITE_OFF or NO_PHYSICAL_RETURN
         opt physical non-sellable handling required
+            ReturnUC->>InventoryRepo: Lock pharmacy products by id
+            InventoryRepo->>DB: SELECT FOR UPDATE
             ReturnUC->>InventoryRepo: Lock approved target/source lots canonically
             InventoryRepo->>DB: SELECT FOR UPDATE
         end
@@ -888,19 +890,21 @@ sequenceDiagram
 
 Worker использует at-least-once delivery. Обработчик обязан быть идемпотентным; crash после side effect, но до `processed_at`, не должен создавать повторный необратимый эффект.
 
+Отдельно от claim loop periodic retention удаляет bounded batches старых `PROCESSED` по `processed_at` и `DEAD_LETTER` по `dead_lettered_at`. При `SIGTERM` новые claims прекращаются, активные handlers получают bounded drain; retention не выполняется внутри claim transaction.
+
 ## 22. Канонический порядок блокировок
 
 До отдельного ADR применяется единый порядок:
 
 1. idempotency record для конкретной команды;
-2. actor user и session, если им требуется lock, а не обычное consistent read;
-3. role assignment и pharmacy assignment;
-4. pharmacy;
-5. основной command document или aggregate root;
-6. связанные исходные документы по возрастанию typed ID;
-7. stock lots по `(pharmacy_id, product_presentation_id, expiration_date, lot_id)`;
-8. dependent rows: allocations, returns, adjustment lines;
-9. audit и outbox выполняют inserts и не захватывают business locks в обратном направлении.
+2. actor user/session, role assignment и pharmacy assignment;
+3. pharmacy;
+4. основной command document (для возврата — source sale);
+5. source sale items по ID;
+6. source sale allocations по ID;
+7. pharmacy products по ID;
+8. stock lots по FEFO: `expiration_date`, `received_at`, `id`;
+9. dependent append-only rows, audit и outbox выполняют inserts и не захватывают business locks в обратном направлении.
 
 Правила:
 

@@ -577,16 +577,18 @@ CREATE TABLE inventory_movements (
     operation_id uuid NOT NULL
         REFERENCES inventory_operations(id) ON DELETE RESTRICT,
     stock_lot_id uuid NOT NULL REFERENCES stock_lots(id) ON DELETE RESTRICT,
+    lot_sequence bigint NOT NULL CHECK (lot_sequence > 0),
     delta_base_units bigint NOT NULL CHECK (delta_base_units <> 0),
     quantity_after_base_units bigint NOT NULL
         CHECK (quantity_after_base_units >= 0),
     created_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT uq_inventory_movement_operation_lot
-        UNIQUE (operation_id, stock_lot_id)
+        UNIQUE (operation_id, stock_lot_id),
+    CONSTRAINT uq_inventory_movement_lot_sequence
+        UNIQUE (stock_lot_id, lot_sequence)
 );
 
-CREATE INDEX idx_inventory_movements_lot_history
-ON inventory_movements (stock_lot_id, created_at, id);
+`lot_sequence` назначается database trigger только после `FOR UPDATE` lock строки `stock_lots`; явное значение принимается лишь когда оно равно следующему sequence. Поэтому concurrent inserts одного lot сериализуются, а reconciliation использует только `(stock_lot_id, lot_sequence)` и не зависит от timestamp/UUID.
 
 -- =====================================================================
 -- Sales
@@ -879,6 +881,8 @@ CREATE INDEX idx_outbox_claim ON outbox_events (available_at, created_at, id) WH
 CREATE INDEX idx_outbox_processing_lease ON outbox_events (lease_expires_at, id) WHERE status = 'PROCESSING';
 CREATE INDEX idx_outbox_partition ON outbox_events (partition_key, occurred_at, id);
 CREATE INDEX idx_outbox_aggregate ON outbox_events (aggregate_type, aggregate_id, occurred_at, id);
+CREATE INDEX idx_outbox_processed_retention ON outbox_events (processed_at, id) WHERE status = 'PROCESSED';
+CREATE INDEX idx_outbox_dead_letter_retention ON outbox_events (dead_lettered_at, id) WHERE status = 'DEAD_LETTER';
 
 -- =====================================================================
 -- Audit
@@ -1091,7 +1095,9 @@ actor + operation + effective_scope + idempotency_key
 6. Side effect выполняется вне transaction claim-а.
 7. Consumer обязан быть idempotent; irreversible external operation использует provider idempotency key или отдельный dedup protocol.
 8. Exhausted attempts переводят event в `DEAD_LETTER` и создают operational signal.
-9. Projection имеет rebuild/reconciliation path.
+9. Отдельная periodic retention task удаляет bounded terminal batches по `processed_at`/`dead_lettered_at`; `PENDING`/`PROCESSING` не удаляются.
+10. Runtime role не имеет table-level `DELETE`: cleanup доступен только через ограниченные `SECURITY DEFINER` functions с batch `1..1000`.
+11. Projection имеет rebuild/reconciliation path.
 
 ### 6.8 Audit
 
@@ -1107,13 +1113,13 @@ actor + operation + effective_scope + idempotency_key
 Для use cases, затрагивающих одинаковые ресурсы:
 
 1. idempotency scope/key;
-2. current actor user/session/role;
-3. target user, если он изменяется;
-4. pharmacy;
-5. root business document;
-6. `pharmacy_products` по `id`;
-7. sale items/source allocations по `id`;
-8. stock lots по `expiration_date`, `received_at`, `id` либо более узкому документированному порядку, совместимому с этим порядком;
+2. current actor, session, role и pharmacy assignment;
+3. pharmacy;
+4. root business document (для возврата — source `sale`);
+5. source `sale_items` по `id`;
+6. source `sale_item_allocations` по `id`;
+7. `pharmacy_products` по `id`;
+8. stock lots по `expiration_date`, `received_at`, `id`;
 9. append-only inserts: documents, allocations, movements, audit, outbox, completed idempotency result;
 10. commit.
 
@@ -1138,6 +1144,8 @@ Migration role отделена от runtime role. Backup и read-only diagnosti
 Retention cleanup допускается только для утверждённых temporary/security/technical данных. Business documents, allocations, movements и audit не удаляются обычным worker-ом.
 
 ## 9. Migration requirements
+
+Текущий E2 schema contract — version `23`; обязательный upgrade path начинается с immutable E1 version `1` и применяет forward migrations `000002..000023`. `pharmacycrm_runtime` сохранена только как NOLOGIN compatibility role для immutable migrations и не используется runtime processes. API и worker используют отдельные credentials; API получает только column-level idempotency updates и capability function для manual dead-letter replay, но не читает migration history.
 
 1. Одна migration решает одну логическую задачу.
 2. Migration имеет forward strategy, verification query и rollback/forward-fix policy.

@@ -32,8 +32,18 @@ jobs:
       - name: Run backend static checks and tests
         working-directory: backend
         run: |
-          go vet ./...
-          go test ./...
+          set -o pipefail
+          {
+            go vet ./...
+            go test ./... -count=1
+          } 2>&1 | tee "$RUNNER_TEMP/backend-quality.log"
+      - name: Upload backend quality failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-quality-failure
+          path: ${{ runner.temp }}/backend-quality.log
+          if-no-files-found: error
       - name: Run frontend lint, type checks and tests
         working-directory: frontend
         run: |
@@ -45,6 +55,19 @@ jobs:
         run: |
           pnpm generate:api
           git diff --exit-code -- src/shared/api/generated/schema.ts
+      - name: Check Bash source-size fixtures
+        run: bash scripts/tests/check-source-size.sh
+      - name: Check PowerShell source-size fixtures
+        run: |
+          set -o pipefail
+          pwsh -File scripts/tests/check-source-size.ps1 2>&1 | tee "$RUNNER_TEMP/powershell-source-size.log"
+      - name: Upload PowerShell source-size failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: powershell-source-size-failure
+          path: ${{ runner.temp }}/powershell-source-size.log
+          if-no-files-found: error
       - name: Check architecture boundaries
         run: make architecture-check
 
@@ -66,8 +89,13 @@ jobs:
         ports:
           - 5432:5432
     env:
-      POSTGRES_RUNTIME_DSN: postgres://runtime_user:runtime-ci-password@localhost:5432/pharmacycrm?sslmode=disable
+      POSTGRES_API_RUNTIME_DSN: postgres://api_user:api-ci-password@localhost:5432/pharmacycrm?sslmode=disable
+      POSTGRES_WORKER_RUNTIME_DSN: postgres://worker_user:worker-ci-password@localhost:5432/pharmacycrm?sslmode=disable
       POSTGRES_MIGRATION_DSN: postgres://migration_user:migration-ci-password@localhost:5432/pharmacycrm?sslmode=disable
+      POSTGRES_TEST_DSN: postgres://migration_user:migration-ci-password@localhost:5432/pharmacycrm?sslmode=disable
+      POSTGRES_ADMIN_TEST_DSN: postgres://pharmacycrm:ci-only-password@localhost:5432/pharmacycrm?sslmode=disable
+      CI_INTEGRATION_REQUIRED: 'true'
+      ALLOW_DESTRUCTIVE_CLUSTER_ROLE_TEST: 'true'
       AUTH_JWT_ISSUER: pharmacycrm-ci
       AUTH_JWT_AUDIENCE: pharmacycrm-ci
       AUTH_JWT_PRIVATE_KEY: ci-only-key
@@ -77,21 +105,91 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.0'
+      - name: Verify E1 runtime credential retirement
+        run: |
+          set -o pipefail
+          bash deploy/scripts/tests/test-e1-role-upgrade.sh 2>&1 | tee "$RUNNER_TEMP/e1-role-upgrade.log"
+      - name: Upload E1 role-upgrade failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e1-role-upgrade-failure
+          path: ${{ runner.temp }}/e1-role-upgrade.log
+          if-no-files-found: error
       - name: Provision separate runtime and migration roles
         env:
           PGPASSWORD: ci-only-password
         run: |
-          psql -h localhost -U pharmacycrm -d pharmacycrm -v database_name=pharmacycrm -v runtime_role=runtime_user -v runtime_password=runtime-ci-password -v migration_role=migration_user -v migration_password=migration-ci-password -f deploy/scripts/provision-postgres-roles.sql
+          psql -h localhost -U pharmacycrm -d pharmacycrm -v provisioning_mode=fresh -v database_name=pharmacycrm -v api_role=api_user -v api_password=api-ci-password -v worker_role=worker_user -v worker_password=worker-ci-password -v migration_role=migration_user -v migration_password=migration-ci-password -f deploy/scripts/provision-postgres-roles.sql
+      - name: Verify E1 to E2 migration upgrade path
+        working-directory: backend
+        run: |
+          set -o pipefail
+          go test ./internal/platform/migration -run UpgradeFromE1Integration -count=1 -v 2>&1 | tee "$RUNNER_TEMP/e1-migration.log"
+      - name: Upload E1 migration failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e1-migration-failure
+          path: ${{ runner.temp }}/e1-migration.log
+          if-no-files-found: error
+      - name: Verify schema 19 to E2 migration upgrade path
+        working-directory: backend
+        run: go test ./internal/platform/migration -run UpgradeFromSchema19Integration -count=1
+      - name: Verify schema 21 to E2 migration upgrade path
+        working-directory: backend
+        run: go test ./internal/platform/migration -run UpgradeFromSchema21Integration -count=1
       - name: Apply migrations to an empty database
         working-directory: backend
         run: go run ./cmd/migrate
+      - name: Reconcile compatibility role after immutable migrations
+        env:
+          PGPASSWORD: ci-only-password
+        run: |
+          psql -h localhost -U pharmacycrm -d pharmacycrm -v provisioning_mode=fresh -v database_name=pharmacycrm -v api_role=api_user -v api_password=api-ci-password -v worker_role=worker_user -v worker_password=worker-ci-password -v migration_role=migration_user -v migration_password=migration-ci-password -f deploy/scripts/provision-postgres-roles.sql
+      - name: Verify schema 25 no-op after role reconciliation
+        working-directory: backend
+        run: go run ./cmd/migrate
+      - name: Run mandatory E2 PostgreSQL integration tests
+        working-directory: backend
+        run: |
+          set -o pipefail
+          {
+            test -n "$POSTGRES_TEST_DSN"
+            test "$CI_INTEGRATION_REQUIRED" = "true"
+            go test ./internal/platform/migration -run Integration -count=1
+            go test ./internal/platform/database -run Integration -count=1
+            go test ./internal/modules/reliability/infrastructure/postgres -run Integration -count=1
+            go test ./internal/modules/audit/infrastructure/postgres -run Integration -count=1
+            go test ./internal/orchestration/outboxreplay/postgres -run Integration -count=1
+            go test ./internal/testkit/reconciliation -run Integration -count=1
+            go test ./internal/testkit/schema -run Integration -count=1
+            go test ./internal/bootstrap -count=1
+          } 2>&1 | tee "$RUNNER_TEMP/postgres-integration.log"
+      - name: Upload PostgreSQL integration failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-integration-failure
+          path: ${{ runner.temp }}/postgres-integration.log
+          if-no-files-found: error
+      - name: Run database and reliability race detector suites
+        working-directory: backend
+        run: |
+          go test -race ./internal/platform/database/... -count=1
+          go test -race ./internal/modules/reliability/... -count=1
       - name: Verify schema metadata and least-privilege runtime role
         env:
           PGPASSWORD: ci-only-password
         run: |
-          PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc 'SELECT MAX(version) FROM pharmacycrm_schema_migrations' | grep -x '1'
-          PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc 'SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton' | grep -x '1'
-          PGPASSWORD=runtime-ci-password psql -h localhost -U runtime_user -d pharmacycrm -Atc "SELECT has_schema_privilege(current_user, 'public', 'CREATE')" | grep -x 'f'
+          PGPASSWORD=api-ci-password psql -h localhost -U api_user -d pharmacycrm -Atc 'SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton' | grep -x '25'
+          if PGPASSWORD=api-ci-password psql -h localhost -U api_user -d pharmacycrm -Atc 'SELECT MAX(version) FROM pharmacycrm_schema_migrations'; then
+            echo 'API role unexpectedly read migration history'
+            exit 1
+          fi
+          PGPASSWORD=worker-ci-password psql -h localhost -U worker_user -d pharmacycrm -Atc "SELECT has_column_privilege(current_user, 'users', 'password_hash', 'SELECT')" | grep -x 'f'
+          PGPASSWORD=worker-ci-password psql -h localhost -U worker_user -d pharmacycrm -Atc "SELECT has_column_privilege(current_user, 'user_sessions', 'refresh_token_hash', 'SELECT')" | grep -x 'f'
+          PGPASSWORD=worker-ci-password psql -h localhost -U worker_user -d pharmacycrm -Atc "SELECT has_table_privilege(current_user, 'outbox_events', 'DELETE')" | grep -x 'f'
 
   security-and-containers:
     name: Security and container builds

@@ -1,5 +1,7 @@
 # PharmacyCRM — Project Structure
 
+> E2 schema `24`: runtime PostgreSQL composition is split into API and worker credentials; the legacy `pharmacycrm_runtime` role exists only for immutable migration compatibility.
+
 **Статус документа:** Draft  
 **Версия:** 2.0  
 **Дата:** 2026-07-21  
@@ -195,6 +197,8 @@ backend/internal/modules/
 
 Ownership фиксирован: `pharmacy` владеет `pharmacy_assignments`; `reliability` — `idempotency_records` и `outbox_events`; catalog import находится в `catalog`; receipts, initial stock, write-offs и adjustments — в `inventory`. Отдельные module roots `import/`, `receipt/`, `adjustments/` запрещены.
 
+Handwritten production source ограничен 400 физическими строками. Один файл несёт одну связную ответственность; при 300–350 строках требуется оценить разделение. God-files и новые generic filenames (`utils.go`, `helpers.go`, `common.go`, `misc.go`, `manager.go`, `service_all.go`, `repository_all.go`) запрещены. Canonical locking разделён между repository, inventory/sale-return orchestration, SQL queries и validation; reconciliation testkit разделяет types, orchestration, individual SQL oracles, scanner и validation.
+
 Глобальные технические каталоги запрещены:
 
 ```text
@@ -273,16 +277,13 @@ backend/migrations/
 Backend central tests:
 
 ```text
-backend/test/
-├── integration/
-├── concurrency/
-├── contract/
-├── e2e/
-├── fixtures/
-└── testkit/
+backend/internal/testkit/
+├── postgrestest/
+├── reconciliation/
+└── schema/
 ```
 
-Domain/application unit tests размещаются рядом с кодом. Concurrency tests используют реальную PostgreSQL.
+Domain/application unit tests и owning-package PostgreSQL integration tests размещаются рядом с кодом. Общие cross-module correctness oracles находятся в `internal/testkit`; integration/concurrency tests используют реальную PostgreSQL и обязательные CI DSN.
 
 ## 11. Frontend root
 

@@ -11,7 +11,7 @@ func LoadWorker() (WorkerProcessConfig, error) {
 		struct {
 			prefix string
 			target any
-		}{"POSTGRES", &cfg.RuntimePostgres},
+		}{"POSTGRES", &cfg.WorkerPostgres},
 		struct {
 			prefix string
 			target any

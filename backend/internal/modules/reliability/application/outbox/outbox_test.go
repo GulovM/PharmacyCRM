@@ -1,0 +1,350 @@
+package outbox
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/GulovM/PharmacyCRM/backend/internal/shared/contracts"
+	"github.com/google/uuid"
+)
+
+type fakeRepository struct {
+	mu              sync.Mutex
+	appended        Event
+	processed       int
+	failed          []Failure
+	finalizationErr error
+	claim           func(context.Context, ClaimRequest) ([]Lease, error)
+}
+
+func (f *fakeRepository) Append(_ context.Context, event Event) error {
+	f.appended = event
+	return nil
+}
+func (f *fakeRepository) ClaimBatch(ctx context.Context, request ClaimRequest) ([]Lease, error) {
+	if f.claim != nil {
+		return f.claim(ctx, request)
+	}
+	return nil, nil
+}
+func (f *fakeRepository) MarkProcessed(context.Context, Lease) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.processed++
+	return f.finalizationErr
+}
+func (f *fakeRepository) MarkFailed(_ context.Context, _ Lease, failure Failure, _ time.Duration) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failed = append(f.failed, failure)
+	return f.finalizationErr
+}
+func (f *fakeRepository) ReplayDeadLetter(context.Context, uuid.UUID, time.Time) error { return nil }
+
+type fakeTransactor struct{ repository Repository }
+
+func (f fakeTransactor) WithinTransaction(ctx context.Context, fn func(context.Context, Repository) error) error {
+	return fn(ctx, f.repository)
+}
+
+type handlerFunc func(context.Context, Event) error
+
+func (f handlerFunc) Handle(ctx context.Context, event Event) error { return f(ctx, event) }
+
+type recordingObserver struct {
+	stale, finalization, dead int
+}
+
+func (o *recordingObserver) FinalizationFailed(context.Context, Lease, error)        { o.finalization++ }
+func (o *recordingObserver) StaleLease(context.Context, Lease)                       { o.stale++ }
+func (o *recordingObserver) DeadLettered(context.Context, Lease, string)             { o.dead++ }
+func (o *recordingObserver) ClaimFailed(context.Context, error, bool, time.Duration) {}
+
+func validEvent() Event {
+	return Event{
+		ID: uuid.New(), EventKey: EventKey{Name: "inventory.changed", Version: 1},
+		AggregateType: "stock_lot", AggregateID: uuid.New(), PartitionKey: "pharmacy-1",
+		DeduplicationKey: uuid.NewString(), Payload: []byte(`{"quantity_base_units":10}`),
+		Headers: map[string]string{"correlation_id": uuid.NewString()}, OccurredAt: time.Now(),
+	}
+}
+
+func mustNewWriter(t *testing.T, repository Repository, validators map[EventKey]PayloadValidator) *Writer {
+	t.Helper()
+	writer, err := NewWriter(repository, validators)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return writer
+}
+
+func testWorker(t *testing.T, repository *fakeRepository, handler Handler, observer Observer) *Worker {
+	t.Helper()
+	key := EventKey{Name: "inventory.changed", Version: 1}
+	worker, err := NewWorker(fakeTransactor{repository}, map[EventKey]Handler{key: handler}, WorkerConfig{
+		Owner: "worker-1", Concurrency: 1, MaxClaim: 1, PollInterval: time.Millisecond,
+		LeaseDuration: time.Minute, DrainTimeout: time.Second,
+	}, observer, ClaimErrorClassifierFunc(func(error) bool { return false }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker.retryDelay = func(int16) time.Duration { return time.Second }
+	return worker
+}
+
+func TestWriterDefaultsAttemptsAndRejectsSecrets(t *testing.T) {
+	repository := &fakeRepository{}
+	writer := mustNewWriter(t, repository, map[EventKey]PayloadValidator{
+		{Name: "inventory.changed", Version: 1}: PayloadValidatorFunc(func(json.RawMessage) error { return nil }),
+	})
+	event := validEvent()
+	if err := writer.Append(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	if repository.appended.MaxAttempts != DefaultMaxAttempts {
+		t.Fatalf("max attempts = %d", repository.appended.MaxAttempts)
+	}
+	event = validEvent()
+	event.Payload = []byte(`{"access_token":"secret"}`)
+	if err := writer.Append(context.Background(), event); !errors.Is(err, ErrInvalidEvent) {
+		t.Fatalf("expected secret rejection, got %v", err)
+	}
+	unknown := validEvent()
+	unknown.EventKey.Version = 2
+	if err := writer.Append(context.Background(), unknown); !errors.Is(err, ErrInvalidEvent) {
+		t.Fatalf("expected unregistered protocol rejection, got %v", err)
+	}
+}
+
+func TestWorkerProcessesAndDeadLettersPoisonEvent(t *testing.T) {
+	repository := &fakeRepository{}
+	observer := &recordingObserver{}
+	worker := testWorker(t, repository, handlerFunc(func(context.Context, Event) error {
+		return &DeliveryError{Code: "POISON_EVENT", Retryable: false}
+	}), observer)
+	lease := Lease{Event: validEvent(), Token: uuid.New(), Generation: 1, Attempt: 1}
+	lease.MaxAttempts = 8
+	worker.process(context.Background(), lease)
+	if len(repository.failed) != 1 || repository.failed[0].Code != "POISON_EVENT" || observer.dead != 1 {
+		t.Fatalf("failed=%#v dead=%d", repository.failed, observer.dead)
+	}
+}
+
+func TestWorkerRecoversHandlerPanicAndObservesStaleLease(t *testing.T) {
+	repository := &fakeRepository{finalizationErr: ErrStaleLease}
+	observer := &recordingObserver{}
+	worker := testWorker(t, repository, handlerFunc(func(context.Context, Event) error { panic("boom") }), observer)
+	lease := Lease{Event: validEvent(), Token: uuid.New(), Generation: 1, Attempt: 1}
+	lease.MaxAttempts = 8
+	worker.process(context.Background(), lease)
+	if len(repository.failed) != 1 || repository.failed[0].Code != "HANDLER_PANIC" || observer.stale != 1 {
+		t.Fatalf("failed=%#v stale=%d", repository.failed, observer.stale)
+	}
+}
+
+func TestNewWorkerRejectsOwnerAndProtocolOutsideDatabaseBounds(t *testing.T) {
+	repository := &fakeRepository{}
+	base := WorkerConfig{Owner: strings.Repeat("w", contracts.MaxWorkerOwnerLength+1), Concurrency: 1, MaxClaim: 1, PollInterval: time.Second, LeaseDuration: time.Second, DrainTimeout: time.Second}
+	if _, err := NewWorker(fakeTransactor{repository}, map[EventKey]Handler{}, base, nil, ClaimErrorClassifierFunc(func(error) bool { return false })); err == nil {
+		t.Fatal("oversized owner was accepted")
+	}
+	base.Owner = "worker-1"
+	handlers := map[EventKey]Handler{{Name: " inventory.changed", Version: 1}: handlerFunc(func(context.Context, Event) error { return nil })}
+	if _, err := NewWorker(fakeTransactor{repository}, handlers, base, nil, ClaimErrorClassifierFunc(func(error) bool { return false })); err == nil {
+		t.Fatal("non-canonical protocol name was accepted")
+	}
+}
+
+func TestMaintenanceOnlyWorkerRunsUntilCancellation(t *testing.T) {
+	claimed := make(chan ClaimRequest, 1)
+	repository := &fakeRepository{claim: func(_ context.Context, request ClaimRequest) ([]Lease, error) {
+		select {
+		case claimed <- request:
+		default:
+		}
+		return nil, nil
+	}}
+	worker, err := NewWorker(fakeTransactor{repository}, map[EventKey]Handler{}, WorkerConfig{
+		Owner: "worker-maintenance", Concurrency: 1, MaxClaim: 1, PollInterval: time.Millisecond,
+		LeaseDuration: time.Minute, DrainTimeout: time.Second,
+	}, nil, ClaimErrorClassifierFunc(func(error) bool { return false }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- worker.Run(ctx) }()
+	select {
+	case request := <-claimed:
+		if !request.MaintenanceOnly || len(request.Protocols) != 0 {
+			t.Fatalf("unexpected maintenance request: %#v", request)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("maintenance worker did not poll")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("maintenance worker stopped before cancellation: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("maintenance worker shutdown failed: %v", err)
+	}
+}
+
+func TestProtocolMismatchFailsReadiness(t *testing.T) {
+	worker := testWorker(t, &fakeRepository{}, handlerFunc(func(context.Context, Event) error { return nil }), nil)
+	if err := worker.ValidateProtocols([]EventKey{{Name: "inventory.changed", Version: 2}}); err == nil {
+		t.Fatal("expected unsupported protocol")
+	}
+}
+
+func TestDrainTimeoutIsBounded(t *testing.T) {
+	var workers sync.WaitGroup
+	workers.Add(1)
+	started := time.Now()
+	if err := waitForDrain(&workers, func() {}, 10*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, ErrDrainCancellationIncomplete) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("drain exceeded bound: %s", elapsed)
+	}
+	workers.Done()
+}
+
+func TestFatalClaimErrorWaitsForActiveHandler(t *testing.T) {
+	fatalErr := errors.New("invalid repository state")
+	started := make(chan struct{})
+	release := make(chan struct{})
+	lease := Lease{Event: validEvent(), Token: uuid.New(), Generation: 1, Attempt: 1, Owner: "worker-1"}
+	lease.MaxAttempts = 8
+	claims := 0
+	repository := &fakeRepository{}
+	repository.claim = func(context.Context, ClaimRequest) ([]Lease, error) {
+		claims++
+		if claims == 1 {
+			return []Lease{lease}, nil
+		}
+		return nil, fatalErr
+	}
+	worker := testWorker(t, repository, handlerFunc(func(context.Context, Event) error {
+		close(started)
+		<-release
+		return nil
+	}), nil)
+	worker.config.Concurrency = 2
+
+	done := make(chan error, 1)
+	go func() { done <- worker.Run(context.Background()) }()
+	<-started
+	select {
+	case err := <-done:
+		t.Fatalf("worker returned before handler drained: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	if err := <-done; !errors.Is(err, fatalErr) {
+		t.Fatalf("fatal error was not preserved: %v", err)
+	}
+}
+
+func TestDrainTimeoutCancelsProcessingWithoutLeakingHandlerAndPreservesFatalError(t *testing.T) {
+	fatalErr := errors.New("permanent schema mismatch")
+	canceled := make(chan struct{})
+	handlerReturned := make(chan struct{})
+	lease := Lease{Event: validEvent(), Token: uuid.New(), Generation: 1, Attempt: 1, Owner: "worker-1"}
+	lease.MaxAttempts = 8
+	claims := 0
+	repository := &fakeRepository{}
+	repository.claim = func(context.Context, ClaimRequest) ([]Lease, error) {
+		claims++
+		if claims == 1 {
+			return []Lease{lease}, nil
+		}
+		return nil, fatalErr
+	}
+	worker := testWorker(t, repository, handlerFunc(func(ctx context.Context, _ Event) error {
+		defer close(handlerReturned)
+		<-ctx.Done()
+		close(canceled)
+		return ctx.Err()
+	}), nil)
+	worker.config.Concurrency = 2
+	worker.config.DrainTimeout = 10 * time.Millisecond
+	err := worker.Run(context.Background())
+	if !errors.Is(err, fatalErr) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected fatal and drain errors, got %v", err)
+	}
+	select {
+	case <-canceled:
+	default:
+		t.Fatal("processing context was not canceled before shutdown returned")
+	}
+	select {
+	case <-handlerReturned:
+	default:
+		t.Fatal("handler was still running when shutdown returned")
+	}
+}
+
+func TestTransientClaimErrorRetries(t *testing.T) {
+	transientErr := errors.New("temporary database outage")
+	var claims atomic.Int32
+	repository := &fakeRepository{}
+	repository.claim = func(context.Context, ClaimRequest) ([]Lease, error) {
+		if claims.Add(1) == 1 {
+			return nil, transientErr
+		}
+		return nil, nil
+	}
+	worker := testWorker(t, repository, handlerFunc(func(context.Context, Event) error { return nil }), nil)
+	worker.claimErrors = ClaimErrorClassifierFunc(func(err error) bool { return errors.Is(err, transientErr) })
+	worker.claimRetryDelay = func(int) time.Duration { return time.Millisecond }
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- worker.Run(ctx) }()
+	deadline := time.After(time.Second)
+	for claims.Load() < 2 {
+		select {
+		case <-deadline:
+			t.Fatal("transient claim was not retried")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("graceful cancellation returned %v", err)
+	}
+}
+
+func TestCancellationDuringClaimBackoffDrains(t *testing.T) {
+	transientErr := errors.New("acquire timeout")
+	claimed := make(chan struct{}, 1)
+	repository := &fakeRepository{claim: func(context.Context, ClaimRequest) ([]Lease, error) {
+		claimed <- struct{}{}
+		return nil, transientErr
+	}}
+	worker := testWorker(t, repository, handlerFunc(func(context.Context, Event) error { return nil }), nil)
+	worker.claimErrors = ClaimErrorClassifierFunc(func(error) bool { return true })
+	worker.claimRetryDelay = func(int) time.Duration { return time.Hour }
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- worker.Run(ctx) }()
+	<-claimed
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("graceful cancellation returned %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("worker remained blocked in retry backoff")
+	}
+}

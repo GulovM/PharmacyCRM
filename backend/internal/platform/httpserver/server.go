@@ -51,7 +51,7 @@ func (s *Server) ListenAndServe() error {
 
 func (s *Server) Shutdown(parent context.Context) error {
 	s.readiness.SetDraining()
-	ctx, cancel := context.WithTimeout(parent, s.config.ShutdownTimeout)
-	defer cancel()
-	return s.server.Shutdown(ctx)
+	return s.server.Shutdown(parent)
 }
+
+func (s *Server) Close() error { return s.server.Close() }

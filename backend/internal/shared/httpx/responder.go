@@ -2,12 +2,16 @@
 package httpx
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"reflect"
+	"runtime/debug"
 
 	"github.com/GulovM/PharmacyCRM/backend/internal/platform/logging"
 	"github.com/GulovM/PharmacyCRM/backend/internal/shared/apperror"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.uber.org/zap"
 )
 
@@ -53,18 +57,29 @@ func (r *Responder) NoContent(c *gin.Context) {
 	}
 }
 func (r *Responder) Error(c *gin.Context, err error, operation string) {
-	r.write(c, classify(err), operation)
+	r.write(c, classify(err), operation, err)
 }
 func (r *Responder) Panic(c *gin.Context, operation string) {
-	r.write(c, response{status: http.StatusInternalServerError, code: "INTERNAL_ERROR", message: "internal server error", level: "error"}, operation)
+	r.write(c, response{status: http.StatusInternalServerError, code: "INTERNAL_ERROR", message: "internal server error", level: "error"}, operation, nil)
 }
 
-func (r *Responder) write(c *gin.Context, response response, operation string) {
+func (r *Responder) write(c *gin.Context, response response, operation string, original error) {
 	if c.Writer.Written() {
 		r.logger.Error("http.response_already_written", zap.String("request_id", requestID(c)), zap.String("operation", operation))
 		return
 	}
-	log := r.logger.With(zap.String("request_id", requestID(c)), zap.String("operation", operation), zap.String("error_code", response.code))
+	diagnostic := describeError(original, response)
+	fields := []zap.Field{zap.String("request_id", requestID(c)), zap.String("operation", operation), zap.String("error_code", response.code), zap.String("error_kind", diagnostic.kind)}
+	if diagnostic.sqlState != "" {
+		fields = append(fields, zap.String("postgres_sqlstate", diagnostic.sqlState))
+	}
+	if diagnostic.causeType != "" {
+		fields = append(fields, zap.String("cause_type", diagnostic.causeType))
+	}
+	if diagnostic.stack {
+		fields = append(fields, zap.ByteString("stack", debug.Stack()))
+	}
+	log := r.logger.With(fields...)
 	switch response.level {
 	case "error":
 		log.Error("http.request.failed")
@@ -74,6 +89,46 @@ func (r *Responder) write(c *gin.Context, response response, operation string) {
 		log.Info("http.request.failed")
 	}
 	c.JSON(response.status, errorEnvelope{Success: false, Error: publicError{Code: response.code, Message: response.message, Details: response.details}, Meta: Meta{RequestID: requestID(c)}})
+}
+
+type errorDiagnostic struct {
+	kind, sqlState, causeType string
+	stack                     bool
+}
+
+func describeError(err error, response response) errorDiagnostic {
+	diagnostic := errorDiagnostic{kind: "unexpected"}
+	switch response.code {
+	case "INVALID_ARGUMENT":
+		diagnostic.kind = "validation"
+	case "UNAUTHENTICATED":
+		diagnostic.kind = "unauthenticated"
+	case "FORBIDDEN":
+		diagnostic.kind = "forbidden"
+	case "CONFLICT":
+		diagnostic.kind = "conflict"
+	case "BUSINESS_RULE_VIOLATION":
+		diagnostic.kind = "business_rule"
+	case "SERVICE_UNAVAILABLE":
+		diagnostic.kind = "dependency_unavailable"
+	}
+	if errors.Is(err, context.Canceled) {
+		diagnostic.kind = "context_canceled"
+		return diagnostic
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		diagnostic.kind = "context_deadline"
+		return diagnostic
+	}
+	var postgresError *pgconn.PgError
+	if errors.As(err, &postgresError) {
+		diagnostic.kind, diagnostic.sqlState = "postgres_error", postgresError.Code
+		return diagnostic
+	}
+	if err != nil && diagnostic.kind == "unexpected" {
+		diagnostic.causeType, diagnostic.stack = reflect.TypeOf(err).String(), true
+	}
+	return diagnostic
 }
 
 type response struct {
@@ -86,6 +141,9 @@ func classify(err error) response {
 	var typed *apperror.Typed
 	if errors.As(err, &typed) {
 		response := classify(typed.Category)
+		if typed.Code != "" {
+			response.code = typed.Code
+		}
 		if errors.Is(typed.Category, apperror.ErrInvalidArgument) {
 			response.details = make([]Detail, 0, len(typed.Details))
 			for _, detail := range typed.Details {
