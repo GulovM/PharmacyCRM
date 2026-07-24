@@ -45,14 +45,13 @@ type ClaimRequest struct {
 	Owner           string
 	Limit           int
 	LeaseDuration   time.Duration
-	Now             time.Time
 	Protocols       []EventKey
 	MaintenanceOnly bool
 }
 
 func (request ClaimRequest) Validate() error {
 	owner := strings.TrimSpace(request.Owner)
-	if owner == "" || owner != request.Owner || len(owner) > contracts.MaxWorkerOwnerLength || request.Limit < 1 || request.Limit > 100 || request.LeaseDuration <= 0 || request.Now.IsZero() {
+	if owner == "" || owner != request.Owner || len(owner) > contracts.MaxWorkerOwnerLength || request.Limit < 1 || request.Limit > 100 || request.LeaseDuration <= 0 || request.LeaseDuration.Milliseconds() < 1 {
 		return errors.Join(ErrInvalidClaimRequest, apperror.ErrInvalidArgument)
 	}
 	if request.MaintenanceOnly {

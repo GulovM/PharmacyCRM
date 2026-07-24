@@ -73,7 +73,7 @@ func claimTerminalizationBatch(t *testing.T, ctx context.Context, pool *pgxpool.
 		t.Fatal(err)
 	}
 	if _, err := testOutboxRepository(tx).ClaimBatch(ctx, outbox.ClaimRequest{
-		Owner: "terminalization-test-worker", Limit: limit, LeaseDuration: time.Minute, Now: now,
+		Owner: "terminalization-test-worker", Limit: limit, LeaseDuration: time.Minute,
 		Protocols: []outbox.EventKey{{Name: protocol, Version: 1}},
 	}); err != nil {
 		_ = tx.Rollback(ctx)
@@ -200,7 +200,7 @@ func TestConcurrentWorkersBoundExhaustedLeaseTerminalizationIntegration(t *testi
 		t.Fatal(err)
 	}
 	defer func() { _ = txOne.Rollback(ctx) }()
-	if _, err := testOutboxRepository(txOne).ClaimBatch(ctx, outbox.ClaimRequest{Owner: "worker-one", Limit: 2, LeaseDuration: time.Minute, Now: now, Protocols: []outbox.EventKey{{Name: "test.terminalization", Version: 1}}}); err != nil {
+	if _, err := testOutboxRepository(txOne).ClaimBatch(ctx, outbox.ClaimRequest{Owner: "worker-one", Limit: 2, LeaseDuration: time.Minute, Protocols: []outbox.EventKey{{Name: "test.terminalization", Version: 1}}}); err != nil {
 		t.Fatal(err)
 	}
 	assertDeadLettersVisibleInTransaction(t, ctx, txOne, aggregateID, 2)
@@ -210,7 +210,7 @@ func TestConcurrentWorkersBoundExhaustedLeaseTerminalizationIntegration(t *testi
 		t.Fatal(err)
 	}
 	defer func() { _ = txTwo.Rollback(ctx) }()
-	if _, err := testOutboxRepository(txTwo).ClaimBatch(ctx, outbox.ClaimRequest{Owner: "worker-two", Limit: 2, LeaseDuration: time.Minute, Now: now, Protocols: []outbox.EventKey{{Name: "test.terminalization", Version: 1}}}); err != nil {
+	if _, err := testOutboxRepository(txTwo).ClaimBatch(ctx, outbox.ClaimRequest{Owner: "worker-two", Limit: 2, LeaseDuration: time.Minute, Protocols: []outbox.EventKey{{Name: "test.terminalization", Version: 1}}}); err != nil {
 		t.Fatal(err)
 	}
 	assertDeadLettersVisibleInTransaction(t, ctx, txTwo, aggregateID, 2)

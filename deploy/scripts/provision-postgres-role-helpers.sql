@@ -184,6 +184,13 @@ BEGIN
     ) THEN
         remaining := array_append(remaining, 'function_acl');
     END IF;
+    IF EXISTS (
+        SELECT 1 FROM pg_type type_def
+        CROSS JOIN LATERAL aclexplode(type_def.typacl) privilege
+        WHERE privilege.grantee = target_oid
+    ) THEN
+        remaining := array_append(remaining, 'type_acl');
+    END IF;
     IF cardinality(remaining) > 0 THEN
         RAISE EXCEPTION 'role % retains direct capabilities: %', target_role, array_to_string(remaining, ',');
     END IF;

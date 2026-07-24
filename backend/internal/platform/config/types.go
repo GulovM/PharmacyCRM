@@ -10,7 +10,7 @@ import (
 const (
 	productionEnvironment   = "production"
 	approvedJWTAlgorithm    = "EdDSA"
-	SupportedSchemaVersion  = 24
+	SupportedSchemaVersion  = 25
 	SupportedWorkerProtocol = 1
 )
 
@@ -20,8 +20,8 @@ type AppConfig struct {
 	Version          string `default:"dev"`
 	CommitSHA        string `envconfig:"COMMIT_SHA" default:"unknown"`
 	Debug            bool   `default:"false"`
-	MinSchemaVersion int    `envconfig:"MIN_SCHEMA_VERSION" default:"24"`
-	MaxSchemaVersion int    `envconfig:"MAX_SCHEMA_VERSION" default:"24"`
+	MinSchemaVersion int    `envconfig:"MIN_SCHEMA_VERSION" default:"25"`
+	MaxSchemaVersion int    `envconfig:"MAX_SCHEMA_VERSION" default:"25"`
 	WorkerProtocol   int    `envconfig:"WORKER_PROTOCOL" default:"1"`
 }
 
@@ -32,7 +32,7 @@ type HTTPConfig struct {
 	ReadTimeout       time.Duration `envconfig:"READ_TIMEOUT" default:"15s"`
 	WriteTimeout      time.Duration `envconfig:"WRITE_TIMEOUT" default:"30s"`
 	IdleTimeout       time.Duration `envconfig:"IDLE_TIMEOUT" default:"60s"`
-	ShutdownTimeout   time.Duration `envconfig:"SHUTDOWN_TIMEOUT" default:"20s"`
+	ShutdownTimeout   time.Duration `envconfig:"SHUTDOWN_TIMEOUT" default:"15s"`
 	MaxHeaderBytes    int           `envconfig:"MAX_HEADER_BYTES" default:"1048576"`
 	MaxBodyBytes      int64         `envconfig:"MAX_BODY_BYTES" default:"1048576"`
 }

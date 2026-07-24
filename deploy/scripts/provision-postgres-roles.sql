@@ -19,7 +19,7 @@ CREATE TEMP TABLE pharmacycrm_role_provisioning_config (
     worker_role text NOT NULL,
     migration_role text NOT NULL,
     legacy_runtime_role text NOT NULL
-) ON COMMIT DROP;
+) ON COMMIT PRESERVE ROWS;
 INSERT INTO pharmacycrm_role_provisioning_config
 VALUES (:'provisioning_mode', :'database_name', :'api_role', :'worker_role',
         :'migration_role', :'legacy_runtime_role');

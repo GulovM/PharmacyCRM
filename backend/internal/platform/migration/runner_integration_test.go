@@ -57,7 +57,7 @@ func TestUpgradeFromE1Integration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(loaded) != 24 || loaded[0].Version != 1 || loaded[0].Name != "schema_metadata" {
+	if len(loaded) != 25 || loaded[0].Version != 1 || loaded[0].Name != "schema_metadata" {
 		t.Fatalf("unexpected migration set: %#v", loaded)
 	}
 	rawPool, err := pgxpool.New(ctx, isolatedDSN)
@@ -97,14 +97,14 @@ func TestUpgradeFromE1Integration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.SchemaVersion != 24 || len(result.Applied) != 23 || result.Applied[0] != 2 || result.Applied[len(result.Applied)-1] != 24 {
+	if result.SchemaVersion != 25 || len(result.Applied) != 24 || result.Applied[0] != 2 || result.Applied[len(result.Applied)-1] != 25 {
 		t.Fatalf("unexpected upgrade result: %#v", result)
 	}
 	replayed, err := Run(ctx, pool, loaded)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replayed.SchemaVersion != 24 || len(replayed.Applied) != 0 {
+	if replayed.SchemaVersion != 25 || len(replayed.Applied) != 0 {
 		t.Fatalf("migrations were unexpectedly replayed: %#v", replayed)
 	}
 
@@ -159,6 +159,23 @@ func TestUpgradeFromE1Integration(t *testing.T) {
 	assertVerificationFailure(23, "session_security_verification")
 	if _, err := verificationPool.Exec(ctx, `CREATE UNIQUE INDEX uq_user_session_rotated_from ON user_sessions(rotated_from_session_id) WHERE rotated_from_session_id IS NOT NULL`); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := verificationPool.Exec(ctx, `GRANT SELECT ON users TO pharmacycrm_runtime`); err != nil {
+		t.Fatal(err)
+	}
+	assertVerificationFailure(25, "runtime_role_contract_verification")
+	if _, err := verificationPool.Exec(ctx, `REVOKE SELECT ON users FROM pharmacycrm_runtime`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verificationPool.Exec(ctx, `ALTER ROLE pharmacycrm_runtime LOGIN`); err != nil {
+		t.Fatal(err)
+	}
+	assertVerificationFailure(25, "runtime_role_contract_verification")
+	if _, err := verificationPool.Exec(ctx, `ALTER ROLE pharmacycrm_runtime NOLOGIN`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(ctx, pool, loaded); err != nil {
+		t.Fatalf("schema 25 verification did not recover: %v", err)
 	}
 
 	corrupted := append([]Migration(nil), loaded...)
@@ -219,11 +236,11 @@ func TestUpgradeFromSchema19Integration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.SchemaVersion != 24 || len(result.Applied) != 5 || result.Applied[0] != 20 || result.Applied[4] != 24 {
+	if result.SchemaVersion != 25 || len(result.Applied) != 6 || result.Applied[0] != 20 || result.Applied[5] != 25 {
 		t.Fatalf("unexpected schema 19 upgrade result: %#v", result)
 	}
 	replayed, err := Run(ctx, pool, loaded)
-	if err != nil || len(replayed.Applied) != 0 || replayed.SchemaVersion != 24 {
+	if err != nil || len(replayed.Applied) != 0 || replayed.SchemaVersion != 25 {
 		t.Fatalf("schema 24 replay=%#v err=%v", replayed, err)
 	}
 }
@@ -280,11 +297,11 @@ func TestUpgradeFromSchema21Integration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.SchemaVersion != 24 || len(result.Applied) != 3 || result.Applied[0] != 22 || result.Applied[1] != 23 || result.Applied[2] != 24 {
+	if result.SchemaVersion != 25 || len(result.Applied) != 4 || result.Applied[0] != 22 || result.Applied[1] != 23 || result.Applied[2] != 24 || result.Applied[3] != 25 {
 		t.Fatalf("unexpected schema 21 upgrade result: %#v", result)
 	}
 	replayed, err := Run(ctx, pool, loaded)
-	if err != nil || len(replayed.Applied) != 0 || replayed.SchemaVersion != 24 {
+	if err != nil || len(replayed.Applied) != 0 || replayed.SchemaVersion != 25 {
 		t.Fatalf("schema 24 replay=%#v err=%v", replayed, err)
 	}
 }

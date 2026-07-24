@@ -13,7 +13,6 @@ func TestClaimRequestValidate(t *testing.T) {
 		Owner:         "worker-1",
 		Limit:         3,
 		LeaseDuration: time.Minute,
-		Now:           time.Now(),
 		Protocols:     []EventKey{{Name: "inventory.changed", Version: 1}},
 	}
 	if err := valid.Validate(); err != nil {
@@ -36,7 +35,7 @@ func TestClaimRequestValidate(t *testing.T) {
 		{"zero limit", func(request *ClaimRequest) { request.Limit = 0 }},
 		{"oversized limit", func(request *ClaimRequest) { request.Limit = 101 }},
 		{"invalid lease", func(request *ClaimRequest) { request.LeaseDuration = 0 }},
-		{"zero time", func(request *ClaimRequest) { request.Now = time.Time{} }},
+		{"sub-millisecond lease", func(request *ClaimRequest) { request.LeaseDuration = time.Nanosecond }},
 		{"no protocols", func(request *ClaimRequest) { request.Protocols = nil }},
 		{"invalid protocol name", func(request *ClaimRequest) { request.Protocols[0].Name = "" }},
 		{"invalid protocol version", func(request *ClaimRequest) { request.Protocols[0].Version = 0 }},

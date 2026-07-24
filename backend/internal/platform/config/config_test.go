@@ -162,7 +162,7 @@ func TestLoadMigrationDoesNotRequireRuntimeOrAuthCredentials(t *testing.T) {
 }
 
 func TestSchemaDefaultsMatchSupportedVersion(t *testing.T) {
-	defaults := AppConfig{MinSchemaVersion: 24, MaxSchemaVersion: 24}
+	defaults := AppConfig{MinSchemaVersion: 25, MaxSchemaVersion: 25}
 	if defaults.MinSchemaVersion != SupportedSchemaVersion || defaults.MaxSchemaVersion != SupportedSchemaVersion {
 		t.Fatalf("schema defaults must match supported version %d", SupportedSchemaVersion)
 	}

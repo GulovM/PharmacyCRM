@@ -30,6 +30,7 @@ type apiProcessPool interface {
 type apiProcessServer interface {
 	ListenAndServe() error
 	Shutdown(context.Context) error
+	Close() error
 }
 
 type apiDependencies struct {
@@ -97,9 +98,15 @@ func runAPI(dependencies apiDependencies) (result error) {
 		}
 		return nil
 	case <-ctx.Done():
-		if err := server.Shutdown(context.Background()); err != nil && !errors.Is(err, context.Canceled) {
-			logger.Error("http.server.shutdown_failed", zap.Error(err))
-			return fmt.Errorf("shutdown HTTP server: %w", err)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
+		defer cancel()
+		shutdownErr := server.Shutdown(shutdownCtx)
+		if errors.Is(shutdownErr, context.DeadlineExceeded) {
+			shutdownErr = errors.Join(shutdownErr, server.Close())
+		}
+		if shutdownErr != nil && !errors.Is(shutdownErr, context.Canceled) {
+			logger.Error("http.server.shutdown_failed", zap.Error(shutdownErr))
+			return fmt.Errorf("shutdown HTTP server: %w", shutdownErr)
 		}
 		return nil
 	}

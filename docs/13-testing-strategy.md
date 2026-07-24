@@ -1,6 +1,6 @@
 # PharmacyCRM — Testing Strategy
 
-> E2 schema `24` integration coverage includes E1/19/21 upgrades, real E1 credential retirement, process-owned configuration, bounded exhausted-lease terminalization, session-security negative constraints, API/worker privilege denial and capability-based outbox replay.
+> E2 schema `25` integration coverage includes E1/19/21/24 upgrades, real E1 credential retirement, PostgreSQL-authoritative outbox leases, session-security negative constraints, API/worker privilege denial and capability-based outbox replay.
 
 The source-size architecture gate has Bash and PowerShell fixture tests; retention tests prove the shared batch budget and cycle deadline.
 

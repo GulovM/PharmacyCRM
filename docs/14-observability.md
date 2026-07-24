@@ -1,6 +1,6 @@
 # PharmacyCRM — Observability
 
-> Retention observability for schema `24` reports one bounded cycle budget and a real cycle deadline; an internal deadline is recorded as limited work, not as a repository failure.
+> Retention observability for schema `25` reports one bounded cycle budget and a real cycle deadline; HTTP error diagnostics retain only allowlisted fields and never raw error text.
 
 **Статус документа:** Draft  
 **Версия:** 1.1  

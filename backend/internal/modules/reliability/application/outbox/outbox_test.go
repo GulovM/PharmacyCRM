@@ -33,13 +33,13 @@ func (f *fakeRepository) ClaimBatch(ctx context.Context, request ClaimRequest) (
 	}
 	return nil, nil
 }
-func (f *fakeRepository) MarkProcessed(context.Context, Lease, time.Time) error {
+func (f *fakeRepository) MarkProcessed(context.Context, Lease) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.processed++
 	return f.finalizationErr
 }
-func (f *fakeRepository) MarkFailed(_ context.Context, _ Lease, failure Failure, _, _ time.Time) error {
+func (f *fakeRepository) MarkFailed(_ context.Context, _ Lease, failure Failure, _ time.Duration) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failed = append(f.failed, failure)
@@ -94,7 +94,6 @@ func testWorker(t *testing.T, repository *fakeRepository, handler Handler, obser
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker.now = func() time.Time { return time.Unix(100, 0) }
 	worker.retryDelay = func(int16) time.Duration { return time.Second }
 	return worker
 }

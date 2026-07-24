@@ -147,7 +147,7 @@ jobs:
           PGPASSWORD: ci-only-password
         run: |
           psql -h localhost -U pharmacycrm -d pharmacycrm -v provisioning_mode=fresh -v database_name=pharmacycrm -v api_role=api_user -v api_password=api-ci-password -v worker_role=worker_user -v worker_password=worker-ci-password -v migration_role=migration_user -v migration_password=migration-ci-password -f deploy/scripts/provision-postgres-roles.sql
-      - name: Verify schema 24 no-op after role reconciliation
+      - name: Verify schema 25 no-op after role reconciliation
         working-directory: backend
         run: go run ./cmd/migrate
       - name: Run mandatory E2 PostgreSQL integration tests
@@ -182,7 +182,7 @@ jobs:
         env:
           PGPASSWORD: ci-only-password
         run: |
-          PGPASSWORD=api-ci-password psql -h localhost -U api_user -d pharmacycrm -Atc 'SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton' | grep -x '24'
+          PGPASSWORD=api-ci-password psql -h localhost -U api_user -d pharmacycrm -Atc 'SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton' | grep -x '25'
           if PGPASSWORD=api-ci-password psql -h localhost -U api_user -d pharmacycrm -Atc 'SELECT MAX(version) FROM pharmacycrm_schema_migrations'; then
             echo 'API role unexpectedly read migration history'
             exit 1

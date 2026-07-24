@@ -29,8 +29,8 @@ func (*fakeAPIPool) SchemaVersion(context.Context) (int64, error) {
 func (p *fakeAPIPool) Close() { p.closeCalls++ }
 
 type fakeAPIServer struct {
-	serveErr, shutdownErr error
-	block                 bool
+	serveErr, shutdownErr, closeErr error
+	block                           bool
 }
 
 func (s *fakeAPIServer) ListenAndServe() error {
@@ -40,6 +40,7 @@ func (s *fakeAPIServer) ListenAndServe() error {
 	return s.serveErr
 }
 func (s *fakeAPIServer) Shutdown(context.Context) error { return s.shutdownErr }
+func (s *fakeAPIServer) Close() error                   { return s.closeErr }
 
 func baseAPIDependencies(logger apiProcessLogger, pool apiProcessPool, server apiProcessServer) apiDependencies {
 	return apiDependencies{

@@ -1,8 +1,8 @@
 # PharmacyCRM — Deployment
 
-> Deploy schema `24` only after idempotent role provisioning. API, worker and migration processes require separate credentials; the legacy compatibility role has no DSN and cannot log in.
+> Deploy schema `25` only after idempotent role provisioning. API, worker and migration processes require separate credentials; the legacy compatibility role has no DSN and cannot log in.
 
-All embedded migrations carry executable verification queries. Supported upgrades are `0/1/19/21 → 24`.
+All embedded migrations carry executable verification queries. Supported upgrades are `0/1/19/21/24 → 25`; API shutdown is bounded by `HTTP_SHUTDOWN_TIMEOUT` (default `15s`).
 
 **Статус документа:** Draft  
 **Версия:** 1.1  

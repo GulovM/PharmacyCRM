@@ -67,18 +67,18 @@ func (r *TransactionalOutboxRepository) ClaimBatch(ctx context.Context, request 
 	tag, err := r.executor.Exec(ctx, `
 		WITH exhausted AS (
 			SELECT id FROM outbox_events
-			WHERE status = 'PROCESSING' AND lease_expires_at <= $1
+			WHERE status = 'PROCESSING' AND lease_expires_at <= statement_timestamp()
 			  AND attempt_count >= max_attempts
 			ORDER BY lease_expires_at, id
 			FOR UPDATE SKIP LOCKED
-			LIMIT $2
+			LIMIT $1
 		)
 		UPDATE outbox_events AS event
-		SET status = 'DEAD_LETTER', dead_lettered_at = $1,
-			last_error_code = 'LEASE_EXPIRED_AFTER_MAX_ATTEMPTS', last_error_at = $1,
+		SET status = 'DEAD_LETTER', dead_lettered_at = statement_timestamp(),
+			last_error_code = 'LEASE_EXPIRED_AFTER_MAX_ATTEMPTS', last_error_at = statement_timestamp(),
 			lease_token = NULL, leased_by = NULL, lease_expires_at = NULL
 		FROM exhausted
-		WHERE event.id = exhausted.id`, request.Now, terminalizationLimit)
+		WHERE event.id = exhausted.id`, terminalizationLimit)
 	if err != nil {
 		return nil, fmt.Errorf("dead-letter exhausted leases: %w", err)
 	}
@@ -89,25 +89,25 @@ func (r *TransactionalOutboxRepository) ClaimBatch(ctx context.Context, request 
 		return []outbox.Lease{}, nil
 	}
 
-	expiresAt := request.Now.Add(request.LeaseDuration)
+	leaseMilliseconds := request.LeaseDuration.Milliseconds()
 	rows, err := r.executor.Query(ctx, `
 		WITH candidates AS (
 			SELECT id
 			FROM outbox_events
 			WHERE attempt_count < max_attempts
 			  AND (event_name, event_version) IN (
-				SELECT * FROM unnest($5::varchar[], $6::smallint[])
+				SELECT * FROM unnest($4::varchar[], $5::smallint[])
 			  )
-			  AND ((status = 'PENDING' AND available_at <= $1)
-			       OR (status = 'PROCESSING' AND lease_expires_at <= $1))
+			  AND ((status = 'PENDING' AND available_at <= statement_timestamp())
+			       OR (status = 'PROCESSING' AND lease_expires_at <= statement_timestamp()))
 			ORDER BY available_at, created_at, id
 			FOR UPDATE SKIP LOCKED
-			LIMIT $2
+			LIMIT $1
 		)
 		UPDATE outbox_events AS event
 		SET status = 'PROCESSING', attempt_count = event.attempt_count + 1,
 			lease_token = gen_random_uuid(), lease_generation = event.lease_generation + 1,
-			leased_by = $3, lease_expires_at = $4
+			leased_by = $2, lease_expires_at = statement_timestamp() + ($3 * interval '1 millisecond')
 		FROM candidates
 		WHERE event.id = candidates.id
 		RETURNING event.id, event.event_name, event.event_version,
@@ -115,7 +115,7 @@ func (r *TransactionalOutboxRepository) ClaimBatch(ctx context.Context, request 
 			event.deduplication_key, event.payload, event.headers,
 			event.occurred_at, event.max_attempts, event.lease_token,
 			event.lease_generation, event.leased_by, event.attempt_count, event.lease_expires_at`,
-		request.Now, request.Limit, request.Owner, expiresAt, eventNames, eventVersions)
+		request.Limit, request.Owner, leaseMilliseconds, eventNames, eventVersions)
 	if err != nil {
 		return nil, fmt.Errorf("claim outbox batch: %w", err)
 	}
@@ -141,17 +141,17 @@ func (r *TransactionalOutboxRepository) ClaimBatch(ctx context.Context, request 
 	return leases, nil
 }
 
-func (r *TransactionalOutboxRepository) MarkProcessed(ctx context.Context, lease outbox.Lease, completedAt time.Time) error {
+func (r *TransactionalOutboxRepository) MarkProcessed(ctx context.Context, lease outbox.Lease) error {
 	if r == nil || r.executor == nil {
 		return database.ErrDependencyMissing
 	}
 	tag, err := r.executor.Exec(ctx, `
 		UPDATE outbox_events
-		SET status = 'PROCESSED', processed_at = $5,
+		SET status = 'PROCESSED', processed_at = statement_timestamp(),
 			lease_token = NULL, leased_by = NULL, lease_expires_at = NULL
 		WHERE id = $1 AND status = 'PROCESSING'
 		  AND lease_token = $2 AND lease_generation = $3
-		  AND leased_by = $4 AND lease_expires_at > $5`, lease.ID, lease.Token, lease.Generation, lease.Owner, completedAt)
+		  AND leased_by = $4 AND lease_expires_at > statement_timestamp()`, lease.ID, lease.Token, lease.Generation, lease.Owner)
 	if err != nil {
 		return fmt.Errorf("mark outbox event processed: %w", err)
 	}
@@ -161,22 +161,25 @@ func (r *TransactionalOutboxRepository) MarkProcessed(ctx context.Context, lease
 	return nil
 }
 
-func (r *TransactionalOutboxRepository) MarkFailed(ctx context.Context, lease outbox.Lease, failure outbox.Failure, failedAt, availableAt time.Time) error {
+func (r *TransactionalOutboxRepository) MarkFailed(ctx context.Context, lease outbox.Lease, failure outbox.Failure, retryAfter time.Duration) error {
 	if r == nil || r.executor == nil {
 		return database.ErrDependencyMissing
 	}
 	terminal := !failure.Retryable || lease.Attempt >= lease.MaxAttempts
+	if (terminal && retryAfter != 0) || (!terminal && (retryAfter < time.Millisecond || retryAfter > 15*time.Minute)) {
+		return outbox.ErrInvalidClaimRequest
+	}
 	tag, err := r.executor.Exec(ctx, `
 		UPDATE outbox_events
 		SET status = CASE WHEN $6 THEN 'DEAD_LETTER' ELSE 'PENDING' END,
-			available_at = CASE WHEN $6 THEN available_at ELSE $7 END,
-			dead_lettered_at = CASE WHEN $6 THEN $5 ELSE NULL END,
-			last_error_code = $8, last_error_at = $5,
+			available_at = CASE WHEN $5 THEN available_at ELSE statement_timestamp() + ($6 * interval '1 millisecond') END,
+			dead_lettered_at = CASE WHEN $5 THEN statement_timestamp() ELSE NULL END,
+			last_error_code = $7, last_error_at = statement_timestamp(),
 			lease_token = NULL, leased_by = NULL, lease_expires_at = NULL
 		WHERE id = $1 AND status = 'PROCESSING'
 		  AND lease_token = $2 AND lease_generation = $3
-		  AND leased_by = $4 AND lease_expires_at > $5`,
-		lease.ID, lease.Token, lease.Generation, lease.Owner, failedAt, terminal, availableAt, failure.Code)
+		  AND leased_by = $4 AND lease_expires_at > statement_timestamp()`,
+		lease.ID, lease.Token, lease.Generation, lease.Owner, terminal, retryAfter.Milliseconds(), failure.Code)
 	if err != nil {
 		return fmt.Errorf("mark outbox event failed: %w", err)
 	}

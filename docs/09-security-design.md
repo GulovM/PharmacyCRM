@@ -1,6 +1,6 @@
 # PharmacyCRM — Security Design
 
-> E2 schema `24`: API cannot read migration history or directly update outbox rows. Manual dead-letter replay is an audited transaction using a narrowly granted PostgreSQL capability function.
+> E2 schema `25`: API cannot read migration history or directly update outbox rows. Manual dead-letter replay is an audited transaction with full-transaction retry; the compatibility role is verified inert on every no-op migration.
 
 Schema `23` verifies session constraints by catalog structure and expressions; the replay capability is unavailable to both the worker role and `PUBLIC`.
 

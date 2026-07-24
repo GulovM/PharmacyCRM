@@ -40,14 +40,14 @@ BEGIN
         IF btrim(config.legacy_runtime_role) <> '' THEN
             RAISE EXCEPTION 'legacy_runtime_role is valid only in upgrade mode';
         END IF;
-        IF declared_version IS NOT NULL AND declared_version <> 24 THEN
+        IF declared_version IS NOT NULL AND declared_version <> 25 THEN
             RAISE EXCEPTION 'fresh mode cannot provision existing schema version %; use upgrade mode with the exact E1 runtime role', declared_version;
         END IF;
     ELSE
         IF btrim(config.legacy_runtime_role) = '' THEN
             RAISE EXCEPTION 'legacy_runtime_role must not be empty in upgrade mode';
         END IF;
-        IF declared_version IS NOT NULL AND declared_version NOT IN (1, 19, 21, 23, 24) THEN
+        IF declared_version IS NOT NULL AND declared_version NOT IN (1, 19, 21, 23, 24, 25) THEN
             RAISE EXCEPTION 'schema version % is not a supported E1/E2 upgrade state', declared_version;
         END IF;
         IF config.legacy_runtime_role IN (
@@ -75,12 +75,63 @@ BEGIN
     END IF;
 
     IF config.provisioning_mode = 'upgrade' THEN
+        PERFORM pg_temp.assert_role_can_be_sanitized(config.legacy_runtime_role, config.database_name, true);
+        EXECUTE format('ALTER ROLE %I WITH NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS', config.legacy_runtime_role);
+    END IF;
+    ALTER ROLE pharmacycrm_runtime WITH NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+END
+$$;
+
+-- Phase 1 has to be visible before existing sessions are terminated.
+COMMIT;
+
+-- Phase 2: terminate every legacy session in every database and fail closed
+-- when a backend survives. The provisioning session itself is never targeted.
+DO $$
+DECLARE
+    config pharmacycrm_role_provisioning_config%ROWTYPE;
+    remaining integer;
+BEGIN
+    SELECT * INTO STRICT config FROM pharmacycrm_role_provisioning_config;
+    IF config.provisioning_mode <> 'upgrade' THEN
+        RETURN;
+    END IF;
+    PERFORM set_config('statement_timeout', '5s', true);
+    PERFORM pg_terminate_backend(activity.pid)
+    FROM pg_stat_activity AS activity
+    WHERE activity.usename = config.legacy_runtime_role
+      AND activity.pid <> pg_backend_pid();
+    SELECT count(*) INTO remaining
+    FROM pg_stat_activity AS activity
+    WHERE activity.usename = config.legacy_runtime_role
+      AND activity.pid <> pg_backend_pid();
+    IF remaining <> 0 THEN
+        RAISE EXCEPTION 'legacy role % still has % active sessions after lockout', config.legacy_runtime_role, remaining;
+    END IF;
+END
+$$;
+
+-- Phase 3: only after termination may capability reconciliation begin.
+BEGIN;
+
+DO $$
+DECLARE
+    config pharmacycrm_role_provisioning_config%ROWTYPE;
+BEGIN
+    SELECT * INTO STRICT config FROM pharmacycrm_role_provisioning_config;
+    IF config.provisioning_mode = 'upgrade' THEN
         PERFORM pg_temp.retire_role(config.legacy_runtime_role, config.database_name, true);
     END IF;
     PERFORM pg_temp.retire_role('pharmacycrm_runtime', config.database_name, false);
     PERFORM pg_temp.retire_role('pharmacycrm_api_runtime', config.database_name, false);
     PERFORM pg_temp.retire_role('pharmacycrm_worker_runtime', config.database_name, false);
     PERFORM pg_temp.retire_role('pharmacycrm_migration', config.database_name, false);
+    IF to_regprocedure('public.delete_processed_outbox_events_before(timestamptz,integer)') IS NOT NULL
+       AND to_regprocedure('public.delete_dead_letter_outbox_events_before(timestamptz,integer)') IS NOT NULL THEN
+        GRANT EXECUTE ON FUNCTION public.delete_processed_outbox_events_before(timestamptz, integer),
+            public.delete_dead_letter_outbox_events_before(timestamptz, integer)
+            TO pharmacycrm_runtime;
+    END IF;
 END
 $$;
 

@@ -65,14 +65,14 @@ func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 		}
 		return id
 	}
-	claim := func(now time.Time, owner string, limit int) []outbox.Lease {
+	claim := func(_ time.Time, owner string, limit int) []outbox.Lease {
 		t.Helper()
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
 		leases, err := testOutboxRepository(tx).ClaimBatch(ctx, outbox.ClaimRequest{
-			Owner: owner, Limit: limit, LeaseDuration: 30 * time.Second, Now: now,
+			Owner: owner, Limit: limit, LeaseDuration: 30 * time.Second,
 			Protocols: []outbox.EventKey{{Name: "test.outbox", Version: 1}},
 		})
 		if err != nil {
@@ -84,30 +84,37 @@ func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 		}
 		return leases
 	}
+	expireLease := func(id uuid.UUID) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, "UPDATE outbox_events SET lease_expires_at = statement_timestamp() - interval '1 second' WHERE id = $1", id); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	// Crash before the side effect: the expired lease is reclaimed with a new
 	// fencing token and generation. An acknowledgement from the stale owner is rejected.
 	id := appendEvent(3)
 	now := time.Now()
 	first := claim(now, "worker-a", 1)[0]
+	expireLease(first.ID)
 	second := claim(now.Add(time.Minute), "worker-b", 1)[0]
 	if first.ID != id || second.ID != id || second.Attempt != 2 || second.Generation <= first.Generation || second.Token == first.Token {
 		t.Fatalf("invalid reclaim: first=%#v second=%#v", first, second)
 	}
 	if err := withinOutboxTransaction(ctx, pool, func(repository *TransactionalOutboxRepository) error {
-		return repository.MarkProcessed(ctx, first, now.Add(5*time.Second))
+		return repository.MarkProcessed(ctx, first)
 	}); !errors.Is(err, outbox.ErrStaleLease) {
 		t.Fatalf("stale owner accepted: %v", err)
 	}
 	wrongOwner := second
 	wrongOwner.Owner = "worker-c"
 	if err := withinOutboxTransaction(ctx, pool, func(repository *TransactionalOutboxRepository) error {
-		return repository.MarkProcessed(ctx, wrongOwner, now.Add(time.Minute+time.Second))
+		return repository.MarkProcessed(ctx, wrongOwner)
 	}); !errors.Is(err, outbox.ErrStaleLease) {
 		t.Fatalf("wrong lease owner accepted: %v", err)
 	}
 	if err := withinOutboxTransaction(ctx, pool, func(repository *TransactionalOutboxRepository) error {
-		return repository.MarkProcessed(ctx, second, now.Add(time.Minute+time.Second))
+		return repository.MarkProcessed(ctx, second)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -123,13 +130,14 @@ func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 		}
 	}
 	apply(initialDelivery.Event)
+	expireLease(initialDelivery.ID)
 	duplicateDelivery := claim(initialDelivery.ExpiresAt.Add(time.Second), "worker-b", 1)[0]
 	apply(duplicateDelivery.Event)
 	if duplicateDelivery.ID != duplicateID || effects[duplicateID.String()] != 1 {
 		t.Fatalf("duplicate delivery was not idempotent: lease=%#v effects=%#v", duplicateDelivery, effects)
 	}
 	if err := withinOutboxTransaction(ctx, pool, func(repository *TransactionalOutboxRepository) error {
-		return repository.MarkProcessed(ctx, duplicateDelivery, duplicateDelivery.ExpiresAt.Add(-time.Second))
+		return repository.MarkProcessed(ctx, duplicateDelivery)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +151,7 @@ func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 	}
 	failedAt := poisonClaimedAt.Add(time.Second)
 	if err := withinOutboxTransaction(ctx, pool, func(repository *TransactionalOutboxRepository) error {
-		return repository.MarkFailed(ctx, poison, outbox.Failure{Code: "POISON_EVENT", Retryable: false}, failedAt, failedAt)
+		return repository.MarkFailed(ctx, poison, outbox.Failure{Code: "POISON_EVENT", Retryable: false}, 0)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -163,8 +171,7 @@ func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	leasingAt := now.Add(20 * time.Minute)
-	workerOne, err := testOutboxRepository(tx1).ClaimBatch(ctx, outbox.ClaimRequest{Owner: "worker-1", Limit: 1, LeaseDuration: time.Minute, Now: leasingAt, Protocols: []outbox.EventKey{{Name: "test.outbox", Version: 1}}})
+	workerOne, err := testOutboxRepository(tx1).ClaimBatch(ctx, outbox.ClaimRequest{Owner: "worker-1", Limit: 1, LeaseDuration: time.Minute, Protocols: []outbox.EventKey{{Name: "test.outbox", Version: 1}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +179,7 @@ func TestOutboxLeaseProtocolIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workerTwo, err := testOutboxRepository(tx2).ClaimBatch(ctx, outbox.ClaimRequest{Owner: "worker-2", Limit: 1, LeaseDuration: time.Minute, Now: leasingAt, Protocols: []outbox.EventKey{{Name: "test.outbox", Version: 1}}})
+	workerTwo, err := testOutboxRepository(tx2).ClaimBatch(ctx, outbox.ClaimRequest{Owner: "worker-2", Limit: 1, LeaseDuration: time.Minute, Protocols: []outbox.EventKey{{Name: "test.outbox", Version: 1}}})
 	if err != nil {
 		t.Fatal(err)
 	}

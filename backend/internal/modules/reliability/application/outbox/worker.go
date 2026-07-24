@@ -40,7 +40,6 @@ type Worker struct {
 	transactor      Transactor
 	handlers        map[EventKey]Handler
 	config          WorkerConfig
-	now             func() time.Time
 	retryDelay      func(int16) time.Duration
 	claimRetryDelay func(int) time.Duration
 	claimErrors     ClaimErrorClassifier
@@ -95,7 +94,7 @@ func NewWorker(transactor Transactor, handlers map[EventKey]Handler, config Work
 	if observer == nil {
 		observer = noopObserver{}
 	}
-	return &Worker{transactor: transactor, handlers: copyHandlers, protocols: protocols, config: config, now: time.Now, retryDelay: outboxRetryDelay, claimRetryDelay: pollingRetryDelay, claimErrors: claimErrors, observer: observer, maintenanceOnly: len(protocols) == 0}, nil
+	return &Worker{transactor: transactor, handlers: copyHandlers, protocols: protocols, config: config, retryDelay: outboxRetryDelay, claimRetryDelay: pollingRetryDelay, claimErrors: claimErrors, observer: observer, maintenanceOnly: len(protocols) == 0}, nil
 }
 
 func (w *Worker) SupportsProtocol(key EventKey) bool {
@@ -175,7 +174,7 @@ func (w *Worker) claim(ctx context.Context, limit int) ([]Lease, error) {
 	var leases []Lease
 	err := w.transactor.WithinTransaction(ctx, func(ctx context.Context, repository Repository) error {
 		var err error
-		leases, err = repository.ClaimBatch(ctx, ClaimRequest{Owner: w.config.Owner, Limit: limit, LeaseDuration: w.config.LeaseDuration, Now: w.now(), Protocols: w.protocols, MaintenanceOnly: w.maintenanceOnly})
+		leases, err = repository.ClaimBatch(ctx, ClaimRequest{Owner: w.config.Owner, Limit: limit, LeaseDuration: w.config.LeaseDuration, Protocols: w.protocols, MaintenanceOnly: w.maintenanceOnly})
 		return err
 	})
 	return leases, err
@@ -202,19 +201,21 @@ func (w *Worker) process(ctx context.Context, lease Lease) {
 		return
 	}
 	err := w.transactor.WithinTransaction(ctx, func(ctx context.Context, repository Repository) error {
-		return repository.MarkProcessed(ctx, lease, w.now())
+		return repository.MarkProcessed(ctx, lease)
 	})
 	w.observeFinalization(ctx, lease, err)
 }
 
 func (w *Worker) finish(ctx context.Context, lease Lease, failure Failure) {
-	now := w.now()
-	availableAt := now
+	retryAfter := time.Duration(0)
 	if failure.Retryable && lease.Attempt < lease.MaxAttempts {
-		availableAt = now.Add(w.retryDelay(lease.Attempt))
+		retryAfter = w.retryDelay(lease.Attempt)
+		if retryAfter < time.Millisecond {
+			retryAfter = time.Millisecond
+		}
 	}
 	err := w.transactor.WithinTransaction(ctx, func(ctx context.Context, repository Repository) error {
-		return repository.MarkFailed(ctx, lease, failure, now, availableAt)
+		return repository.MarkFailed(ctx, lease, failure, retryAfter)
 	})
 	if w.observeFinalization(ctx, lease, err) && (!failure.Retryable || lease.Attempt >= lease.MaxAttempts) {
 		w.observer.DeadLettered(ctx, lease, failure.Code)

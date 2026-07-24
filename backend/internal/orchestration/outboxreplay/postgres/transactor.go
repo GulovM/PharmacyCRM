@@ -86,7 +86,11 @@ func (u *unitOfWork) AppendAudit(ctx context.Context, event audit.Event) error {
 }
 
 type Transactor struct {
-	runner *database.TransactionRunner[outboxreplay.UnitOfWork]
+	runner transactionExecutor
+}
+
+type transactionExecutor interface {
+	WithinTransaction(context.Context, func(context.Context, outboxreplay.UnitOfWork) error) error
 }
 
 func NewTransactor(pool *database.Pool, observer database.RollbackErrorObserver) (*Transactor, error) {
@@ -120,7 +124,7 @@ func NewTransactor(pool *database.Pool, observer database.RollbackErrorObserver)
 	if err != nil {
 		return nil, err
 	}
-	return &Transactor{runner: runner}, nil
+	return &Transactor{runner: database.NewRetryingTransactionRunner[outboxreplay.UnitOfWork](runner, nil)}, nil
 }
 
 func (t *Transactor) WithinTransaction(ctx context.Context, fn func(context.Context, outboxreplay.UnitOfWork) error) error {

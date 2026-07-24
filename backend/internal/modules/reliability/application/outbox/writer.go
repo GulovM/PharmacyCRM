@@ -26,8 +26,8 @@ var (
 type Repository interface {
 	Append(context.Context, Event) error
 	ClaimBatch(context.Context, ClaimRequest) ([]Lease, error)
-	MarkProcessed(context.Context, Lease, time.Time) error
-	MarkFailed(context.Context, Lease, Failure, time.Time, time.Time) error
+	MarkProcessed(context.Context, Lease) error
+	MarkFailed(context.Context, Lease, Failure, time.Duration) error
 	ReplayDeadLetter(context.Context, uuid.UUID, time.Time) error
 }
 

@@ -160,6 +160,23 @@ run_provisioning() {
     -f "$provisioning_script"
 }
 
+# Keep a real E1 transaction open while provisioning. Phase 2 must terminate
+# this backend after Phase 1 commits the credential lockout.
+legacy_session_output="$(mktemp)"
+psql "$legacy_dsn" -X -At -v ON_ERROR_STOP=1 \
+  -c "BEGIN; SELECT pg_backend_pid(); SELECT pg_sleep(60)" >"$legacy_session_output" 2>&1 &
+legacy_session_process=$!
+for _ in $(seq 1 50); do
+  if [[ -s "$legacy_session_output" ]]; then break; fi
+  sleep 0.1
+done
+legacy_session_pid="$(head -n 1 "$legacy_session_output" || true)"
+if [[ ! "$legacy_session_pid" =~ ^[0-9]+$ ]]; then
+  cat "$legacy_session_output" >&2
+  echo "failed to establish persistent legacy session" >&2
+  exit 1
+fi
+
 if psql "$admin_database_dsn" -X -v ON_ERROR_STOP=1 \
   -v provisioning_mode=fresh \
   -v database_name="$test_database" \
@@ -202,6 +219,15 @@ SELECT format('DROP ROLE %I', :'owning_parent') \gexec
 SQL
 
 run_provisioning "$legacy_runtime"
+
+if wait "$legacy_session_process"; then
+  echo "persistent legacy session was not terminated" >&2
+  exit 1
+fi
+psql "$admin_database_dsn" -X -At -v ON_ERROR_STOP=1 -v legacy_pid="$legacy_session_pid" <<'SQL' | grep -Fx "t"
+SELECT NOT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = :legacy_pid);
+SQL
+rm -f "$legacy_session_output"
 
 if psql "$legacy_dsn" -X -At -v ON_ERROR_STOP=1 -c "SELECT 1" >/dev/null 2>&1; then
   echo "retired E1 runtime credential still connects" >&2
@@ -285,7 +311,7 @@ if psql "$legacy_dsn" -X -At -v ON_ERROR_STOP=1 -c "SELECT 1" >/dev/null 2>&1; t
   exit 1
 fi
 
-psql "$admin_database_dsn" -X -At -v ON_ERROR_STOP=1 -v legacy_role="$legacy_runtime" <<'SQL' | grep -Fx "24|f|f|f|f|f|f|f|f|f|0|0"
+psql "$admin_database_dsn" -X -At -v ON_ERROR_STOP=1 -v legacy_role="$legacy_runtime" <<'SQL' | grep -Fx "25|f|f|f|f|f|f|f|f|f|0|0"
 SELECT
     (SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton),
     has_table_privilege(:'legacy_role', 'users', 'SELECT'),
@@ -309,7 +335,7 @@ SELECT
      WHERE database.datname=current_database() AND role.rolname=:'legacy_role');
 SQL
 
-psql "$api_dsn" -X -At -v ON_ERROR_STOP=1 -c "SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton" | grep -Fx "24"
+psql "$api_dsn" -X -At -v ON_ERROR_STOP=1 -c "SELECT schema_version FROM pharmacycrm_schema_metadata WHERE singleton" | grep -Fx "25"
 if psql "$api_dsn" -X -At -v ON_ERROR_STOP=1 -c "SELECT MAX(version) FROM pharmacycrm_schema_migrations" >/dev/null 2>&1; then
   echo "API role unexpectedly reads migration history" >&2
   exit 1
